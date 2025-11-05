@@ -1,0 +1,52 @@
+import ssl
+import os
+from urllib.parse import urlparse, urlunparse
+
+from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
+from sqlalchemy.orm import sessionmaker, declarative_base
+from dotenv import load_dotenv
+
+load_dotenv()
+
+DATABASE_URL = os.getenv("DATABASE_URL")
+
+if not DATABASE_URL:
+    raise Exception("DATABASE_URL not found")
+
+# ✅ Convert sync URL → async URL
+# postgresql://  → postgresql+asyncpg://
+if DATABASE_URL.startswith("postgresql://"):
+    DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+asyncpg://", 1)
+
+# ✅ Remove sslmode & channel_binding from URL (asyncpg rejects them)
+parsed = urlparse(DATABASE_URL)
+clean_url = parsed._replace(query="")  # remove everything after ?
+DATABASE_URL = urlunparse(clean_url)
+
+# ✅ SSL context required by Neon
+ssl_ctx = ssl.create_default_context()
+ssl_ctx.check_hostname = False
+ssl_ctx.verify_mode = ssl.CERT_NONE
+
+# ✅ Create async engine
+engine = create_async_engine(
+    DATABASE_URL,
+    echo=True,
+    future=True,
+    connect_args={"ssl": ssl_ctx}   # Neon requires SSL
+)
+
+# ✅ Create async session
+AsyncSessionLocal = sessionmaker(
+    bind=engine,
+    class_=AsyncSession,
+    expire_on_commit=False
+)
+
+# ✅ Declarative Base
+Base = declarative_base()
+
+# ✅ Dependency for FastAPI
+async def get_db():
+    async with AsyncSessionLocal() as session:
+        yield session
