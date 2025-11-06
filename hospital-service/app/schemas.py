@@ -4,9 +4,9 @@ from uuid import UUID
 from datetime import date, time, datetime
 
 
-# -----------------------------
-# ✅ Hospital Schemas
-# -----------------------------
+# ==============================================================
+# ✅ HOSPITAL SCHEMAS
+# ==============================================================
 class HospitalBase(BaseModel):
     name: str
     address: str
@@ -50,57 +50,55 @@ class HospitalOut(BaseModel):
     class Config:
         orm_mode = True
 
-# Doctor Schemas
+
+# ==============================================================
+# ✅ DOCTOR SCHEMAS
+# ==============================================================
 class DoctorCreate(BaseModel):
     npi_number: str
     first_name: str
     last_name: str
-    email: EmailStr | None = None
-    phone: str | None = None
-    specialty: str | None = None
-    license_number: str | None = None
-    qualification: str | None = None
-    experience_years: int | None = None
-    gender: str | None = None
-    availability_days: str | None = None
-    start_time: time | None = None
-    end_time: time | None = None
-    mode_of_consultation: str | None = None
+    email: Optional[EmailStr] = None
+    phone: Optional[str] = None
+    specialty: Optional[str] = None
+    license_number: Optional[str] = None
+    qualification: Optional[str] = None
+    experience_years: Optional[int] = None
+    gender: Optional[str] = None
+    availability_days: Optional[str] = None
+    start_time: Optional[time] = None
+    end_time: Optional[time] = None
+    mode_of_consultation: Optional[str] = None
 
 
 class DoctorOut(DoctorCreate):
     id: UUID
     status: Optional[str] = None
-    created_at: Optional[str] = None
+    created_at: Optional[datetime] = None
 
     class Config:
-        orm_mode = True   # ✅ REQUIRED
+        orm_mode = True
 
 
-
-# Patient (FHIR Patient)
-
+# ==============================================================
+# ✅ PATIENT SCHEMAS
+# ==============================================================
 class PatientCreate(BaseModel):
     first_name: str
     last_name: str
-
-    dob: date = None
-    gender: str = None
-
-    ssn: str= None 
-
-    phone: str = None
-    email: EmailStr = None
-
-    address: str = None
-    city: str = None
-    state: str = None
-    zip_code: str = None
-    country: str = None
-
-    # ✅ Extra optional U.S. immigration fields (not in FHIR but allowed)
+    dob: Optional[date] = None
+    gender: Optional[str] = None
+    ssn: Optional[str] = None
+    phone: Optional[str] = None
+    email: Optional[EmailStr] = None
+    address: Optional[str] = None
+    city: Optional[str] = None
+    state: Optional[str] = None
+    zip_code: Optional[str] = None
+    country: Optional[str] = None
     citizenship_status: Optional[str] = None
     visa_type: Optional[str] = None
+
 
 class PatientOut(PatientCreate):
     id: UUID
@@ -110,22 +108,29 @@ class PatientOut(PatientCreate):
         orm_mode = True
 
 
-# ✅ Auth Schemas
-
+# ==============================================================
+# ✅ AUTH SCHEMAS
+# ==============================================================
 class Token(BaseModel):
     access_token: str
-    token_type: str = 'bearer'
+    token_type: str = "bearer"
 
 
 class TokenData(BaseModel):
     email: Optional[str] = None
 
 
+# Simple JSON login request (optional, for clients that prefer JSON over form data)
+class LoginRequest(BaseModel):
+    username: EmailStr
+    password: str
+
+
 class UserCreate(BaseModel):
     email: EmailStr
     password: str = Field(..., max_length=72)
     full_name: Optional[str]
-    role: Optional[str] = 'hospital'
+    role: Optional[str] = "hospital"
 
 
 class UserOut(BaseModel):
@@ -142,3 +147,32 @@ class UserOut(BaseModel):
 class SignupResponse(BaseModel):
     user: UserOut
     hospital: HospitalOut
+
+# Appointment Schemas
+# ===============================
+class AppointmentCreate(BaseModel):
+    hospital_id: UUID
+    doctor_id: UUID
+    patient_id: UUID
+    appointment_date: date
+    appointment_time: time
+    reason: Optional[str] = None
+    mode: Optional[str] = "In-person"
+
+    class Config:
+        orm_mode = True
+
+
+class AppointmentResponse(BaseModel):
+    id: UUID
+    appointment_id: str
+    hospital_id: UUID
+    doctor_id: UUID
+    patient_id: UUID
+    appointment_date: date
+    appointment_time: time
+    mode: str
+    status: str
+
+    class Config:
+        orm_mode = True

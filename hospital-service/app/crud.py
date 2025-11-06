@@ -1,5 +1,7 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
+from fastapi import HTTPException, status
 from app import models, utils
 from uuid import UUID
 
@@ -33,9 +35,26 @@ async def get_hospital(db: AsyncSession, hospital_id: UUID):
 
 # ✅ Create Doctor (Correct)
 async def create_doctor(db: AsyncSession, data: dict):
+    # Prevent inserting duplicate NPI numbers — surface a clear 409 Conflict
+    npi = data.get("npi_number")
+    if npi:
+        q = select(models.Doctor).where(models.Doctor.npi_number == npi)
+        res = await db.execute(q)
+        if res.scalars().first():
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Doctor with this NPI already exists")
+
     doctor = models.Doctor(**data)
     db.add(doctor)
-    await db.commit()
+    try:
+        await db.commit()
+    except IntegrityError as e:
+        # In case of a race or other constraint violation, map to a sane HTTP error
+        await db.rollback()
+        # If it's a unique constraint on npi_number, return a conflict
+        if "npi_number" in str(e).lower():
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Doctor with this NPI already exists")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Could not create doctor")
+
     await db.refresh(doctor)
     return doctor
 

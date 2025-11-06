@@ -1,12 +1,26 @@
 from fastapi import FastAPI, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.ext.asyncio import AsyncSession
-
 from app import schemas, crud, utils
-from app.database import get_db
+from app.database import get_db, engine, Base
 from app.auth import get_current_user
 
-app = FastAPI()
+# ✅ Import appointment router
+from app.routers import appointment
+
+app = FastAPI(title="CareIQ Patient 360 API")
+
+# ✅ Include the appointment routes
+app.include_router(appointment.router)  # no need to repeat prefix; it's already defined inside appointment.py
+
+
+# ✅ Create tables automatically on startup
+@app.on_event("startup")
+async def startup():
+    async with engine.begin() as conn:
+        # This ensures that ONLY missing tables (like Appointment) are created
+        await conn.run_sync(Base.metadata.create_all)
+    print("✅ Database schema synchronized successfully")
 
 
 # ✅ LOGIN → JWT Token
@@ -16,7 +30,6 @@ async def login_for_access_token(
     db: AsyncSession = Depends(get_db)
 ):
     user = await crud.authenticate_user(db, form_data.username, form_data.password)
-
     if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -27,12 +40,29 @@ async def login_for_access_token(
     return {"access_token": token, "token_type": "bearer"}
 
 
+# Optional JSON-based login for clients that send JSON instead of form data
+@app.post("/auth/login", response_model=schemas.Token)
+async def login_json(
+    credentials: schemas.LoginRequest,
+    db: AsyncSession = Depends(get_db)
+):
+    user = await crud.authenticate_user(db, credentials.username, credentials.password)
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect username or password"
+        )
+
+    token = utils.create_access_token({"sub": user.email})
+    return {"access_token": token, "token_type": "bearer"}
+
+
+# ✅ Signup
 @app.post("/hospitals/signup", response_model=schemas.SignupResponse)
 async def hospital_signup(
     data: schemas.HospitalSignupRequest,
     db: AsyncSession = Depends(get_db)
 ):
-    # ✅ Step 1: Create User
     user = await crud.create_user(
         db=db,
         email=data.email,
@@ -41,22 +71,36 @@ async def hospital_signup(
         role=data.role
     )
 
-    # ✅ Step 2: Create Hospital
     hospital_dict = data.hospital.dict()
     hospital = await crud.create_hospital_record(db, hospital_dict)
 
-    # ✅ Step 3: Link User → Hospital
     user.hospital_id = hospital.id
     db.add(user)
     await db.commit()
     await db.refresh(user)
 
-    # ✅ Step 4: Return structured response
-    return schemas.SignupResponse(
-        user=user,
-        hospital=hospital
-    )
+    # Return plain serializable dicts to avoid pydantic v1/v2 orm_mode incompat
+    user_out = {
+        "id": str(user.id),
+        "email": user.email,
+        "full_name": user.full_name,
+        "role": user.role,
+        "hospital_id": str(user.hospital_id) if user.hospital_id else None,
+    }
 
+    hospital_out = {
+        "id": str(hospital.id),
+        "name": hospital.name,
+        "email": hospital.email,
+        "phone": hospital.phone,
+        "specialty": hospital.specialty,
+        "city": hospital.city,
+        "state": hospital.state,
+        "license_number": hospital.license_number,
+        "consultation_fee": float(hospital.consultation_fee) if hospital.consultation_fee is not None else None,
+    }
+
+    return {"user": user_out, "hospital": hospital_out}
 
 
 # ✅ Create Hospital (Protected)
@@ -68,29 +112,29 @@ async def create_hospital(
 ):
     if current_user.role not in ("hospital", "admin"):
         raise HTTPException(status_code=403, detail="Not permitted")
-
     return await crud.create_hospital(db, hospital_in)
 
 
+# ✅ Create Doctor
 @app.post("/doctors", response_model=schemas.DoctorOut)
 async def create_doctor(
     doctor_in: schemas.DoctorCreate,
+    current_user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-    current_user: schemas.UserOut = Depends(get_current_user)
 ):
-    # ✅ Ensure logged-in user is a hospital
+    # current_user is provided by get_current_user (ORM User instance).
+    # We avoid forcing a Pydantic validation of the dependency return value
+    # here because that can raise conversion errors if fields are missing.
     if current_user.role != "hospital":
         raise HTTPException(status_code=403, detail="Only hospital can create doctors")
 
-    # ✅ Build updated payload
     doctor_data = doctor_in.dict()
     doctor_data["hospital_id"] = current_user.hospital_id
-
-    # ✅ Save in DB
     doctor = await crud.create_doctor(db, doctor_data)
     return doctor
 
 
+# ✅ Create Patient
 @app.post("/patients", response_model=schemas.PatientOut)
 async def create_patient(
     patient_in: schemas.PatientCreate,
@@ -99,11 +143,15 @@ async def create_patient(
 ):
     if current_user.role not in ("hospital", "admin", "doctor"):
         raise HTTPException(status_code=403, detail="Not permitted")
-
     return await crud.create_patient(db, patient_in)
 
 
-# ✅ Health
+# ✅ Health Check
 @app.get("/health")
 async def health():
     return {"status": "ok"}
+
+
+@app.get("/")
+def root():
+    return {"message": "CareIQ Patient 360 API is running 🚀"}
