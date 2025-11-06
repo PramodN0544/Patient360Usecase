@@ -6,10 +6,17 @@ from app.cors import apply_cors, get_frontend_origins
 from app.database import get_db, engine, Base
 from app.auth import get_current_user
 
+from app.routers import medications
+
+
 # ✅ Import appointment router
 from app.routers import appointment
 
+
+
 app = FastAPI(title="CareIQ Patient 360 API")
+
+app.include_router(medications.router)
 
 # Configure CORS for frontend integration. Configure origins via
 # FRONTEND_ORIGINS (comma-separated) or FRONTEND_URL environment variables.
