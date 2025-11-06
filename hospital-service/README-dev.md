@@ -31,3 +31,7 @@ Notes
 
 - Keep the `app/` package in `hospital-service/app` so Python imports work when running from that folder.
 - If port 8000 is in use, stop the process or start the server on a different port.
+ - To allow your frontend to call this API, configure CORS by setting one of the environment variables before starting the server:
+	 - `FRONTEND_ORIGINS` — comma-separated list of allowed origins (e.g. `http://localhost:3000,http://localhost:5173`)
+	 - `FRONTEND_URL` — single allowed origin (e.g. `http://localhost:3000`)
+	 If none are set we default to `http://localhost:3000` and `http://localhost:5173` for local development.
