@@ -2,6 +2,7 @@ from fastapi import FastAPI, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.ext.asyncio import AsyncSession
 from app import schemas, crud, utils
+from app.cors import apply_cors, get_frontend_origins
 from app.database import get_db, engine, Base
 from app.auth import get_current_user
 
@@ -9,6 +10,10 @@ from app.auth import get_current_user
 from app.routers import appointment
 
 app = FastAPI(title="CareIQ Patient 360 API")
+
+# Configure CORS for frontend integration. Configure origins via
+# FRONTEND_ORIGINS (comma-separated) or FRONTEND_URL environment variables.
+apply_cors(app)
 
 # ✅ Include the appointment routes
 app.include_router(appointment.router)  # no need to repeat prefix; it's already defined inside appointment.py
@@ -150,6 +155,13 @@ async def create_patient(
 @app.get("/health")
 async def health():
     return {"status": "ok"}
+
+
+@app.get("/config")
+async def get_config():
+    """Return runtime configuration useful for frontend diagnostics."""
+    origins = get_frontend_origins()
+    return {"cors_origins": origins}
 
 
 @app.get("/")
