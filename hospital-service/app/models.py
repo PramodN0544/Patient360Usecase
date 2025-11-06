@@ -146,6 +146,7 @@ class Patient(Base, TimestampMixin):
 
     # ✅ Relationships
     appointments = relationship("Appointment", back_populates="patient", cascade="all, delete")
+    medications = relationship("Medication", back_populates="patient", cascade="all, delete")
 
 
 # =====================================================
@@ -178,3 +179,31 @@ class Appointment(Base, TimestampMixin):
     patient = relationship("Patient", back_populates="appointments")
     hospital = relationship("Hospital", back_populates="appointments")
     doctor = relationship("Doctor", back_populates="appointments")
+
+
+# =====================================================
+# ✅ Medication Table
+# =====================================================
+class Medication(Base, TimestampMixin):
+    __tablename__ = "medications"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, server_default=sa.text("gen_random_uuid()"))
+
+    patient_id = Column(UUID(as_uuid=True), ForeignKey("patients.id", ondelete="CASCADE"), nullable=False)
+    doctor_id = Column(UUID(as_uuid=True), ForeignKey("doctors.id", ondelete="SET NULL"), nullable=True)
+    appointment_id = Column(UUID(as_uuid=True), ForeignKey("appointments.id", ondelete="SET NULL"), nullable=True)
+
+    medication_name = Column(String(200), nullable=False)
+    dosage = Column(String(100), nullable=False)
+    frequency = Column(String(100), nullable=False)
+    route = Column(String(100), nullable=True)
+    start_date = Column(Date, nullable=False)
+    end_date = Column(Date, nullable=True)
+    status = Column(String(50), default="active")  # active / completed / stopped
+    notes = Column(Text, nullable=True)
+
+    # Relationships
+    patient = relationship("Patient", back_populates="medications")
+    doctor = relationship("Doctor")
+    appointment = relationship("Appointment")
+Patient.medications = relationship("Medication", back_populates="patient", cascade="all, delete")

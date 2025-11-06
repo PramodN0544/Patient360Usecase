@@ -176,3 +176,29 @@ class AppointmentResponse(BaseModel):
 
     class Config:
         orm_mode = True
+        
+        
+class MedicationCreate(BaseModel):
+    patient_id: UUID
+    doctor_id: Optional[UUID] = None
+    appointment_id: Optional[UUID] = None
+    medication_name: str
+    dosage: str
+    frequency: str
+    route: Optional[str] = None
+    start_date: date
+    end_date: Optional[date] = None
+    status: Optional[str] = "active"
+    notes: Optional[str] = None
+
+    class Config:
+        orm_mode = True
+
+
+class MedicationOut(MedicationCreate):
+    id: UUID
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+    class Config:
+        orm_mode = True
