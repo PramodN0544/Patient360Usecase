@@ -7,7 +7,9 @@ from sqlalchemy.exc import IntegrityError
 from fastapi import HTTPException, status
 from sqlalchemy.orm import aliased
 from app import utils, models
-from app.models import User, PasswordResetToken, password_reset_otps_table, Patient
+from app.models import User, Patient, password_reset_otps_table, PasswordResetToken
+
+from app.models import password_reset_otps_table  
 from app.schemas import PatientCreate
 
 async def get_user_by_email(db: AsyncSession, email: str) -> User | None:
