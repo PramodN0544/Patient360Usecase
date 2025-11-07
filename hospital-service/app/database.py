@@ -11,12 +11,12 @@ if not DATABASE_URL:
 if DATABASE_URL.startswith("postgresql://"):
     DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+asyncpg://", 1)
 
-# Remove ?sslmode= etc
+# Clean URL
 parsed = urlparse(DATABASE_URL)
 clean_url = parsed._replace(query="")
 DATABASE_URL = urlunparse(clean_url)
 
-# SSL config
+# SSL
 ssl_ctx = ssl.create_default_context()
 ssl_ctx.check_hostname = False
 ssl_ctx.verify_mode = ssl.CERT_NONE
@@ -25,7 +25,10 @@ engine = create_async_engine(
     DATABASE_URL, echo=True, future=True, connect_args={"ssl": ssl_ctx}
 )
 AsyncSessionLocal = sessionmaker(bind=engine, class_=AsyncSession, expire_on_commit=False)
+
+# Base
 Base = declarative_base()
+metadata = Base.metadata
 
 async def get_db():
     async with AsyncSessionLocal() as session:

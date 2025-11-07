@@ -23,7 +23,7 @@ class HospitalBase(BaseModel):
     start_time: time
     end_time: time
     consultation_fee: float
-    mode_of_consultation: str
+    # mode_of_consultation: str
     website: Optional[str] = None
     country: Optional[str] = "USA"
 
