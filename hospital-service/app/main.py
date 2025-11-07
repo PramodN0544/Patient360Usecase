@@ -29,6 +29,10 @@ apply_cors(app)
 # ✅ Include the appointment routes
 app.include_router(appointment.router)  # no need to repeat prefix; it's already defined inside appointment.py
 
+app.include_router(reset_password.router)
+
+app.include_router(searchPatientInHospital.router)
+
 
 # ================================================================
 # ✅ Auto-create tables

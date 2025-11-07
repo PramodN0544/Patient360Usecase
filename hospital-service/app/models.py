@@ -1,4 +1,5 @@
 from datetime import datetime
+import uuid
 from sqlalchemy import (
     Column, DateTime, String, Date, Integer, Boolean,
     ForeignKey, Text, Numeric, Time
@@ -187,3 +188,33 @@ class Medication(Base, TimestampMixin):
     doctor = relationship("Doctor")
     appointment = relationship("Appointment")
 Patient.medications = relationship("Medication", back_populates="patient", cascade="all, delete")
+
+
+class PasswordResetToken(Base):
+    __tablename__ = "password_reset_tokens"
+
+    id = Column(Integer, primary_key=True, index=True)
+    email = Column(String, index=True, nullable=False)
+    otp = Column(String, nullable=False)
+    expires_at = Column(DateTime, nullable=False)
+
+    # Optional if you want to link it to user
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    user = relationship("User")
+
+    def is_expired(self):
+        return datetime.utcnow() > self.expires_at
+
+password_reset_otps_table = Table(
+    "password_reset_otps",
+    Base.metadata,
+    Column("id", UUID(as_uuid=True), primary_key=True, default=uuid.uuid4),
+    Column("user_id", UUID(as_uuid=True), ForeignKey("users.id"), nullable=False),
+    Column("otp", String(6), nullable=False),
+    Column("expires_at", DateTime, nullable=False),
+    Column("used", Boolean, default=False),
+    Column("created_at", DateTime, default=datetime.utcnow)
+)
+
+
+
