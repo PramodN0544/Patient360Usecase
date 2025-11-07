@@ -1,20 +1,16 @@
 from datetime import datetime
 from sqlalchemy import (
-    Column, DateTime, String, Date, Integer, Boolean, TIMESTAMP,
+    Column, DateTime, String, Date, Integer, Boolean,
     ForeignKey, Text, Numeric, Time
 )
 import sqlalchemy as sa
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
-
-# Use the shared Base from app.database so all models register on the
-# same metadata object that the engine uses to create tables.
+from sqlalchemy import Table, Column, String, Boolean, DateTime, ForeignKey
+from sqlalchemy.dialects.postgresql import UUID
+from app.database import metadata
 from app.database import Base
 
-
-# =====================================================
-# ✅ Timestamp Mixin (auto add created_at & updated_at)
-# =====================================================
 class TimestampMixin:
     # Use naive UTC datetimes (datetime.utcnow) so they match the
     # TIMESTAMP WITHOUT TIME ZONE columns created earlier.
@@ -22,9 +18,6 @@ class TimestampMixin:
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
-# =====================================================
-# ✅ Hospital Table
-# =====================================================
 class Hospital(Base, TimestampMixin):
     __tablename__ = "hospitals"
 
@@ -56,7 +49,7 @@ class Hospital(Base, TimestampMixin):
 
     # Consultation details
     consultation_fee = Column(Numeric(10, 2))
-    mode_of_consultation = Column(String(50))
+    # mode_of_consultation = Column(String(50))
 
     website = Column(String(200))
     status = Column(String(20), default="active")
@@ -66,14 +59,11 @@ class Hospital(Base, TimestampMixin):
     doctors = relationship("Doctor", back_populates="hospital", cascade="all, delete")
     appointments = relationship("Appointment", back_populates="hospital", cascade="all, delete")
 
-
-# =====================================================
-# ✅ Doctor Table
-# =====================================================
 class Doctor(Base, TimestampMixin):
     __tablename__ = "doctors"
 
     id = Column(UUID(as_uuid=True), primary_key=True, server_default=sa.text("gen_random_uuid()"))
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
 
     hospital_id = Column(UUID(as_uuid=True), ForeignKey("hospitals.id"))
     npi_number = Column(String(100), unique=True)
@@ -99,9 +89,6 @@ class Doctor(Base, TimestampMixin):
     appointments = relationship("Appointment", back_populates="doctor", cascade="all, delete")
 
 
-# =====================================================
-# ✅ User Table
-# =====================================================
 class User(Base, TimestampMixin):
     __tablename__ = "users"
 
@@ -109,30 +96,26 @@ class User(Base, TimestampMixin):
     email = Column(String(200), unique=True, nullable=False)
     hashed_password = Column(String(200), nullable=False)
     full_name = Column(String(200))
-    role = Column(String(50), default="hospital")  # hospital / doctor / admin / patient
-
+    role = Column(String(50), nullable=False)  
     hospital_id = Column(UUID(as_uuid=True), ForeignKey("hospitals.id"))
     is_active = Column(Boolean, default=True)
 
     hospital = relationship("Hospital", back_populates="users")
 
 
-# =====================================================
-# ✅ Patient Table
-# =====================================================
 class Patient(Base, TimestampMixin):
     __tablename__ = "patients"
 
     id = Column(UUID(as_uuid=True), primary_key=True, server_default=sa.text("gen_random_uuid()"))
-
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     # Demographics
     first_name = Column(String(100))
     last_name = Column(String(100))
     dob = Column(Date)
-    gender = Column(String(20))
-    ssn = Column(String(100))  # MRN / Identifier
-    phone = Column(String(20))
-    email = Column(String(100))
+    gender = Column(String(20),unique=True, index=True)
+    ssn = Column(String(100),unique=True, index=True)  # MRN / Identifier
+    phone = Column(String(20),unique=True, index=True)
+    email = Column(String(100),unique=True, index=True)
 
     # Address
     address = Column(Text)
@@ -149,9 +132,6 @@ class Patient(Base, TimestampMixin):
     medications = relationship("Medication", back_populates="patient", cascade="all, delete")
 
 
-# =====================================================
-# ✅ Appointment Table (final)
-# =====================================================
 class Appointment(Base, TimestampMixin):
     __tablename__ = "appointments"
 
