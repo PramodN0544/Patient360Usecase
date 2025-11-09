@@ -27,6 +27,7 @@ cdef class PreparedStatementState:
         self.args_num = self.cols_num = 0
         self.cols_desc = None
         self.closed = False
+        self.prepared = True
         self.refs = 0
         self.record_class = record_class
         self.ignore_custom_codec = ignore_custom_codec
@@ -101,6 +102,12 @@ cdef class PreparedStatementState:
     def mark_closed(self):
         self.closed = True
 
+    def mark_unprepared(self):
+        if self.name:
+            raise exceptions.InternalClientError(
+                "named prepared statements cannot be marked unprepared")
+        self.prepared = False
+
     cdef _encode_bind_msg(self, args, int seqno = -1):
         cdef:
             int idx
@@ -135,7 +142,7 @@ cdef class PreparedStatementState:
                 # that the user tried to parametrize a statement that does
                 # not support parameters.
                 hint += (r'  Note that parameters are supported only in'
-                         r' SELECT, INSERT, UPDATE, DELETE, and VALUES'
+                         r' SELECT, INSERT, UPDATE, DELETE, MERGE and VALUES'
                          r' statements, and will *not* work in statements '
                          r' like CREATE VIEW or DECLARE CURSOR.')
 

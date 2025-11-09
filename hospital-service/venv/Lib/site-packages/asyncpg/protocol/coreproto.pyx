@@ -11,9 +11,20 @@ import hashlib
 include "scram.pyx"
 
 
+cdef dict AUTH_METHOD_NAME = {
+    AUTH_REQUIRED_KERBEROS: 'kerberosv5',
+    AUTH_REQUIRED_PASSWORD: 'password',
+    AUTH_REQUIRED_PASSWORDMD5: 'md5',
+    AUTH_REQUIRED_GSS: 'gss',
+    AUTH_REQUIRED_SASL: 'scram-sha-256',
+    AUTH_REQUIRED_SSPI: 'sspi',
+}
+
+
 cdef class CoreProtocol:
 
-    def __init__(self, con_params):
+    def __init__(self, addr, con_params):
+        self.address = addr
         # type of `con_params` is `_ConnectionParameters`
         self.buffer = ReadBuffer()
         self.user = con_params.user
@@ -26,6 +37,9 @@ cdef class CoreProtocol:
         self.encoding = 'utf-8'
         # type of `scram` is `SCRAMAuthentcation`
         self.scram = None
+        # type of `gss_ctx` is `gssapi.SecurityContext` or
+        # `sspilib.SecurityContext`
+        self.gss_ctx = None
 
         self._reset_result()
 
@@ -237,6 +251,10 @@ cdef class CoreProtocol:
             # ErrorResponse
             self._parse_msg_error_response(True)
 
+        elif mtype == b'1':
+            # ParseComplete, in case `_bind_execute()` is reparsing
+            self.buffer.discard_message()
+
         elif mtype == b'2':
             # BindComplete
             self.buffer.discard_message()
@@ -268,6 +286,10 @@ cdef class CoreProtocol:
         elif mtype == b'E':
             # ErrorResponse
             self._parse_msg_error_response(True)
+
+        elif mtype == b'1':
+            # ParseComplete, in case `_bind_execute_many()` is reparsing
+            self.buffer.discard_message()
 
         elif mtype == b'2':
             # BindComplete
@@ -611,22 +633,35 @@ cdef class CoreProtocol:
                     'could not verify server signature for '
                     'SCRAM authentciation: scram-sha-256',
                 )
+            self.scram = None
 
-        elif status in (AUTH_REQUIRED_KERBEROS, AUTH_REQUIRED_SCMCRED,
-                        AUTH_REQUIRED_GSS, AUTH_REQUIRED_GSS_CONTINUE,
-                        AUTH_REQUIRED_SSPI):
-            self.result_type = RESULT_FAILED
-            self.result = apg_exc.InterfaceError(
-                'unsupported authentication method requested by the '
-                'server: {!r}'.format(AUTH_METHOD_NAME[status]))
+        elif status in (AUTH_REQUIRED_GSS, AUTH_REQUIRED_SSPI):
+            # AUTH_REQUIRED_SSPI is the same as AUTH_REQUIRED_GSS, except that
+            # it uses protocol negotiation with SSPI clients. Both methods use
+            # AUTH_REQUIRED_GSS_CONTINUE for subsequent authentication steps.
+            if self.gss_ctx is not None:
+                self.result_type = RESULT_FAILED
+                self.result = apg_exc.InterfaceError(
+                    'duplicate GSSAPI/SSPI authentication request')
+            else:
+                if self.con_params.gsslib == 'gssapi':
+                    self._auth_gss_init_gssapi()
+                else:
+                    self._auth_gss_init_sspi(status == AUTH_REQUIRED_SSPI)
+                self.auth_msg = self._auth_gss_step(None)
+
+        elif status == AUTH_REQUIRED_GSS_CONTINUE:
+            server_response = self.buffer.consume_message()
+            self.auth_msg = self._auth_gss_step(server_response)
 
         else:
             self.result_type = RESULT_FAILED
             self.result = apg_exc.InterfaceError(
                 'unsupported authentication method requested by the '
-                'server: {}'.format(status))
+                'server: {!r}'.format(AUTH_METHOD_NAME.get(status, status)))
 
-        if status not in [AUTH_SASL_CONTINUE, AUTH_SASL_FINAL]:
+        if status not in (AUTH_SASL_CONTINUE, AUTH_SASL_FINAL,
+                          AUTH_REQUIRED_GSS_CONTINUE):
             self.buffer.discard_message()
 
     cdef _auth_password_message_cleartext(self):
@@ -634,7 +669,7 @@ cdef class CoreProtocol:
             WriteBuffer msg
 
         msg = WriteBuffer.new_message(b'p')
-        msg.write_bytestring(self.password.encode('ascii'))
+        msg.write_bytestring(self.password.encode(self.encoding))
         msg.end_message()
 
         return msg
@@ -646,11 +681,11 @@ cdef class CoreProtocol:
         msg = WriteBuffer.new_message(b'p')
 
         # 'md5' + md5(md5(password + username) + salt))
-        userpass = ((self.password or '') + (self.user or '')).encode('ascii')
-        hash = hashlib.md5(hashlib.md5(userpass).hexdigest().\
-                encode('ascii') + salt).hexdigest().encode('ascii')
+        userpass = (self.password or '') + (self.user or '')
+        md5_1 = hashlib.md5(userpass.encode(self.encoding)).hexdigest()
+        md5_2 = hashlib.md5(md5_1.encode('ascii') + salt).hexdigest()
 
-        msg.write_bytestring(b'md5' + hash)
+        msg.write_bytestring(b'md5' + md5_2.encode('ascii'))
         msg.end_message()
 
         return msg
@@ -679,6 +714,59 @@ cdef class CoreProtocol:
         client_final_message = self.scram.create_client_final_message(
             self.password or '')
         msg.write_bytes(client_final_message)
+        msg.end_message()
+
+        return msg
+
+    cdef _auth_gss_init_gssapi(self):
+        try:
+            import gssapi
+        except ModuleNotFoundError:
+            raise apg_exc.InterfaceError(
+                'gssapi module not found; please install asyncpg[gssauth] to '
+                'use asyncpg with Kerberos/GSSAPI/SSPI authentication'
+            ) from None
+
+        service_name, host = self._auth_gss_get_service()
+        self.gss_ctx = gssapi.SecurityContext(
+            name=gssapi.Name(
+                f'{service_name}@{host}', gssapi.NameType.hostbased_service),
+            usage='initiate')
+
+    cdef _auth_gss_init_sspi(self, bint negotiate):
+        try:
+            import sspilib
+        except ModuleNotFoundError:
+            raise apg_exc.InterfaceError(
+                'sspilib module not found; please install asyncpg[gssauth] to '
+                'use asyncpg with Kerberos/GSSAPI/SSPI authentication'
+            ) from None
+
+        service_name, host = self._auth_gss_get_service()
+        self.gss_ctx = sspilib.ClientSecurityContext(
+            target_name=f'{service_name}/{host}',
+            credential=sspilib.UserCredential(
+                protocol='Negotiate' if negotiate else 'Kerberos'))
+
+    cdef _auth_gss_get_service(self):
+        service_name = self.con_params.krbsrvname or 'postgres'
+        if isinstance(self.address, str):
+            raise apg_exc.InternalClientError(
+                'GSSAPI/SSPI authentication is only supported for TCP/IP '
+                'connections')
+
+        return service_name, self.address[0]
+
+    cdef _auth_gss_step(self, bytes server_response):
+        cdef:
+            WriteBuffer msg
+
+        token = self.gss_ctx.step(server_response)
+        if not token:
+            self.gss_ctx = None
+            return None
+        msg = WriteBuffer.new_message(b'p')
+        msg.write_bytes(token)
         msg.end_message()
 
         return msg
@@ -874,7 +962,15 @@ cdef class CoreProtocol:
         outbuf.write_buffer(buf)
         self._write(outbuf)
 
-    cdef _prepare(self, str stmt_name, str query):
+    cdef _send_parse_message(self, str stmt_name, str query):
+        cdef:
+            WriteBuffer msg
+
+        self._ensure_connected()
+        msg = self._build_parse_message(stmt_name, query)
+        self._write(msg)
+
+    cdef _prepare_and_describe(self, str stmt_name, str query):
         cdef:
             WriteBuffer packet
             WriteBuffer buf
@@ -924,12 +1020,12 @@ cdef class CoreProtocol:
         self._send_bind_message(portal_name, stmt_name, bind_data, limit)
 
     cdef bint _bind_execute_many(self, str portal_name, str stmt_name,
-                                 object bind_data):
+                                 object bind_data, bint return_rows):
         self._ensure_connected()
         self._set_state(PROTOCOL_BIND_EXECUTE_MANY)
 
-        self.result = None
-        self._discard_data = True
+        self.result = [] if return_rows else None
+        self._discard_data = not return_rows
         self._execute_iter = bind_data
         self._execute_portal_name = portal_name
         self._execute_stmt_name = stmt_name

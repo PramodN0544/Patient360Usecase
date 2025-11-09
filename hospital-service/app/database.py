@@ -1,32 +1,39 @@
-import ssl, os
+import os
+import ssl
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker, declarative_base
-from urllib.parse import urlparse, urlunparse
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 if not DATABASE_URL:
     raise Exception("DATABASE_URL not found")
 
-# Convert to asyncpg
+# ✅ Convert to asyncpg
 if DATABASE_URL.startswith("postgresql://"):
     DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+asyncpg://", 1)
 
-# Clean URL
-parsed = urlparse(DATABASE_URL)
-clean_url = parsed._replace(query="")
-DATABASE_URL = urlunparse(clean_url)
+# ✅ Remove unsupported Neon params (sslmode, channel_binding)
+if "sslmode=" in DATABASE_URL or "channel_binding=" in DATABASE_URL:
+    DATABASE_URL = DATABASE_URL.split("?")[0]
 
-# SSL
+print("✅ Clean DB URL:", DATABASE_URL)
+
+# ✅ Windows-safe SSL for Neon (No verification)
 ssl_ctx = ssl.create_default_context()
 ssl_ctx.check_hostname = False
-ssl_ctx.verify_mode = ssl.CERT_NONE
+ssl_ctx.verify_mode = ssl.CERT_NONE   # ✅ IMPORTANT FIX FOR WINDOWS
 
 engine = create_async_engine(
-    DATABASE_URL, echo=True, future=True, connect_args={"ssl": ssl_ctx}
+    DATABASE_URL,
+    echo=True,
+    connect_args={"ssl": ssl_ctx},  # ✅ Keep SSL enabled
 )
-AsyncSessionLocal = sessionmaker(bind=engine, class_=AsyncSession, expire_on_commit=False)
 
-# Base
+AsyncSessionLocal = sessionmaker(
+    bind=engine,
+    class_=AsyncSession,
+    expire_on_commit=False
+)
+
 Base = declarative_base()
 metadata = Base.metadata
 

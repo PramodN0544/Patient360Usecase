@@ -63,6 +63,16 @@ async def login_for_access_token(
     return {"access_token": token, "token_type": "bearer"}
 
 
+
+@app.get("/users/me")
+async def read_users_me(current_user=Depends(get_current_user)):
+    return {
+        "id": str(current_user.id),
+        "email": current_user.email,
+        "full_name": current_user.full_name,
+        "role": current_user.role,
+        "hospital_id": str(current_user.hospital_id) if current_user.hospital_id else None
+    }
 # ✅ JSON Login (Optional)
 @app.post("/auth/login", response_model=schemas.Token)
 async def login_json(

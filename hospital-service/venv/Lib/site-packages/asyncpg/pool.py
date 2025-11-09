@@ -14,7 +14,6 @@ import warnings
 
 from . import compat
 from . import connection
-from . import connect_utils
 from . import exceptions
 from . import protocol
 
@@ -34,7 +33,8 @@ class PoolConnectionProxyMeta(type):
                 if not inspect.isfunction(meth):
                     continue
 
-                wrapper = mcls._wrap_connection_method(attrname)
+                iscoroutine = inspect.iscoroutinefunction(meth)
+                wrapper = mcls._wrap_connection_method(attrname, iscoroutine)
                 wrapper = functools.update_wrapper(wrapper, meth)
                 dct[attrname] = wrapper
 
@@ -44,7 +44,7 @@ class PoolConnectionProxyMeta(type):
         return super().__new__(mcls, name, bases, dct)
 
     @staticmethod
-    def _wrap_connection_method(meth_name):
+    def _wrap_connection_method(meth_name, iscoroutine):
         def call_con_method(self, *args, **kwargs):
             # This method will be owned by PoolConnectionProxy class.
             if self._con is None:
@@ -55,6 +55,9 @@ class PoolConnectionProxyMeta(type):
 
             meth = getattr(self._con.__class__, meth_name)
             return meth(self._con, *args, **kwargs)
+
+        if iscoroutine:
+            compat.markcoroutinefunction(call_con_method)
 
         return call_con_method
 
@@ -207,7 +210,12 @@ class PoolConnectionHolder:
                 if budget is not None:
                     budget -= time.monotonic() - started
 
-            await self._con.reset(timeout=budget)
+            if self._pool._reset is not None:
+                async with compat.timeout(budget):
+                    await self._con._reset()
+                    await self._pool._reset(self._con)
+            else:
+                await self._con.reset(timeout=budget)
         except (Exception, asyncio.CancelledError) as ex:
             # If the `reset` call failed, terminate the connection.
             # A new one will be created when `acquire` is called
@@ -310,8 +318,7 @@ class Pool:
 
     __slots__ = (
         '_queue', '_loop', '_minsize', '_maxsize',
-        '_init', '_connect_args', '_connect_kwargs',
-        '_working_addr', '_working_config', '_working_params',
+        '_init', '_connect', '_reset', '_connect_args', '_connect_kwargs',
         '_holders', '_initialized', '_initializing', '_closing',
         '_closed', '_connection_class', '_record_class', '_generation',
         '_setup', '_max_queries', '_max_inactive_connection_lifetime'
@@ -322,8 +329,10 @@ class Pool:
                  max_size,
                  max_queries,
                  max_inactive_connection_lifetime,
-                 setup,
-                 init,
+                 connect=None,
+                 setup=None,
+                 init=None,
+                 reset=None,
                  loop,
                  connection_class,
                  record_class,
@@ -377,28 +386,28 @@ class Pool:
         self._initializing = False
         self._queue = None
 
-        self._working_addr = None
-        self._working_config = None
-        self._working_params = None
-
         self._connection_class = connection_class
         self._record_class = record_class
 
         self._closing = False
         self._closed = False
         self._generation = 0
-        self._init = init
+
+        self._connect = connect if connect is not None else connection.connect
         self._connect_args = connect_args
         self._connect_kwargs = connect_kwargs
 
         self._setup = setup
+        self._init = init
+        self._reset = reset
+
         self._max_queries = max_queries
         self._max_inactive_connection_lifetime = \
             max_inactive_connection_lifetime
 
     async def _async__init__(self):
         if self._initialized:
-            return
+            return self
         if self._initializing:
             raise exceptions.InterfaceError(
                 'pool is being initialized in another task')
@@ -430,9 +439,8 @@ class Pool:
             # first few connections in the queue, therefore we want to walk
             # `self._holders` in reverse.
 
-            # Connect the first connection holder in the queue so that it
-            # can record `_working_addr` and `_working_opts`, which will
-            # speed up successive connection attempts.
+            # Connect the first connection holder in the queue so that
+            # any connection issues are visible early.
             first_ch = self._holders[-1]  # type: PoolConnectionHolder
             await first_ch.connect()
 
@@ -445,6 +453,13 @@ class Pool:
                     connect_tasks.append(ch.connect())
 
                 await asyncio.gather(*connect_tasks)
+
+    def is_closing(self):
+        """Return ``True`` if the pool is closing or is closed.
+
+        .. versionadded:: 0.28.0
+        """
+        return self._closed or self._closing
 
     def get_size(self):
         """Return the current number of connections in this pool.
@@ -497,35 +512,26 @@ class Pool:
 
         self._connect_args = [dsn]
         self._connect_kwargs = connect_kwargs
-        self._working_addr = None
-        self._working_config = None
-        self._working_params = None
 
     async def _get_new_connection(self):
-        if self._working_addr is None:
-            # First connection attempt on this pool.
-            con = await connection.connect(
-                *self._connect_args,
-                loop=self._loop,
-                connection_class=self._connection_class,
-                record_class=self._record_class,
-                **self._connect_kwargs)
-
-            self._working_addr = con._addr
-            self._working_config = con._config
-            self._working_params = con._params
-
-        else:
-            # We've connected before and have a resolved address,
-            # and parsed options and config.
-            con = await connect_utils._connect_addr(
-                loop=self._loop,
-                addr=self._working_addr,
-                timeout=self._working_params.connect_timeout,
-                config=self._working_config,
-                params=self._working_params,
-                connection_class=self._connection_class,
-                record_class=self._record_class,
+        con = await self._connect(
+            *self._connect_args,
+            loop=self._loop,
+            connection_class=self._connection_class,
+            record_class=self._record_class,
+            **self._connect_kwargs,
+        )
+        if not isinstance(con, self._connection_class):
+            good = self._connection_class
+            good_n = f'{good.__module__}.{good.__name__}'
+            bad = type(con)
+            if bad.__module__ == "builtins":
+                bad_n = bad.__name__
+            else:
+                bad_n = f'{bad.__module__}.{bad.__name__}'
+            raise exceptions.InterfaceError(
+                "expected pool connect callback to return an instance of "
+                f"'{good_n}', got " f"'{bad_n}'"
             )
 
         if self._init is not None:
@@ -624,6 +630,22 @@ class Pool:
                 *args,
                 timeout=timeout,
                 record_class=record_class
+            )
+
+    async def fetchmany(self, query, args, *, timeout=None, record_class=None):
+        """Run a query for each sequence of arguments in *args*
+        and return the results as a list of :class:`Record`.
+
+        Pool performs this operation using one of its connections.  Other than
+        that, it behaves identically to
+        :meth:`Connection.fetchmany()
+        <asyncpg.connection.Connection.fetchmany>`.
+
+        .. versionadded:: 0.30.0
+        """
+        async with self.acquire() as con:
+            return await con.fetchmany(
+                query, args, timeout=timeout, record_class=record_class
             )
 
     async def copy_from_table(
@@ -732,7 +754,8 @@ class Pool:
         force_quote=None,
         force_not_null=None,
         force_null=None,
-        encoding=None
+        encoding=None,
+        where=None
     ):
         """Copy data to the specified table.
 
@@ -761,7 +784,8 @@ class Pool:
                 force_quote=force_quote,
                 force_not_null=force_not_null,
                 force_null=force_null,
-                encoding=encoding
+                encoding=encoding,
+                where=where
             )
 
     async def copy_records_to_table(
@@ -771,7 +795,8 @@ class Pool:
         records,
         columns=None,
         schema_name=None,
-        timeout=None
+        timeout=None,
+        where=None
     ):
         """Copy a list of records to the specified table using binary COPY.
 
@@ -788,7 +813,8 @@ class Pool:
                 records=records,
                 columns=columns,
                 schema_name=schema_name,
-                timeout=timeout
+                timeout=timeout,
+                where=where
             )
 
     def acquire(self, *, timeout=None):
@@ -1014,8 +1040,10 @@ def create_pool(dsn=None, *,
                 max_size=10,
                 max_queries=50000,
                 max_inactive_connection_lifetime=300.0,
+                connect=None,
                 setup=None,
                 init=None,
+                reset=None,
                 loop=None,
                 connection_class=connection.Connection,
                 record_class=protocol.Record,
@@ -1096,9 +1124,16 @@ def create_pool(dsn=None, *,
         Number of seconds after which inactive connections in the
         pool will be closed.  Pass ``0`` to disable this mechanism.
 
+    :param coroutine connect:
+        A coroutine that is called instead of
+        :func:`~asyncpg.connection.connect` whenever the pool needs to make a
+        new connection.  Must return an instance of type specified by
+        *connection_class* or :class:`~asyncpg.connection.Connection` if
+        *connection_class* was not specified.
+
     :param coroutine setup:
         A coroutine to prepare a connection right before it is returned
-        from :meth:`Pool.acquire() <pool.Pool.acquire>`.  An example use
+        from :meth:`Pool.acquire()`.  An example use
         case would be to automatically set up notifications listeners for
         all connections of a pool.
 
@@ -1109,6 +1144,25 @@ def create_pool(dsn=None, *,
         asyncpg.connection.Connection.set_builtin_type_codec>`
         or :meth:`Connection.set_type_codec() <\
         asyncpg.connection.Connection.set_type_codec>`.
+
+    :param coroutine reset:
+        A coroutine to reset a connection before it is returned to the pool by
+        :meth:`Pool.release()`.  The function is supposed
+        to reset any changes made to the database session so that the next
+        acquirer gets the connection in a well-defined state.
+
+        The default implementation calls :meth:`Connection.reset() <\
+        asyncpg.connection.Connection.reset>`, which runs the following::
+
+            SELECT pg_advisory_unlock_all();
+            CLOSE ALL;
+            UNLISTEN *;
+            RESET ALL;
+
+        The exact reset query is determined by detected server capabilities,
+        and a custom *reset* implementation can obtain the default query
+        by calling :meth:`Connection.get_reset_query() <\
+        asyncpg.connection.Connection.get_reset_query>`.
 
     :param loop:
         An asyncio event loop instance.  If ``None``, the default
@@ -1136,12 +1190,22 @@ def create_pool(dsn=None, *,
 
     .. versionchanged:: 0.22.0
        Added the *record_class* parameter.
+
+    .. versionchanged:: 0.30.0
+       Added the *connect* and *reset* parameters.
     """
     return Pool(
         dsn,
         connection_class=connection_class,
         record_class=record_class,
-        min_size=min_size, max_size=max_size,
-        max_queries=max_queries, loop=loop, setup=setup, init=init,
+        min_size=min_size,
+        max_size=max_size,
+        max_queries=max_queries,
+        loop=loop,
+        connect=connect,
+        setup=setup,
+        init=init,
+        reset=reset,
         max_inactive_connection_lifetime=max_inactive_connection_lifetime,
-        **connect_kwargs)
+        **connect_kwargs,
+    )
