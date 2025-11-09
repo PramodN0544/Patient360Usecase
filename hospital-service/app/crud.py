@@ -213,3 +213,15 @@ async def get_hospital_by_id(db: AsyncSession, hospital_id: UUID):
         select(models.Hospital).where(models.Hospital.id == hospital_id)
     )
     return result.scalars().first()
+
+async def get_patients_by_hospital(db: AsyncSession, hospital_id: str):
+    """Get all patients for a specific hospital"""
+    try:
+        result = await db.execute(
+            select(Patient).where(Patient.hospital_id == hospital_id)
+        )
+        patients = result.scalars().all()
+        return patients
+    except Exception as e:
+        print(f"Error fetching patients for hospital {hospital_id}: {e}")
+        raise
