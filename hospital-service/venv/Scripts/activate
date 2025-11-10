@@ -35,7 +35,7 @@ deactivate () {
 # unset irrelevant variables
 deactivate nondestructive
 
-VIRTUAL_ENV="C:\Rushikesh\Patient360\patient360 Backend\hospital-service\venv"
+VIRTUAL_ENV="C:\Users\NTS-DishaBardiya\Documents\Patient360UsecaseCareIQ\Patient360Usecase\hospital-service\venv"
 export VIRTUAL_ENV
 
 _OLD_VIRTUAL_PATH="$PATH"

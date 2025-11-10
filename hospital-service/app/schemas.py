@@ -32,7 +32,6 @@ class HospitalSignupRequest(BaseModel):
     role: str = "hospital"
     hospital: HospitalBase
 
-
 class HospitalOut(BaseModel):
     id: UUID
     name: str
@@ -64,7 +63,6 @@ class DoctorCreate(BaseModel):
     end_time: Optional[time] = None
     mode_of_consultation: Optional[str] = None
 
-
 class DoctorOut(DoctorCreate):
     id: UUID
     status: Optional[str] = None
@@ -90,7 +88,6 @@ class PatientCreate(BaseModel):
     citizenship_status: Optional[str] = None
     visa_type: Optional[str] = None
 
-
 class PatientOut(PatientCreate):
     id: UUID
     created_at: Optional[datetime] = None
@@ -113,13 +110,11 @@ class LoginRequest(BaseModel):
     username: EmailStr
     password: str
 
-
 class UserCreate(BaseModel):
     email: EmailStr
     password: str = Field(..., max_length=72)
     full_name: Optional[str]
     role: Optional[str] = "hospital"
-
 
 class UserOut(BaseModel):
     id: UUID
@@ -130,7 +125,6 @@ class UserOut(BaseModel):
 
     class Config:
         orm_mode = True
-
 
 class SignupResponse(BaseModel):
     user: UserOut
@@ -148,7 +142,6 @@ class AppointmentCreate(BaseModel):
 
     class Config:
         orm_mode = True
-
 
 class AppointmentResponse(BaseModel):
     id: UUID
@@ -180,7 +173,6 @@ class MedicationCreate(BaseModel):
 
     class Config:
         orm_mode = True
-
 
 class MedicationOut(MedicationCreate):
     id: UUID

@@ -8,7 +8,7 @@ if defined _OLD_CODEPAGE (
     "%SystemRoot%\System32\chcp.com" 65001 > nul
 )
 
-set VIRTUAL_ENV=C:\Rushikesh\Patient360\patient360 Backend\hospital-service\venv
+set VIRTUAL_ENV=C:\Users\NTS-DishaBardiya\Documents\Patient360UsecaseCareIQ\Patient360Usecase\hospital-service\venv
 
 if not defined PROMPT set PROMPT=$P$G
 

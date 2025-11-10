@@ -54,7 +54,6 @@ async def login_for_access_token(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect username or password"
         )
-
     token = utils.create_access_token({"sub": user.email})
     return {"access_token": token, "token_type": "bearer"}
 
@@ -114,7 +113,6 @@ async def hospital_signup(
     await db.commit()
     await db.refresh(user)
     await db.refresh(hospital)
-
     return {
         "user": {
             "id": str(user.id),
@@ -145,7 +143,6 @@ async def create_doctor(
 ):
     if current_user.role != "hospital":
         raise HTTPException(status_code=403, detail="Only hospital can create doctors")
-
     doctor, password, email = await crud.create_doctor(
         db=db,
         data=doctor_in.dict(),
@@ -167,7 +164,6 @@ async def create_doctor(
         CareIQ
         """
     )
-
     return {
         "doctor_id": str(doctor.id),
         "message": "Doctor created and credentials emailed successfully"
@@ -199,7 +195,6 @@ async def create_patient(
         CareIQ
         """
     )
-
     return {
         "patient_id": str(patient.id),
         "message": "Patient created and login credentials sent via email"
@@ -247,7 +242,6 @@ async def get_all_doctors(
 ):
     if current_user.role != "hospital":
         raise HTTPException(status_code=403, detail="Only hospital can view doctors")
-
     doctors = await crud.get_doctors_by_hospital(db, current_user.hospital_id)
     return doctors
 
@@ -276,7 +270,6 @@ async def get_all_patients(
 ):
     if current_user.role not in ("hospital", "admin"):
         raise HTTPException(status_code=403, detail="Not permitted")
-
     patients = await crud.get_patients_by_hospital(db, current_user.hospital_id)
     return patients
 
