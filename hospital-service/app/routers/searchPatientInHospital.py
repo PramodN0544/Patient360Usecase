@@ -15,12 +15,12 @@ async def search_patients(
     patient_id: Optional[str] = None,
     name: Optional[str] = None,
     phone: Optional[str] = None,
+    ssn: Optional[str] = None,                   
     db: AsyncSession = Depends(get_db),
     current_user: schemas.UserOut = Depends(get_current_user)
 ):
 
     stmt = select(models.Patient)
-
     filters = []
 
     if patient_id:
@@ -37,6 +37,9 @@ async def search_patients(
 
     if phone:
         filters.append(models.Patient.phone.ilike(f"%{phone}%"))
+
+    if ssn:
+        filters.append(models.Patient.ssn.ilike(f"%{ssn}%")) 
 
     if filters:
         stmt = stmt.where(*filters)
