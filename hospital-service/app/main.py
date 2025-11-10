@@ -7,35 +7,39 @@ from app import schemas, crud, utils
 from app.cors import apply_cors, get_frontend_origins
 from app.database import get_db, engine, Base
 from app.auth import get_current_user
-from app.routers import appointment, searchPatientInHospital
-from app.routers import reset_password
-
-from app.routers import medications
-
-
-# ✅ Import appointment router
-from app.routers import appointment
-
-
+from app.routers import (
+    appointment,
+    searchPatientInHospital,
+    reset_password,
+    medications,
+    encounters
+)
 
 app = FastAPI(title="CareIQ Patient 360 API")
 
+# ================================================================
+# ✅ Include Routers
+# ================================================================
 app.include_router(medications.router)
-
-# Configure CORS for frontend integration. Configure origins via
-# FRONTEND_ORIGINS (comma-separated) or FRONTEND_URL environment variables.
-apply_cors(app)
-
-# ✅ Include the appointment routes
-app.include_router(appointment.router)  # no need to repeat prefix; it's already defined inside appointment.py
-
+app.include_router(encounters.router)          # Include Encounters router
+app.include_router(appointment.router)
 app.include_router(reset_password.router)
-
 app.include_router(searchPatientInHospital.router)
 
 
+print("🔹 Registered Routes:")
+for r in app.routes:
+    print(r.path, r.methods)
+    
+from app.main import app
+print([route.path for route in app.routes if "encounters" in route.path])
 # ================================================================
-# ✅ Auto-create tables
+# ✅ Configure CORS
+# ================================================================
+apply_cors(app)
+
+# ================================================================
+# ✅ Auto-create tables on startup
 # ================================================================
 @app.on_event("startup")
 async def startup():
@@ -43,9 +47,8 @@ async def startup():
         await conn.run_sync(Base.metadata.create_all)
     print("✅ Database schema synchronized successfully")
 
-
 # ================================================================
-# ✅ LOGIN — JWT Token
+# ✅ AUTH — JWT Token
 # ================================================================
 @app.post("/auth/token", response_model=schemas.Token)
 async def login_for_access_token(
@@ -58,10 +61,27 @@ async def login_for_access_token(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect username or password"
         )
-
     token = utils.create_access_token({"sub": user.email})
     return {"access_token": token, "token_type": "bearer"}
 
+
+@app.post("/auth/login", response_model=schemas.Token)
+async def login_json(
+    credentials: schemas.LoginRequest,
+    db: AsyncSession = Depends(get_db)
+):
+    try:
+        user = await crud.authenticate_user(db, credentials.username, credentials.password)
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Incorrect username or password"
+            )
+        token = utils.create_access_token({"sub": user.email})
+        return {"access_token": token, "token_type": "bearer"}
+    except Exception as e:
+        print("💥 Login error:", e)
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/users/me")
@@ -73,29 +93,15 @@ async def read_users_me(current_user=Depends(get_current_user)):
         "role": current_user.role,
         "hospital_id": str(current_user.hospital_id) if current_user.hospital_id else None
     }
-# ✅ JSON Login (Optional)
-@app.post("/auth/login", response_model=schemas.Token)
-async def login_json(
-    credentials: schemas.LoginRequest,
-    db: AsyncSession = Depends(get_db)
-):
-    user = await crud.authenticate_user(db, credentials.username, credentials.password)
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect username or password"
-        )
 
-    token = utils.create_access_token({"sub": user.email})
-    return {"access_token": token, "token_type": "bearer"}
-
-
+# ================================================================
+# ✅ HOSPITAL / DOCTOR / PATIENT ENDPOINTS
+# ================================================================
 @app.post("/hospitals/signup", response_model=schemas.SignupResponse)
 async def hospital_signup(
     data: schemas.HospitalSignupRequest,
     db: AsyncSession = Depends(get_db)
 ):
-    # ✅ Step 1 – create user (role = hospital)
     user = await crud.create_user(
         db=db,
         email=data.email,
@@ -103,21 +109,15 @@ async def hospital_signup(
         full_name=data.full_name,
         role="hospital"
     )
-
-    # ✅ Step 2 – create hospital (NO user_id)
     hospital = await crud.create_hospital_record(
         db=db,
         hospital_data=data.hospital.dict(),
-        # user_id=user.id
     )
-
-    # ✅ Step 3 – link user to hospital
     user.hospital_id = hospital.id
     db.add(user)
     await db.commit()
     await db.refresh(user)
     await db.refresh(hospital)
-
     return {
         "user": {
             "id": str(user.id),
@@ -140,10 +140,6 @@ async def hospital_signup(
     }
 
 
-
-# ================================================================
-# ✅ CREATE DOCTOR (User + Doctor)
-# ================================================================
 @app.post("/doctors")
 async def create_doctor(
     doctor_in: schemas.DoctorCreate,
@@ -152,14 +148,11 @@ async def create_doctor(
 ):
     if current_user.role != "hospital":
         raise HTTPException(status_code=403, detail="Only hospital can create doctors")
-
     doctor, password, email = await crud.create_doctor(
         db=db,
         data=doctor_in.dict(),
         hospital_id=current_user.hospital_id
     )
-
-    # ✅ Email send (pseudo function — integrate your email library)
     utils.send_email(
         email,
         subject="Your Doctor Account Credentials",
@@ -167,23 +160,17 @@ async def create_doctor(
         Welcome Doctor,
         Login Email: {email}
         Temporary Password: {password}
-
         Please login and change your password.
-
         Regards,
         CareIQ
         """
     )
-
     return {
         "doctor_id": str(doctor.id),
         "message": "Doctor created and credentials emailed successfully"
     }
 
 
-# ================================================================
-# ✅ CREATE PATIENT (User + Patient)
-# ================================================================
 @app.post("/patients")
 async def create_patient(
     patient_in: schemas.PatientCreate,
@@ -192,9 +179,7 @@ async def create_patient(
 ):
     if current_user.role not in ("hospital", "admin", "doctor"):
         raise HTTPException(status_code=403, detail="Not permitted")
-
     patient, password, email = await crud.create_patient(db, patient_in)
-
     utils.send_email(
         email,
         subject="Your Patient Portal Login",
@@ -202,55 +187,30 @@ async def create_patient(
         Welcome,
         Login Email: {email}
         Temporary Password: {password}
-
         You can now access your patient dashboard and update your password.
-
         Regards,
         CareIQ
         """
     )
-
     return {
         "patient_id": str(patient.id),
         "message": "Patient created and login credentials sent via email"
     }
 
-
 # ================================================================
-# ✅ Health Check
+# ✅ GET Endpoints for Doctor / Patient / Hospital
 # ================================================================
-@app.get("/health")
-async def health():
-    return {"status": "ok"}
-
-
-@app.get("/config")
-async def get_config():
-    """Return runtime configuration useful for frontend diagnostics."""
-    origins = get_frontend_origins()
-    return {"cors_origins": origins}
-
-
-@app.get("/")
-def root():
-    return {"message": "CareIQ Patient 360 API is running 🚀"}
-
-
 @app.get("/doctors", response_model=schemas.DoctorOut)
 async def get_my_doctor_profile(
-    current_user = Depends(get_current_user),
+    current_user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     if current_user.role != "doctor":
         raise HTTPException(status_code=403, detail="Only doctors can access this")
-
     doctor = await crud.get_doctor_by_user_id(db, current_user.id)
-
     if not doctor:
         raise HTTPException(status_code=404, detail="Doctor profile not found")
-
     return doctor
-
 
 
 @app.get("/hospitals/doctors", response_model=list[schemas.DoctorOut])
@@ -260,25 +220,20 @@ async def get_all_doctors(
 ):
     if current_user.role != "hospital":
         raise HTTPException(status_code=403, detail="Only hospital can view doctors")
-
     doctors = await crud.get_doctors_by_hospital(db, current_user.hospital_id)
     return doctors
 
 
 @app.get("/patients", response_model=schemas.PatientOut)
 async def get_my_profile(
-    current_user = Depends(get_current_user),
+    current_user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     if current_user.role != "patient":
         raise HTTPException(status_code=403, detail="Only patients can access this endpoint")
-
-    # Fetch patient linked to this user
     patient = await crud.get_patient_by_user_id(db, current_user.id)
-
     if not patient:
         raise HTTPException(status_code=404, detail="Patient profile not found")
-
     return patient
 
 
@@ -289,7 +244,6 @@ async def get_all_patients(
 ):
     if current_user.role not in ("hospital", "admin"):
         raise HTTPException(status_code=403, detail="Not permitted")
-
     patients = await crud.get_patients_by_hospital(db, current_user.hospital_id)
     return patients
 
@@ -301,12 +255,25 @@ async def get_my_hospital_profile(
 ):
     if current_user.role != "hospital":
         raise HTTPException(status_code=403, detail="Only hospitals can access this")
-
     hospital = await crud.get_hospital_by_id(db, current_user.hospital_id)
-
     if not hospital:
         raise HTTPException(status_code=404, detail="Hospital profile not found")
-
     return hospital
 
+# ================================================================
+# ✅ Health Check / Config / Root
+# ================================================================
+@app.get("/health")
+async def health():
+    return {"status": "ok"}
 
+
+@app.get("/config")
+async def get_config():
+    origins = get_frontend_origins()
+    return {"cors_origins": origins}
+
+
+@app.get("/")
+def root():
+    return {"message": "CareIQ Patient 360 API is running 🚀"}

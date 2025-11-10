@@ -1,11 +1,10 @@
 from pydantic import BaseModel, EmailStr, Field
-from typing import Optional
+from typing import Optional, List
 from uuid import UUID
 from datetime import date, time, datetime
 
-
-# ==============================================================
-# ✅ HOSPITAL SCHEMAS
+# ============================================================== 
+# ✅ HOSPITAL SCHEMAS 
 # ==============================================================
 class HospitalBase(BaseModel):
     name: str
@@ -23,10 +22,8 @@ class HospitalBase(BaseModel):
     start_time: time
     end_time: time
     consultation_fee: float
-    # mode_of_consultation: str
     website: Optional[str] = None
     country: Optional[str] = "USA"
-
 
 class HospitalSignupRequest(BaseModel):
     email: EmailStr
@@ -34,7 +31,6 @@ class HospitalSignupRequest(BaseModel):
     full_name: str
     role: str = "hospital"
     hospital: HospitalBase
-
 
 class HospitalOut(BaseModel):
     id: UUID
@@ -50,9 +46,8 @@ class HospitalOut(BaseModel):
     class Config:
         orm_mode = True
 
-
-# ==============================================================
-# ✅ DOCTOR SCHEMAS
+# ============================================================== 
+# ✅ DOCTOR SCHEMAS 
 # ==============================================================
 class DoctorCreate(BaseModel):
     npi_number: str
@@ -70,7 +65,6 @@ class DoctorCreate(BaseModel):
     end_time: Optional[time] = None
     mode_of_consultation: Optional[str] = None
 
-
 class DoctorOut(DoctorCreate):
     id: UUID
     status: Optional[str] = None
@@ -79,9 +73,8 @@ class DoctorOut(DoctorCreate):
     class Config:
         orm_mode = True
 
-
-# ==============================================================
-# ✅ PATIENT SCHEMAS
+# ============================================================== 
+# ✅ PATIENT SCHEMAS 
 # ==============================================================
 class PatientCreate(BaseModel):
     first_name: str
@@ -99,7 +92,6 @@ class PatientCreate(BaseModel):
     citizenship_status: Optional[str] = None
     visa_type: Optional[str] = None
 
-
 class PatientOut(PatientCreate):
     id: UUID
     created_at: Optional[datetime] = None
@@ -107,31 +99,25 @@ class PatientOut(PatientCreate):
     class Config:
         orm_mode = True
 
-
-# ==============================================================
-# ✅ AUTH SCHEMAS
+# ============================================================== 
+# ✅ AUTH SCHEMAS 
 # ==============================================================
 class Token(BaseModel):
     access_token: str
     token_type: str = "bearer"
 
-
 class TokenData(BaseModel):
     email: Optional[str] = None
 
-
-# Simple JSON login request (optional, for clients that prefer JSON over form data)
 class LoginRequest(BaseModel):
     username: EmailStr
     password: str
-
 
 class UserCreate(BaseModel):
     email: EmailStr
     password: str = Field(..., max_length=72)
     full_name: Optional[str]
     role: Optional[str] = "hospital"
-
 
 class UserOut(BaseModel):
     id: UUID
@@ -143,13 +129,13 @@ class UserOut(BaseModel):
     class Config:
         orm_mode = True
 
-
 class SignupResponse(BaseModel):
     user: UserOut
     hospital: HospitalOut
 
-# Appointment Schemas
-# ===============================
+# ============================================================== 
+# ✅ APPOINTMENT SCHEMAS 
+# ==============================================================
 class AppointmentCreate(BaseModel):
     hospital_id: UUID
     doctor_id: UUID
@@ -161,7 +147,6 @@ class AppointmentCreate(BaseModel):
 
     class Config:
         orm_mode = True
-
 
 class AppointmentResponse(BaseModel):
     id: UUID
@@ -176,10 +161,14 @@ class AppointmentResponse(BaseModel):
 
     class Config:
         orm_mode = True
-        
-        
+
+# ============================================================== 
+# ✅ MEDICATION SCHEMAS 
+# ==============================================================
+
 class MedicationCreate(BaseModel):
-    patient_id: UUID
+    # patient_id optional because router assigns it from Encounter
+    patient_id: Optional[UUID] = None
     doctor_id: Optional[UUID] = None
     appointment_id: Optional[UUID] = None
     medication_name: str
@@ -194,11 +183,83 @@ class MedicationCreate(BaseModel):
     class Config:
         orm_mode = True
 
+from uuid import UUID
 
-class MedicationOut(MedicationCreate):
+class MedicationOut(BaseModel):
     id: UUID
-    created_at: Optional[datetime] = None
-    updated_at: Optional[datetime] = None
+    patient_id: UUID
+    doctor_id: UUID
+    encounter_id: UUID
+    medication_name: str
+    dosage: str
+    frequency: str
+    route: str
+    start_date: date
+    end_date: date | None
+    status: str
+    notes: str | None
 
-    class Config:
-        orm_mode = True
+    model_config = {
+        "from_attributes": True
+    }
+
+# ============================================================== 
+# ✅ ENCOUNTER SCHEMAS 
+# ==============================================================
+class EncounterCreate(BaseModel):
+    patient_id: UUID
+    doctor_id: UUID
+    hospital_id: UUID
+    encounter_date: date
+    encounter_type: str
+    reason_for_visit: Optional[str] = None
+    diagnosis: Optional[str] = None
+    notes: Optional[str] = None
+    vitals: Optional[dict] = None
+    lab_tests_ordered: Optional[dict] = None
+    follow_up_date: Optional[date] = None
+    status: Optional[str] = "open"
+    medications: Optional[List[MedicationCreate]] = []  # nested medications
+
+from pydantic import BaseModel
+from typing import List, Optional
+from uuid import UUID
+from datetime import date
+
+class MedicationOut(BaseModel):
+    id: UUID
+    patient_id: UUID
+    doctor_id: UUID
+    encounter_id: UUID
+    medication_name: str
+    dosage: str
+    frequency: str
+    route: Optional[str] = None
+    start_date: date
+    end_date: Optional[date] = None
+    status: str
+    notes: Optional[str] = None
+
+    model_config = {
+        "from_attributes": True   # <-- Required for from_orm in Pydantic v2
+    }
+
+class EncounterOut(BaseModel):
+    id: UUID
+    patient_id: UUID
+    doctor_id: UUID
+    hospital_id: UUID
+    encounter_date: date
+    encounter_type: str
+    reason_for_visit: Optional[str] = None
+    diagnosis: Optional[str] = None
+    notes: Optional[str] = None
+    vitals: Optional[dict] = {}
+    lab_tests_ordered: Optional[dict] = {}
+    follow_up_date: Optional[date] = None
+    status: str
+    medications: List[MedicationOut] = []
+
+    model_config = {
+        "from_attributes": True   # <-- Required for from_orm in Pydantic v2
+    }
