@@ -9,7 +9,7 @@ from app.database import get_db, engine, Base
 from app.auth import get_current_user
 from app.routers import appointment, searchPatientInHospital
 from app.routers import reset_password
-
+from app.routers import notifications
 from app.routers import medications
 
 
@@ -21,32 +21,28 @@ from app.routers import appointment
 app = FastAPI(title="CareIQ Patient 360 API")
 
 app.include_router(medications.router)
+app.include_router(notifications.router)
 
-# Configure CORS for frontend integration. Configure origins via
-# FRONTEND_ORIGINS (comma-separated) or FRONTEND_URL environment variables.
+
 apply_cors(app)
 
-# ✅ Include the appointment routes
+# Include the appointment routes
 app.include_router(appointment.router)  # no need to repeat prefix; it's already defined inside appointment.py
 
 app.include_router(reset_password.router)
 
 app.include_router(searchPatientInHospital.router)
 
+# Auto-create tables
 
-# ================================================================
-# ✅ Auto-create tables
-# ================================================================
 @app.on_event("startup")
 async def startup():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-    print("✅ Database schema synchronized successfully")
+    print("Database schema synchronized successfully")
 
 
-# ================================================================
-# ✅ LOGIN — JWT Token
-# ================================================================
+# LOGIN — JWT Token
 @app.post("/auth/token", response_model=schemas.Token)
 async def login_for_access_token(
     form_data: OAuth2PasswordRequestForm = Depends(),
@@ -73,7 +69,8 @@ async def read_users_me(current_user=Depends(get_current_user)):
         "role": current_user.role,
         "hospital_id": str(current_user.hospital_id) if current_user.hospital_id else None
     }
-# ✅ JSON Login (Optional)
+
+# JSON Login (Optional)
 @app.post("/auth/login", response_model=schemas.Token)
 async def login_json(
     credentials: schemas.LoginRequest,
@@ -95,7 +92,7 @@ async def hospital_signup(
     data: schemas.HospitalSignupRequest,
     db: AsyncSession = Depends(get_db)
 ):
-    # ✅ Step 1 – create user (role = hospital)
+    # Step 1 – create user (role = hospital)
     user = await crud.create_user(
         db=db,
         email=data.email,
@@ -104,14 +101,14 @@ async def hospital_signup(
         role="hospital"
     )
 
-    # ✅ Step 2 – create hospital (NO user_id)
+    # Step 2 – create hospital (NO user_id)
     hospital = await crud.create_hospital_record(
         db=db,
         hospital_data=data.hospital.dict(),
         # user_id=user.id
     )
 
-    # ✅ Step 3 – link user to hospital
+    # Step 3 – link user to hospital
     user.hospital_id = hospital.id
     db.add(user)
     await db.commit()
@@ -139,11 +136,7 @@ async def hospital_signup(
         }
     }
 
-
-
-# ================================================================
-# ✅ CREATE DOCTOR (User + Doctor)
-# ================================================================
+# CREATE DOCTOR (User + Doctor)
 @app.post("/doctors")
 async def create_doctor(
     doctor_in: schemas.DoctorCreate,
@@ -159,7 +152,7 @@ async def create_doctor(
         hospital_id=current_user.hospital_id
     )
 
-    # ✅ Email send (pseudo function — integrate your email library)
+    # Email send (pseudo function — integrate your email library)
     utils.send_email(
         email,
         subject="Your Doctor Account Credentials",
@@ -180,10 +173,7 @@ async def create_doctor(
         "message": "Doctor created and credentials emailed successfully"
     }
 
-
-# ================================================================
-# ✅ CREATE PATIENT (User + Patient)
-# ================================================================
+# CREATE PATIENT (User + Patient)
 @app.post("/patients")
 async def create_patient(
     patient_in: schemas.PatientCreate,
@@ -215,10 +205,7 @@ async def create_patient(
         "message": "Patient created and login credentials sent via email"
     }
 
-
-# ================================================================
-# ✅ Health Check
-# ================================================================
+# Health Check
 @app.get("/health")
 async def health():
     return {"status": "ok"}

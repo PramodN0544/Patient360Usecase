@@ -3,10 +3,7 @@ from typing import Optional
 from uuid import UUID
 from datetime import date, time, datetime
 
-
-# ==============================================================
-# ✅ HOSPITAL SCHEMAS
-# ==============================================================
+# HOSPITAL SCHEMAS
 class HospitalBase(BaseModel):
     name: str
     address: str
@@ -50,10 +47,7 @@ class HospitalOut(BaseModel):
     class Config:
         orm_mode = True
 
-
-# ==============================================================
-# ✅ DOCTOR SCHEMAS
-# ==============================================================
+# DOCTOR SCHEMAS
 class DoctorCreate(BaseModel):
     npi_number: str
     first_name: str
@@ -79,10 +73,7 @@ class DoctorOut(DoctorCreate):
     class Config:
         orm_mode = True
 
-
-# ==============================================================
-# ✅ PATIENT SCHEMAS
-# ==============================================================
+# PATIENT SCHEMAS
 class PatientCreate(BaseModel):
     first_name: str
     last_name: str
@@ -107,10 +98,7 @@ class PatientOut(PatientCreate):
     class Config:
         orm_mode = True
 
-
-# ==============================================================
-# ✅ AUTH SCHEMAS
-# ==============================================================
+# AUTH SCHEMAS
 class Token(BaseModel):
     access_token: str
     token_type: str = "bearer"
@@ -149,11 +137,10 @@ class SignupResponse(BaseModel):
     hospital: HospitalOut
 
 # Appointment Schemas
-# ===============================
 class AppointmentCreate(BaseModel):
     hospital_id: UUID
     doctor_id: UUID
-    patient_id: UUID
+    # patient_id: UUID
     appointment_date: date
     appointment_time: time
     reason: Optional[str] = None

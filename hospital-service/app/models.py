@@ -55,7 +55,7 @@ class Hospital(Base, TimestampMixin):
     website = Column(String(200))
     status = Column(String(20), default="active")
 
-    # ✅ Relationships
+    # Relationships
     users = relationship("User", back_populates="hospital", cascade="all, delete")
     doctors = relationship("Doctor", back_populates="hospital", cascade="all, delete")
     appointments = relationship("Appointment", back_populates="hospital", cascade="all, delete")
@@ -128,7 +128,7 @@ class Patient(Base, TimestampMixin):
     citizenship_status = Column(String(50))
     visa_type = Column(String(50))
 
-    # ✅ Relationships
+    # Relationships
     appointments = relationship("Appointment", back_populates="patient", cascade="all, delete")
     medications = relationship("Medication", back_populates="patient", cascade="all, delete")
 
@@ -156,15 +156,12 @@ class Appointment(Base, TimestampMixin):
 
     # Audit trail is provided by TimestampMixin
 
-    # ✅ Relationships
+    # Relationships
     patient = relationship("Patient", back_populates="appointments")
     hospital = relationship("Hospital", back_populates="appointments")
     doctor = relationship("Doctor", back_populates="appointments")
 
-
-# =====================================================
-# ✅ Medication Table
-# =====================================================
+#  Medication Table
 class Medication(Base, TimestampMixin):
     __tablename__ = "medications"
 
@@ -215,6 +212,25 @@ password_reset_otps_table = Table(
     Column("used", Boolean, default=False),
     Column("created_at", DateTime, default=datetime.utcnow)
 )
+
+
+class Notification(Base, TimestampMixin):
+    __tablename__ = "notifications"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, server_default=sa.text("gen_random_uuid()"))
+    
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+
+    # Notification fields
+    title = Column(String(200), nullable=False)
+    desc = Column(Text, nullable=True)
+    type = Column(String(50), nullable=False)  # appointment | medication | system
+    status = Column(String(50), default="unread")  # unread | read
+    data_id = Column(String(200), nullable=True)  # appointment_id OR medication_id
+
+    # Relationships
+    user = relationship("User")
+
 
 
 
