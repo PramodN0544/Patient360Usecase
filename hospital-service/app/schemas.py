@@ -1,5 +1,5 @@
 from pydantic import BaseModel, EmailStr, Field
-from typing import Optional
+from typing import List, Optional
 from uuid import UUID
 from datetime import date, time, datetime
 
@@ -158,8 +158,36 @@ class AppointmentResponse(BaseModel):
         orm_mode = True
         
         
+# class MedicationCreate(BaseModel):
+#     patient_id: UUID
+#     doctor_id: Optional[UUID] = None
+#     appointment_id: Optional[UUID] = None
+#     medication_name: str
+#     dosage: str
+#     frequency: str
+#     route: Optional[str] = None
+#     start_date: date
+#     end_date: Optional[date] = None
+#     status: Optional[str] = "active"
+#     notes: Optional[str] = None
+
+#     class Config:
+#         orm_mode = True
+
+# class MedicationOut(MedicationCreate):
+#     id: UUID
+#     created_at: Optional[datetime] = None
+#     updated_at: Optional[datetime] = None
+
+#     class Config:
+#         orm_mode = True
+
+
+# ============================================================== 
+# ✅ MEDICATION SCHEMAS 
+# ==============================================================
 class MedicationCreate(BaseModel):
-    patient_id: UUID
+    patient_id: Optional[UUID] = None
     doctor_id: Optional[UUID] = None
     appointment_id: Optional[UUID] = None
     medication_name: str
@@ -174,10 +202,62 @@ class MedicationCreate(BaseModel):
     class Config:
         orm_mode = True
 
-class MedicationOut(MedicationCreate):
+
+class MedicationOut(BaseModel):
     id: UUID
-    created_at: Optional[datetime] = None
-    updated_at: Optional[datetime] = None
+    patient_id: UUID
+    doctor_id: UUID
+    encounter_id: UUID
+    medication_name: str
+    dosage: str
+    frequency: str
+    route: Optional[str] = None
+    start_date: date
+    end_date: Optional[date] = None
+    status: str
+    notes: Optional[str] = None
+
+    class Config:
+        orm_mode = True
+
+
+# ============================================================== 
+# ✅ ENCOUNTER SCHEMAS 
+# ==============================================================
+class EncounterCreate(BaseModel):
+    patient_id: UUID
+    doctor_id: UUID
+    hospital_id: UUID
+    encounter_date: date
+    encounter_type: str
+    reason_for_visit: Optional[str] = None
+    diagnosis: Optional[str] = None
+    notes: Optional[str] = None
+    vitals: Optional[dict] = None
+    lab_tests_ordered: Optional[dict] = None
+    follow_up_date: Optional[date] = None
+    status: Optional[str] = "open"
+    medications: Optional[List[MedicationCreate]] = []  # nested medications
+
+    class Config:
+        orm_mode = True
+
+
+class EncounterOut(BaseModel):
+    id: UUID
+    patient_id: UUID
+    doctor_id: UUID
+    hospital_id: UUID
+    encounter_date: date
+    encounter_type: str
+    reason_for_visit: Optional[str] = None
+    diagnosis: Optional[str] = None
+    notes: Optional[str] = None
+    vitals: Optional[dict] = {}
+    lab_tests_ordered: Optional[dict] = {}
+    follow_up_date: Optional[date] = None
+    status: str
+    medications: List[MedicationOut] = []
 
     class Config:
         orm_mode = True

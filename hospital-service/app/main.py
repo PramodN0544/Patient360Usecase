@@ -11,7 +11,7 @@ from app.routers import appointment, searchPatientInHospital
 from app.routers import reset_password
 from app.routers import notifications
 from app.routers import medications
-
+from app.routers import encounters
 
 # ✅ Import appointment router
 from app.routers import appointment
@@ -32,7 +32,7 @@ app.include_router(appointment.router)  # no need to repeat prefix; it's already
 app.include_router(reset_password.router)
 
 app.include_router(searchPatientInHospital.router)
-
+app.include_router(encounters.router)
 # Auto-create tables
 
 @app.on_event("startup")

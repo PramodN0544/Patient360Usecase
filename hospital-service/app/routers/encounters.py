@@ -1,11 +1,11 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.future import select
+from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 from datetime import datetime, date
 from uuid import uuid4
 from typing import List
-
+from fastapi import APIRouter
 from app.database import get_db
 from app.models import Encounter, Medication, Doctor
 from app.schemas import EncounterCreate, EncounterOut, MedicationOut
