@@ -489,29 +489,52 @@ Patient360 Team
  
  
 # ============================================================
-# GET /appointments/patient/{patient_id}
-# return appointments for a patient (enriched)
+# GET /appointments/patient
+# Returns appointments for logged-in patient (AUTO FETCH)
 # ============================================================
-@router.get("/patient/{patient_id}")
-async def get_appointments_by_patient(patient_id: str, db: AsyncSession = Depends(get_db)):
+@router.get("/patient")
+async def get_my_appointments(
+    current_user = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    # ✅ Step 1 — Get patient by logged-in user_id
+    patient_result = await db.execute(
+        select(Patient).filter(Patient.user_id == current_user.id)
+    )
+    patient = patient_result.scalar_one_or_none()
+
+    if not patient:
+        raise HTTPException(status_code=404, detail="Patient profile not found")
+
+    # ✅ Step 2 — Fetch appointments using actual patient.id
     result = await db.execute(
         select(Appointment)
-        .filter(Appointment.patient_id == patient_id)
-        .order_by(Appointment.appointment_date.desc(), Appointment.appointment_time.desc())
+        .filter(Appointment.patient_id == patient.id)
+        .order_by(Appointment.appointment_date.desc(),
+                  Appointment.appointment_time.desc())
     )
+
     appointments = result.scalars().all()
- 
+
     if not appointments:
         return []
- 
+
     enriched = []
+
     for appt in appointments:
-        doctor_result = await db.execute(select(Doctor).filter(Doctor.id == appt.doctor_id))
+
+        # ✅ Fetch doctor
+        doctor_result = await db.execute(
+            select(Doctor).filter(Doctor.id == appt.doctor_id)
+        )
         doctor = doctor_result.scalar_one_or_none()
- 
-        hospital_result = await db.execute(select(Hospital).filter(Hospital.id == appt.hospital_id))
+
+        # ✅ Fetch hospital
+        hospital_result = await db.execute(
+            select(Hospital).filter(Hospital.id == appt.hospital_id)
+        )
         hosp = hospital_result.scalar_one_or_none()
- 
+
         enriched.append({
             "appointment_id": appt.appointment_id,
             "hospital_id": appt.hospital_id,
@@ -526,7 +549,9 @@ async def get_appointments_by_patient(patient_id: str, db: AsyncSession = Depend
             "hospital_name": hosp.name if hosp else "Unknown Hospital",
             "department": doctor.specialty if doctor else "General"
         })
+
     return enriched
+
  
  
 # ============================================================
