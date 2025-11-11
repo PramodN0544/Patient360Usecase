@@ -1,22 +1,19 @@
 from datetime import datetime, timedelta
-import uuid
 import os
 import smtplib
+import uuid
 from email.mime.text import MIMEText
 from typing import Optional, List
-from datetime import datetime, timedelta, time
-from app.auth import get_current_user
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy import func
-from app.models import Notification
-from app.schemas import AppointmentCreate, AppointmentResponse
-from app.models import Appointment, Hospital, Doctor, Patient
- 
+from app.models import Notification, Appointment, Hospital, Doctor, Patient
+from app.schemas import AppointmentCreate
+from app.auth import get_current_user
+
 router = APIRouter(prefix="/appointments", tags=["Appointments"])
- 
- 
+
 # ---------------------------
 # Dependency: Database session
 # ---------------------------
@@ -24,54 +21,43 @@ async def get_db():
     from app.database import get_db
     async for session in get_db():
         yield session
- 
- 
+
 # ---------------------------
 # Helpers
 # ---------------------------
 def _time_to_str(t):
     if not t:
         return None
-    # t may be datetime.time or str
     try:
         return t.strftime("%H:%M")
     except Exception:
         return str(t)
- 
- 
+
 # ============================================================
-# ✅ GET /appointments/doctors
-# Single, robust endpoint with hospital + specialty filters
+# GET /appointments/doctors
+# Filter doctors by hospital_id or specialty
 # ============================================================
 @router.get("/doctors")
 async def get_doctors(
-    hospital_id: Optional[str] = Query(None, description="Filter by hospital id"),
+    hospital_id: Optional[int] = Query(None, description="Filter by hospital id"),
     specialty: Optional[str] = Query(None, description="Filter by specialty (partial, case-insensitive)"),
     db: AsyncSession = Depends(get_db)
 ):
-    """
-    Return doctors filtered by optional hospital_id and/or specialty.
-    Uses case-insensitive matching for status and specialty.
-    """
- 
-    # Base: active doctors (case-insensitive)
     query = select(Doctor).filter(func.lower(Doctor.status) == "active")
- 
-    # Filter by hospital if supplied (and ensure hospital exists)
+
     if hospital_id:
         hospital_result = await db.execute(select(Hospital).filter(Hospital.id == hospital_id))
         hospital = hospital_result.scalar_one_or_none()
         if not hospital:
             raise HTTPException(status_code=404, detail="Hospital not found")
         query = query.filter(Doctor.hospital_id == hospital_id)
- 
-    # Filter by specialty (case-insensitive partial match)
+
     if specialty and specialty.lower() != "all" and specialty.strip() != "":
         query = query.filter(func.lower(Doctor.specialty).contains(specialty.lower()))
- 
+
     result = await db.execute(query)
     doctors = result.scalars().all()
- 
+
     response = []
     for doc in doctors:
         hospital_result = await db.execute(select(Hospital).filter(Hospital.id == doc.hospital_id))
@@ -87,33 +73,30 @@ async def get_doctors(
             "hospital_id": doc.hospital_id,
             "hospital_name": hosp.name if hosp else "Unknown Hospital",
             "experience_years": doc.experience_years,
-            "consultation_fee": float(hospital.consultation_fee) if hospital.consultation_fee else 0.0,
+            "consultation_fee": float(hospital.consultation_fee) if hospital and hospital.consultation_fee else 0.0,
             "start_time": _time_to_str(doc.start_time) or "09:00",
             "end_time": _time_to_str(doc.end_time) or "17:00",
             "phone": doc.phone,
             "email": doc.email
         })
- 
+
     return response
- 
- 
+
 # ============================================================
-# ✅ GET /appointments/doctors/specialty/{specialty}
-# return doctors by specialty only (patient enrollment use-case)
+# GET /appointments/doctors/specialty/{specialty}
 # ============================================================
 @router.get("/doctors/specialty/{specialty}")
 async def get_doctors_by_specialty(
     specialty: str,
     db: AsyncSession = Depends(get_db)
 ):
-    """Return all active doctors whose specialty matches (case-insensitive partial)"""
     query = select(Doctor).filter(func.lower(Doctor.status) == "active")
     if specialty and specialty.lower() != "all":
         query = query.filter(func.lower(Doctor.specialty).contains(specialty.lower()))
- 
+
     result = await db.execute(query)
     doctors = result.scalars().all()
- 
+
     doctors_list = []
     for doc in doctors:
         hospital_result = await db.execute(select(Hospital).filter(Hospital.id == doc.hospital_id))
@@ -135,19 +118,16 @@ async def get_doctors_by_specialty(
             "phone": doc.phone,
             "email": doc.email
         })
- 
+
     return doctors_list
- 
- 
+
 # ============================================================
-# ✅ GET /appointments/hospitals
-# return all active hospitals
+# GET /appointments/hospitals
 # ============================================================
 @router.get("/hospitals")
 async def get_all_hospitals(db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(Hospital).filter(func.lower(Hospital.status) == "active"))
     hospitals = result.scalars().all()
- 
     return [
         {
             "id": h.id,
@@ -162,25 +142,19 @@ async def get_all_hospitals(db: AsyncSession = Depends(get_db)):
         }
         for h in hospitals
     ]
- 
- 
+
 # ============================================================
 # GET /appointments/hospitals/{hospital_id}
-# return full hospital details
 # ============================================================
 @router.get("/hospitals/{hospital_id}")
-async def get_hospital_details(hospital_id: str, db: AsyncSession = Depends(get_db)):
+async def get_hospital_details(hospital_id: int, db: AsyncSession = Depends(get_db)):
     result = await db.execute(
-        select(Hospital).filter(
-            Hospital.id == hospital_id,
-            func.lower(Hospital.status) == "active"
-        )
+        select(Hospital).filter(Hospital.id == hospital_id, func.lower(Hospital.status) == "active")
     )
     hospital = result.scalar_one_or_none()
- 
     if not hospital:
         raise HTTPException(status_code=404, detail="Hospital not found")
- 
+
     return {
         "id": hospital.id,
         "name": hospital.name,
@@ -204,30 +178,24 @@ async def get_hospital_details(hospital_id: str, db: AsyncSession = Depends(get_
         "status": hospital.status,
         "full_address": f"{hospital.address}, {hospital.city}, {hospital.state} {hospital.zip_code}, {hospital.country}"
     }
- 
- 
+
 # ============================================================
 # GET /appointments/hospitals/doctors
-# doctors for a specific hospital (patient accessible)
 # ============================================================
 @router.get("/hospitals/doctors")
 async def get_hospitals_doctors(
-    hospital_id: str = Query(..., description="Hospital ID"),
+    hospital_id: int = Query(..., description="Hospital ID"),
     db: AsyncSession = Depends(get_db)
 ):
-    # Verify hospital exists
     hospital_result = await db.execute(select(Hospital).filter(Hospital.id == hospital_id))
     hospital = hospital_result.scalar_one_or_none()
     if not hospital:
         raise HTTPException(status_code=404, detail="Hospital not found")
- 
-    query = select(Doctor).filter(
-        Doctor.hospital_id == hospital_id,
-        func.lower(Doctor.status) == "active"
-    )
+
+    query = select(Doctor).filter(Doctor.hospital_id == hospital_id, func.lower(Doctor.status) == "active")
     doctor_result = await db.execute(query)
     doctors = doctor_result.scalars().all()
- 
+
     doctors_list = []
     for doc in doctors:
         doctors_list.append({
@@ -247,30 +215,24 @@ async def get_hospitals_doctors(
             "phone": doc.phone,
             "email": doc.email
         })
- 
+
     return doctors_list
- 
- 
+
 # ============================================================
 # GET /appointments/specialties
-# return distinct specialties from active doctors
 # ============================================================
 @router.get("/specialties")
 async def get_all_specialties(db: AsyncSession = Depends(get_db)):
-    result = await db.execute(
-        select(Doctor.specialty).distinct().filter(func.lower(Doctor.status) == "active")
-    )
+    result = await db.execute(select(Doctor.specialty).distinct().filter(func.lower(Doctor.status) == "active"))
     specialties = result.scalars().all()
     return {"specialties": [spec for spec in specialties if spec]}
- 
- 
+
 # ============================================================
-# GET /appointments/slots?doctor_id=...&date=YYYY-MM-DD
-# available time slots for a doctor
+# GET /appointments/slots
 # ============================================================
 @router.get("/slots")
 async def get_available_slots(
-    doctor_id: str = Query(..., description="Doctor ID"),
+    doctor_id: int = Query(..., description="Doctor ID"),
     date: str = Query(..., description="Appointment date in YYYY-MM-DD format"),
     db: AsyncSession = Depends(get_db)
 ):
@@ -278,15 +240,15 @@ async def get_available_slots(
     doctor = doctor_result.scalar_one_or_none()
     if not doctor:
         raise HTTPException(status_code=404, detail="Doctor not found")
- 
+
     try:
         appointment_date = datetime.strptime(date, "%Y-%m-%d").date()
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
- 
+
     if appointment_date < datetime.now().date():
         raise HTTPException(status_code=400, detail="Cannot book appointments in the past")
- 
+
     result = await db.execute(
         select(Appointment).filter(
             Appointment.doctor_id == doctor_id,
@@ -296,16 +258,16 @@ async def get_available_slots(
     )
     existing_appointments = result.scalars().all()
     booked_times = {appt.appointment_time.strftime("%H:%M") for appt in existing_appointments if appt.appointment_time}
- 
+
     slots = []
     start_time = doctor.start_time if doctor.start_time else datetime.strptime("09:00", "%H:%M").time()
     end_time = doctor.end_time if doctor.end_time else datetime.strptime("17:00", "%H:%M").time()
- 
+
     start = datetime.combine(appointment_date, start_time)
     end = datetime.combine(appointment_date, end_time)
     slot_duration = timedelta(minutes=30)
     current = start
- 
+
     while current < end:
         slot_str = current.strftime("%H:%M")
         slots.append({
@@ -314,54 +276,51 @@ async def get_available_slots(
             "slot_id": f"slot_{current.hour}_{current.minute}"
         })
         current += slot_duration
- 
+
     return {
         "doctor_id": doctor_id,
         "date": date,
         "available_slots": slots,
         "doctor_name": f"Dr. {doctor.first_name} {doctor.last_name}"
     }
- 
- 
-from app.models import Notification   # ✅ Make sure this import exists
 
 @router.post("/")
 async def book_appointment(
     appointment: AppointmentCreate,
-    current_user = Depends(get_current_user),  
+    current_user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    # ✅ Logged-in user's user_id
+    from datetime import date
+
+    # Prevent booking for past dates
+    if appointment.appointment_date < date.today():
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot book appointments for past dates"
+        )
+
     user_id = current_user.id
 
-    # ✅ Fetch patient linked to logged-in user
-    patient_result = await db.execute(
-        select(Patient).filter(Patient.user_id == user_id)
-    )
+    # Fetch patient
+    patient_result = await db.execute(select(Patient).filter(Patient.user_id == user_id))
     patient = patient_result.scalar_one_or_none()
-
     if not patient:
         raise HTTPException(status_code=404, detail="Patient not found")
+    patient_id = patient.id
 
-    patient_id = patient.id  # ✅ actual patient UUID
-
-    # ✅ Validate hospital
-    hospital_result = await db.execute(
-        select(Hospital).filter(Hospital.id == appointment.hospital_id)
-    )
+    # Fetch hospital
+    hospital_result = await db.execute(select(Hospital).filter(Hospital.id == appointment.hospital_id))
     hospital = hospital_result.scalar_one_or_none()
     if not hospital:
         raise HTTPException(status_code=404, detail="Hospital not found")
 
-    # ✅ Validate doctor
-    doctor_result = await db.execute(
-        select(Doctor).filter(Doctor.id == appointment.doctor_id)
-    )
+    # Fetch doctor
+    doctor_result = await db.execute(select(Doctor).filter(Doctor.id == appointment.doctor_id))
     doctor = doctor_result.scalar_one_or_none()
     if not doctor:
         raise HTTPException(status_code=404, detail="Doctor not found")
 
-    # ✅ Parse appointment time
+    # Parse appointment time
     if isinstance(appointment.appointment_time, str):
         try:
             appointment_time = datetime.strptime(appointment.appointment_time, "%H:%M").time()
@@ -373,8 +332,8 @@ async def book_appointment(
     else:
         appointment_time = appointment.appointment_time
 
-    # ✅ Check slot availability
-    result = await db.execute(
+    # Check if slot is already booked
+    existing_result = await db.execute(
         select(Appointment).filter(
             Appointment.doctor_id == appointment.doctor_id,
             Appointment.appointment_date == appointment.appointment_date,
@@ -382,15 +341,13 @@ async def book_appointment(
             Appointment.status.in_(["Confirmed", "Pending"])
         )
     )
-    exists = result.scalar_one_or_none()
+    exists = existing_result.scalar_one_or_none()
     if exists:
         raise HTTPException(status_code=409, detail="This time slot is already booked")
 
-    # ✅ Create appointment
-    appointment_id = f"APT-{uuid.uuid4().hex[:8].upper()}"
-
+    # Create appointment
     new_appt = Appointment(
-        appointment_id=appointment_id,
+        appointment_id=str(uuid.uuid4()),
         hospital_id=appointment.hospital_id,
         doctor_id=appointment.doctor_id,
         patient_id=patient_id,
@@ -400,12 +357,11 @@ async def book_appointment(
         mode=appointment.mode,
         status="Confirmed"
     )
-
     db.add(new_appt)
     await db.commit()
-    await db.refresh(new_appt)
+    await db.refresh(new_appt)  # Populate ID
 
-    # ✅ Create Notification
+    # Create notification
     notif = Notification(
         user_id=current_user.id,
         title="Appointment Confirmed",
@@ -413,71 +369,67 @@ async def book_appointment(
              f"is confirmed for {appointment.appointment_date} at {appointment_time.strftime('%H:%M')}",
         type="appointment",
         status="unread",
-        data_id=appointment_id
     )
-
     db.add(notif)
     await db.commit()
+    await db.refresh(notif)
 
-    # ✅ Send confirmation email
+    # Send email confirmation (best-effort)
     try:
         if patient.email:
             send_email_confirmation(patient.email, new_appt, doctor, hospital)
     except Exception as e:
         print("⚠️ Email sending failed:", e)
 
-    # ✅ Final Response
+    # Response
     return {
         "message": "Appointment booked successfully",
-        "appointment_id": appointment_id,
+        "appointment_id": new_appt.id,
         "appointment": {
-            "appointment_id": appointment_id,
-            "hospital_id": appointment.hospital_id,
-            "doctor_id": appointment.doctor_id,
-            "appointment_date": str(appointment.appointment_date),
+            "id": new_appt.id,
+            "hospital_id": new_appt.hospital_id,
+            "doctor_id": new_appt.doctor_id,
+            "appointment_date": str(new_appt.appointment_date),
             "appointment_time": appointment_time.strftime("%H:%M"),
-            "reason": appointment.reason,
-            "mode": appointment.mode,
+            "reason": new_appt.reason,
+            "mode": new_appt.mode,
             "status": "Confirmed"
         }
     }
 
 
- 
- 
-# ============================================================
-# Email helper (best-effort)
-# ============================================================
 def send_email_confirmation(to_email, appointment, doctor, hospital):
     subject = f"Appointment Confirmation - {hospital.name}"
     body = f"""
 Dear Patient,
- 
+
 Your appointment has been successfully booked.
- 
+
 🏥 Hospital: {hospital.name}
 👨‍⚕️ Doctor: Dr. {doctor.first_name} {doctor.last_name} ({doctor.specialty})
 📅 Date: {appointment.appointment_date}
 ⏰ Time: {appointment.appointment_time.strftime('%H:%M') if hasattr(appointment.appointment_time, 'strftime') else appointment.appointment_time}
 📝 Reason: {appointment.reason or "N/A"}
 💻 Mode: {appointment.mode}
- 
-Appointment ID: {appointment.appointment_id}
- 
+
+Appointment ID: {appointment.id}
+
 Thank you,
 Patient360 Team
 """
     msg = MIMEText(body)
     msg["Subject"] = subject
-    msg["From"] = os.getenv("EMAIL_USER", "no-reply@patient360.com")
+    msg["From"] = os.getenv("FROM_EMAIL", "no-reply@patient360.com")
     msg["To"] = to_email
- 
-    EMAIL_USER = os.getenv("EMAIL_USER")
-    EMAIL_PASS = os.getenv("EMAIL_PASS")
- 
+
+    EMAIL_USER = os.getenv("SMTP_USERNAME")
+    EMAIL_PASS = os.getenv("SMTP_PASSWORD")
+    SMTP_HOST = os.getenv("SMTP_HOST", "smtp.gmail.com")
+    SMTP_PORT = int(os.getenv("SMTP_PORT", 587))
+
     if EMAIL_USER and EMAIL_PASS:
         try:
-            with smtplib.SMTP("smtp.gmail.com", 587) as server:
+            with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as server:
                 server.starttls()
                 server.login(EMAIL_USER, EMAIL_PASS)
                 server.send_message(msg)
@@ -486,154 +438,106 @@ Patient360 Team
             print(f"❌ Failed to send email to {to_email}: {e}")
     else:
         print("ℹ️ Email credentials not configured, skipping email sending")
- 
- 
+
+
 # ============================================================
 # GET /appointments/patient
-# Returns appointments for logged-in patient (AUTO FETCH)
+# Get current patient's appointments (latest first)
 # ============================================================
 @router.get("/patient")
-async def get_my_appointments(
-    current_user = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
-):
-    # ✅ Step 1 — Get patient by logged-in user_id
-    patient_result = await db.execute(
-        select(Patient).filter(Patient.user_id == current_user.id)
-    )
+async def get_my_appointments(current_user=Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    # Fetch patient by user_id
+    patient_result = await db.execute(select(Patient).filter(Patient.user_id == current_user.id))
     patient = patient_result.scalar_one_or_none()
-
     if not patient:
         raise HTTPException(status_code=404, detail="Patient profile not found")
 
-    # ✅ Step 2 — Fetch appointments using actual patient.id
+    # Fetch appointments sorted from latest to oldest
     result = await db.execute(
         select(Appointment)
         .filter(Appointment.patient_id == patient.id)
-        .order_by(Appointment.appointment_date.desc(),
-                  Appointment.appointment_time.desc())
+        .order_by(
+            Appointment.appointment_date.desc(),
+            Appointment.appointment_time.desc().nullslast()
+        )
     )
-
     appointments = result.scalars().all()
 
-    if not appointments:
-        return []
-
     enriched = []
-
     for appt in appointments:
-
-        # ✅ Fetch doctor
-        doctor_result = await db.execute(
-            select(Doctor).filter(Doctor.id == appt.doctor_id)
-        )
+        doctor_result = await db.execute(select(Doctor).filter(Doctor.id == appt.doctor_id))
         doctor = doctor_result.scalar_one_or_none()
 
-        # ✅ Fetch hospital
-        hospital_result = await db.execute(
-            select(Hospital).filter(Hospital.id == appt.hospital_id)
-        )
-        hosp = hospital_result.scalar_one_or_none()
+        hosp_result = await db.execute(select(Hospital).filter(Hospital.id == appt.hospital_id))
+        hosp = hosp_result.scalar_one_or_none()
 
         enriched.append({
-            "appointment_id": appt.appointment_id,
+            "appointment_id": appt.id,
             "hospital_id": appt.hospital_id,
+            "hospital_name": hosp.name if hosp else "Unknown Hospital",
             "doctor_id": appt.doctor_id,
+            "doctor_name": f"Dr. {doctor.first_name} {doctor.last_name}" if doctor else "Unknown Doctor",
+            "doctor_specialty": doctor.specialty if doctor else "General",
             "appointment_date": str(appt.appointment_date),
             "appointment_time": appt.appointment_time.strftime("%H:%M") if appt.appointment_time else None,
             "reason": appt.reason,
             "mode": appt.mode,
-            "status": appt.status,
-            "doctor_name": f"Dr. {doctor.first_name} {doctor.last_name}" if doctor else "Unknown Doctor",
-            "doctor_specialty": doctor.specialty if doctor else "Unknown Specialty",
-            "hospital_name": hosp.name if hosp else "Unknown Hospital",
-            "department": doctor.specialty if doctor else "General"
+            "status": appt.status
         })
 
     return enriched
 
- 
- 
 # ============================================================
 # GET /appointments/doctor/{doctor_id}
-# return appointments for a doctor (enriched)
+# Get appointments for a doctor (latest first)
 # ============================================================
 @router.get("/doctor/{doctor_id}")
-async def get_appointments_by_doctor(doctor_id: str, db: AsyncSession = Depends(get_db)):
+async def get_appointments_by_doctor(doctor_id: int, db: AsyncSession = Depends(get_db)):
+    # Fetch appointments sorted from latest to oldest
     result = await db.execute(
         select(Appointment)
         .filter(Appointment.doctor_id == doctor_id)
-        .order_by(Appointment.appointment_date.desc())
+        .order_by(
+            Appointment.appointment_date.desc(),
+            Appointment.appointment_time.desc().nullslast()
+        )
     )
     appointments = result.scalars().all()
-    if not appointments:
-        return []
- 
+
     enriched = []
     for appt in appointments:
         patient_result = await db.execute(select(Patient).filter(Patient.id == appt.patient_id))
         patient = patient_result.scalar_one_or_none()
- 
+
         hosp_result = await db.execute(select(Hospital).filter(Hospital.id == appt.hospital_id))
         hosp = hosp_result.scalar_one_or_none()
- 
+
         enriched.append({
-            "appointment_id": appt.appointment_id,
-            "patient_id": appt.patient_id,
+            "appointment_id": appt.id,
             "hospital_id": appt.hospital_id,
+            "hospital_name": hosp.name if hosp else "Unknown Hospital",
+            "patient_id": patient.id if patient else None,
+            "patient_name": f"{patient.first_name} {patient.last_name}" if patient else "Unknown Patient",
             "appointment_date": str(appt.appointment_date),
             "appointment_time": appt.appointment_time.strftime("%H:%M") if appt.appointment_time else None,
             "reason": appt.reason,
-            "status": appt.status,
-            "patient_name": f"{patient.first_name} {patient.last_name}" if patient else "Unknown Patient",
-            "hospital_name": hosp.name if hosp else "Unknown Hospital"
+            "mode": appt.mode,
+            "status": appt.status
         })
+
     return enriched
- 
- 
-# ============================================================
-# Debug: GET /appointments/debug/specialty?specialty=cardiology
-# returns all specialties and filtered results for debugging
-# ============================================================
-@router.get("/debug/specialty")
-async def debug_specialty(specialty: str = Query(..., description="Specialty to debug"), db: AsyncSession = Depends(get_db)):
-    # Get all doctor specialties (raw)
-    all_result = await db.execute(select(Doctor))
-    all_doctors = all_result.scalars().all()
- 
-    # Filtered (active + specialty partial match)
-    filtered_result = await db.execute(
-        select(Doctor).filter(
-            func.lower(Doctor.status) == "active",
-            func.lower(Doctor.specialty).contains(specialty.lower())
-        )
-    )
-    filtered_doctors = filtered_result.scalars().all()
- 
-    return {
-        "requested_specialty": specialty,
-        "all_doctors_specialties": [{"id": d.id, "specialty": d.specialty, "status": d.status} for d in all_doctors],
-        "filtered_doctors_count": len(filtered_doctors),
-        "filtered_doctors": [{"id": d.id, "name": f"{d.first_name} {d.last_name}", "specialty": d.specialty, "status": d.status} for d in filtered_doctors]
-    }
- 
- 
+
 # ============================================================
 # PUT /appointments/{appointment_id}/cancel
-# Cancel appointment
 # ============================================================
 @router.put("/{appointment_id}/cancel")
-async def cancel_appointment(appointment_id: str, db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(Appointment).filter(Appointment.appointment_id == appointment_id))
-    appointment = result.scalar_one_or_none()
- 
-    if not appointment:
+async def cancel_appointment(appointment_id: int, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(Appointment).filter(Appointment.id == appointment_id))
+    appt = result.scalar_one_or_none()
+    if not appt:
         raise HTTPException(status_code=404, detail="Appointment not found")
- 
-    if appointment.status.lower() == "cancelled" or appointment.status.lower() == "canceled":
-        raise HTTPException(status_code=400, detail="Appointment is already cancelled")
- 
-    appointment.status = "cancelled"
+
+    appt.status = "Cancelled"
+    db.add(appt)
     await db.commit()
- 
-    return {"message": "Appointment cancelled successfully", "appointment_id": appointment_id}
+    return {"message": "Appointment cancelled successfully", "appointment_id": appt.id}

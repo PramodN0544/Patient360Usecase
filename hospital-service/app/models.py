@@ -1,82 +1,73 @@
 from datetime import datetime
-
-import uuid
 from sqlalchemy import (
     Column, DateTime, String, Date, Integer, Boolean,
-    ForeignKey, Text, Numeric, Time
+    ForeignKey, Text, Numeric, Time, Table
 )
-import sqlalchemy as sa
-from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
-from sqlalchemy import Table, Column, String, Boolean, DateTime, ForeignKey
-from sqlalchemy.dialects.postgresql import UUID
-from app.database import metadata
 from app.database import Base
+import uuid
 
-
+# -------------------- Timestamp Mixin --------------------
 class TimestampMixin:
-    # Use naive UTC datetimes (datetime.utcnow) so they match the
-    # TIMESTAMP WITHOUT TIME ZONE columns created earlier.
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
-
+# -------------------- Hospitals --------------------
 class Hospital(Base, TimestampMixin):
     __tablename__ = "hospitals"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, server_default=sa.text('gen_random_uuid()'))
-
-    # Basic info
+    id = Column(Integer, primary_key=True, autoincrement=True)
     name = Column(String(200), nullable=False)
     registration_no = Column(String(100))
-    email = Column(String(100))
-    phone = Column(String(20))
-
-    # Address
+    email = Column(String(100), unique=True, nullable=False)
+    phone = Column(String(20), unique=True, nullable=False)
     address = Column(Text)
     city = Column(String(100))
     state = Column(String(100))
     zip_code = Column(String(20))
     country = Column(String(50), default="USA")
-
-    # Additional details
     specialty = Column(String(100))
-    license_number = Column(String(100))
-    qualification = Column(String(200))
+    license_number = Column(String(100), unique=True, nullable=False)
     experience_years = Column(Integer)
     availability_days = Column(String(200))
-
-    # Working hours
     start_time = Column(Time)
     end_time = Column(Time)
-
-    # Consultation details
-    consultation_fee = Column(Numeric(10, 2))
-
+    consultation_fee = Column(Numeric(10,2))
     website = Column(String(200))
     status = Column(String(20), default="active")
 
-    # Relationships
     users = relationship("User", back_populates="hospital", cascade="all, delete")
     doctors = relationship("Doctor", back_populates="hospital", cascade="all, delete")
     appointments = relationship("Appointment", back_populates="hospital", cascade="all, delete")
 
+# -------------------- Users --------------------
+class User(Base, TimestampMixin):
+    __tablename__ = "users"
 
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    email = Column(String(200), unique=True, nullable=False)
+    hashed_password = Column(String(200), nullable=False)
+    full_name = Column(String(200))
+    role = Column(String(50), nullable=False)
+    hospital_id = Column(Integer, ForeignKey("hospitals.id"))
+    is_active = Column(Boolean, default=True)
+
+    hospital = relationship("Hospital", back_populates="users")
+
+# -------------------- Doctors --------------------
 class Doctor(Base, TimestampMixin):
     __tablename__ = "doctors"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, server_default=sa.text("gen_random_uuid()"))
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
-
-    hospital_id = Column(UUID(as_uuid=True), ForeignKey("hospitals.id"))
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    hospital_id = Column(Integer, ForeignKey("hospitals.id"))
     npi_number = Column(String(100), unique=True)
-
     first_name = Column(String(100))
     last_name = Column(String(100))
-    email = Column(String(100))
-    phone = Column(String(20))
+    email = Column(String(100), unique=True, nullable=False)
+    phone = Column(String(20), unique=True, nullable=False)
     specialty = Column(String(100))
-    license_number = Column(String(100))
+    license_number = Column(String(100), unique=True, nullable=False)
     qualification = Column(String(200))
     experience_years = Column(Integer)
     gender = Column(String(20))
@@ -84,95 +75,84 @@ class Doctor(Base, TimestampMixin):
     start_time = Column(Time)
     end_time = Column(Time)
     mode_of_consultation = Column(String(50))
-
     status = Column(String(20), default="Active")
 
-    # ✅ Relationships
     hospital = relationship("Hospital", back_populates="doctors")
     appointments = relationship("Appointment", back_populates="doctor", cascade="all, delete")
+    patient_assignments = relationship(
+    "PatientDoctorAssignment", back_populates="doctor", cascade="all, delete"
+)
+    
+def generate_public_id(context):
+    """Generates a human-readable public_id: first_last_UUID"""
+    # Get the instance being inserted
+    instance = context.current_parameters
+    first = instance.get("first_name", "unknown").lower()
+    last = instance.get("last_name", "unknown").lower()
+    return f"{first}_{last}_{uuid.uuid4().hex[:8]}"  # short UUID for readability
 
-
-class User(Base, TimestampMixin):
-    __tablename__ = "users"
-
-    id = Column(UUID(as_uuid=True), primary_key=True, server_default=sa.text('gen_random_uuid()'))
-    email = Column(String(200), unique=True, nullable=False)
-    hashed_password = Column(String(200), nullable=False)
-    full_name = Column(String(200))
-    role = Column(String(50), nullable=False)
-    hospital_id = Column(UUID(as_uuid=True), ForeignKey("hospitals.id"))
-    is_active = Column(Boolean, default=True)
-
-    hospital = relationship("Hospital", back_populates="users")
-
-
+# -------------------- Patients --------------------
 class Patient(Base, TimestampMixin):
     __tablename__ = "patients"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, server_default=sa.text("gen_random_uuid()"))
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
-
-    # Demographics
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    public_id = Column(String(150), unique=True, nullable=False, index=True, default=generate_public_id)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     first_name = Column(String(100))
     last_name = Column(String(100))
     dob = Column(Date)
-    gender = Column(String(20), unique=True, index=True)
-    ssn = Column(String(100), unique=True, index=True)  # MRN / Identifier
+    weight = Column(Numeric(5,2), nullable=False)
+    height = Column(Numeric(5,2), nullable=False)
+    gender = Column(String(20), index=True)
+    ssn = Column(String(100), unique=True, index=True)
     phone = Column(String(20), unique=True, index=True)
     email = Column(String(100), unique=True, index=True)
-
-    # Address
     address = Column(Text)
     city = Column(String(100))
     state = Column(String(100))
     zip_code = Column(String(20))
-    country = Column(String(50), default="USA")
-
+    country = Column(String(50), nullable=False)
     citizenship_status = Column(String(50))
     visa_type = Column(String(50))
 
-    # Relationships
     appointments = relationship("Appointment", back_populates="patient", cascade="all, delete")
     medications = relationship("Medication", back_populates="patient", cascade="all, delete")
+    vitals = relationship("Vitals", back_populates="patient", cascade="all, delete")
+    encounters = relationship("Encounter", back_populates="patient", cascade="all, delete")
+    doctor_assignments = relationship(
+    "PatientDoctorAssignment", back_populates="patient", cascade="all, delete"
+)
 
-
+# -------------------- Appointments --------------------
 class Appointment(Base, TimestampMixin):
     __tablename__ = "appointments"
 
-    # Primary Key
-    id = Column(UUID(as_uuid=True), primary_key=True, server_default=sa.text("gen_random_uuid()"))
-
-    # Business-friendly ID (human readable)
+    id = Column(Integer, primary_key=True, autoincrement=True)
     appointment_id = Column(String(100), unique=True, nullable=False)
-
-    # Foreign Keys
-    patient_id = Column(UUID(as_uuid=True), ForeignKey("patients.id", ondelete="CASCADE"), nullable=False)
-    hospital_id = Column(UUID(as_uuid=True), ForeignKey("hospitals.id", ondelete="CASCADE"), nullable=False)
-    doctor_id = Column(UUID(as_uuid=True), ForeignKey("doctors.id", ondelete="CASCADE"), nullable=False)
-
-    # Appointment Details
+    patient_id = Column(Integer, ForeignKey("patients.id", ondelete="CASCADE"), nullable=False)
+    hospital_id = Column(Integer, ForeignKey("hospitals.id", ondelete="CASCADE"), nullable=False)
+    doctor_id = Column(Integer, ForeignKey("doctors.id", ondelete="CASCADE"), nullable=False)
     appointment_date = Column(Date, nullable=False)
     appointment_time = Column(Time, nullable=False)
     reason = Column(String(300))
     mode = Column(String(50), default="In-person")
     status = Column(String(50), default="Scheduled")
 
-    # Relationships
     patient = relationship("Patient", back_populates="appointments")
     hospital = relationship("Hospital", back_populates="appointments")
     doctor = relationship("Doctor", back_populates="appointments")
+    vitals = relationship("Vitals", back_populates="appointment")
+    medications = relationship("Medication", back_populates="appointment")
 
-#  Medication Table
+# -------------------- Medications --------------------
 class Medication(Base, TimestampMixin):
     __tablename__ = "medications"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, server_default=sa.text("gen_random_uuid()"))
-
-    patient_id = Column(UUID(as_uuid=True), ForeignKey("patients.id", ondelete="CASCADE"), nullable=False)
-    doctor_id = Column(UUID(as_uuid=True), ForeignKey("doctors.id", ondelete="SET NULL"), nullable=True)
-    appointment_id = Column(UUID(as_uuid=True), ForeignKey("appointments.id", ondelete="SET NULL"), nullable=True)
-    encounter_id = Column(UUID(as_uuid=True), ForeignKey("encounters.id", ondelete="CASCADE"), nullable=True)
-
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    patient_id = Column(Integer, ForeignKey("patients.id", ondelete="CASCADE"), nullable=False)
+    doctor_id = Column(Integer, ForeignKey("doctors.id", ondelete="SET NULL"), nullable=True)
+    appointment_id = Column(Integer, ForeignKey("appointments.id", ondelete="SET NULL"), nullable=True)
+    encounter_id = Column(Integer, ForeignKey("encounters.id", ondelete="CASCADE"), nullable=True)
     medication_name = Column(String(200), nullable=False)
     dosage = Column(String(100), nullable=False)
     frequency = Column(String(100), nullable=False)
@@ -182,13 +162,72 @@ class Medication(Base, TimestampMixin):
     status = Column(String(50), default="active")
     notes = Column(Text, nullable=True)
 
-    # ✅ Relationships
+    icd_code = Column(String(20), nullable=True)
+    # NDC code for the medication (optional, specific drug identifier)
+    ndc_code = Column(String(50), nullable=True)
+
     patient = relationship("Patient", back_populates="medications")
     doctor = relationship("Doctor")
-    appointment = relationship("Appointment")
+    appointment = relationship("Appointment", back_populates="medications")
     encounter = relationship("Encounter", back_populates="medications")
 
+# -------------------- Encounters --------------------
+class Encounter(Base, TimestampMixin):
+    __tablename__ = "encounters"
 
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    patient_id = Column(Integer, ForeignKey("patients.id", ondelete="CASCADE"), nullable=False)
+    doctor_id = Column(Integer, ForeignKey("doctors.id", ondelete="SET NULL"), nullable=True)
+    hospital_id = Column(Integer, ForeignKey("hospitals.id", ondelete="SET NULL"), nullable=True)
+    encounter_date = Column(Date, nullable=False)
+    encounter_type = Column(String(50), nullable=False)
+    reason_for_visit = Column(String(255))
+    diagnosis = Column(Text)
+    notes = Column(Text)
+    follow_up_date = Column(Date)
+    status = Column(String(20), default="open")
+
+    patient = relationship("Patient", back_populates="encounters")
+    vitals = relationship("Vitals", back_populates="encounter", cascade="all, delete")
+    medications = relationship("Medication", back_populates="encounter", cascade="all, delete")
+
+# -------------------- Vitals --------------------
+class Vitals(Base, TimestampMixin):
+    __tablename__ = "vitals"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    patient_id = Column(Integer, ForeignKey("patients.id", ondelete="CASCADE"), nullable=False)
+    appointment_id = Column(Integer, ForeignKey("appointments.id", ondelete="SET NULL"), nullable=True)
+    encounter_id = Column(Integer, ForeignKey("encounters.id", ondelete="SET NULL"), nullable=True)
+    height = Column(Numeric(5,2), nullable=True)
+    weight = Column(Numeric(5,2), nullable=True)
+    bmi = Column(Numeric(5,2), nullable=True)
+    blood_pressure = Column(String(20), nullable=True)
+    heart_rate = Column(Integer, nullable=True)
+    temperature = Column(Numeric(5,2), nullable=True)
+    respiration_rate = Column(Integer, nullable=True)
+    oxygen_saturation = Column(Integer, nullable=True)
+    recorded_at = Column(DateTime, default=datetime.utcnow)
+
+    patient = relationship("Patient", back_populates="vitals")
+    appointment = relationship("Appointment", back_populates="vitals")
+    encounter = relationship("Encounter", back_populates="vitals")
+
+# -------------------- Notifications --------------------
+class Notification(Base, TimestampMixin):
+    __tablename__ = "notifications"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    title = Column(String(200), nullable=False)
+    desc = Column(Text, nullable=True)
+    type = Column(String(50), nullable=False)
+    status = Column(String(50), default="unread")
+    data_id = Column(String(200), nullable=True)
+
+    user = relationship("User")
+
+# -------------------- Password Reset Tokens --------------------
 class PasswordResetToken(Base):
     __tablename__ = "password_reset_tokens"
 
@@ -196,20 +235,19 @@ class PasswordResetToken(Base):
     email = Column(String, index=True, nullable=False)
     otp = Column(String, nullable=False)
     expires_at = Column(DateTime, nullable=False)
-
-    # Optional if you want to link it to user
     user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+
     user = relationship("User")
 
     def is_expired(self):
         return datetime.utcnow() > self.expires_at
 
-
+# -------------------- Password Reset OTPs --------------------
 password_reset_otps_table = Table(
     "password_reset_otps",
     Base.metadata,
-    Column("id", UUID(as_uuid=True), primary_key=True, default=uuid.uuid4),
-    Column("user_id", UUID(as_uuid=True), ForeignKey("users.id"), nullable=False),
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("user_id", Integer, ForeignKey("users.id"), nullable=False),
     Column("otp", String(6), nullable=False),
     Column("expires_at", DateTime, nullable=False),
     Column("used", Boolean, default=False),
@@ -217,48 +255,15 @@ password_reset_otps_table = Table(
 )
 
 
-class Notification(Base, TimestampMixin):
-    __tablename__ = "notifications"
+class PatientDoctorAssignment(Base):
+    __tablename__ = "patient_doctor_assignment"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, server_default=sa.text("gen_random_uuid()"))
-    
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
-
-    # Notification fields
-    title = Column(String(200), nullable=False)
-    desc = Column(Text, nullable=True)
-    type = Column(String(50), nullable=False)  # appointment | medication | system
-    status = Column(String(50), default="unread")  # unread | read
-    data_id = Column(String(200), nullable=True)  # appointment_id OR medication_id
+    id = Column(Integer, primary_key=True, index=True)
+    patient_id = Column(Integer, ForeignKey("patients.id", ondelete="CASCADE"), nullable=False)
+    doctor_id = Column(Integer, ForeignKey("doctors.id", ondelete="CASCADE"), nullable=False)
+    hospital_id = Column(Integer, ForeignKey("hospitals.id", ondelete="CASCADE"), nullable=False)
+    assigned_at = Column(DateTime, default=datetime.utcnow)
 
     # Relationships
-    user = relationship("User")
-
-
-
-
-
-# Mixin for timestamp
-class TimestampMixin:
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-
-
-from sqlalchemy.dialects.postgresql import JSON
-
-class Encounter(Base, TimestampMixin):
-    __tablename__ = "encounters"
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, unique=True, nullable=False)
-    patient_id = Column(UUID(as_uuid=True), ForeignKey("patients.id", ondelete="CASCADE"), nullable=False)
-    doctor_id = Column(UUID(as_uuid=True), ForeignKey("doctors.id", ondelete="SET NULL"), nullable=True)
-    hospital_id = Column(UUID(as_uuid=True), ForeignKey("hospitals.id", ondelete="SET NULL"), nullable=True)
-    encounter_date = Column(Date, nullable=False)
-    encounter_type = Column(String(50), nullable=False)
-    reason_for_visit = Column(String(255), nullable=True)
-    diagnosis = Column(Text, nullable=True)
-    notes = Column(Text, nullable=True)
-    vitals = Column(JSON, nullable=True)  # JSON column
-    lab_tests_ordered = Column(JSON, nullable=True)
-    follow_up_date = Column(Date, nullable=True)
-    status = Column(String(20), default="open")
-    medications = relationship("Medication", back_populates="encounter", cascade="all, delete")
+    patient = relationship("Patient", back_populates="doctor_assignments")
+    doctor = relationship("Doctor", back_populates="patient_assignments")

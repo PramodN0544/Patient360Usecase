@@ -89,25 +89,25 @@ async def create_doctor(db: AsyncSession, data: dict, hospital_id: UUID):
     return doctor, default_password, user.email
 
 async def create_patient(db: AsyncSession, data: PatientCreate):
-    # ✅ Email unique
+    # Email unique
     if data.email:
         result = await db.execute(select(Patient).where(Patient.email == data.email))
         if result.scalars().first():
             raise HTTPException(status_code=400, detail="Email already exists")
 
-    # ✅ Phone unique
+    # Phone unique
     if data.phone:
         result = await db.execute(select(Patient).where(Patient.phone == data.phone))
         if result.scalars().first():
             raise HTTPException(status_code=400, detail="Phone already exists")
 
-    # ✅ SSN unique
+    # SSN unique
     if data.ssn:
         result = await db.execute(select(Patient).where(Patient.ssn == data.ssn))
         if result.scalars().first():
             raise HTTPException(status_code=400, detail="SSN already exists")
 
-    # ✅ Create User with default password
+    # Create User with default password
     default_password = utils.generate_default_password()
     full_name = f"{data.first_name} {data.last_name}"
 
@@ -207,7 +207,6 @@ async def get_doctor_by_user_id(db: AsyncSession, user_id: UUID):
     )
     return result.scalars().first()
 
-
 async def get_hospital_by_id(db: AsyncSession, hospital_id: UUID):
     result = await db.execute(
         select(models.Hospital).where(models.Hospital.id == hospital_id)
@@ -217,8 +216,11 @@ async def get_hospital_by_id(db: AsyncSession, hospital_id: UUID):
 async def get_patients_by_hospital(db: AsyncSession, hospital_id: str):
     """Get all patients for a specific hospital"""
     try:
+        # Join User table to access hospital_id
         result = await db.execute(
-            select(Patient).where(Patient.hospital_id == hospital_id)
+            select(Patient)
+            .join(User, Patient.user_id == User.id)
+            .where(User.hospital_id == hospital_id)
         )
         patients = result.scalars().all()
         return patients

@@ -1,9 +1,10 @@
 from pydantic import BaseModel, EmailStr, Field
 from typing import List, Optional
-from uuid import UUID
 from datetime import date, time, datetime
 
+# ================================
 # HOSPITAL SCHEMAS
+# ================================
 class HospitalBase(BaseModel):
     name: str
     address: str
@@ -14,7 +15,7 @@ class HospitalBase(BaseModel):
     email: EmailStr
     specialty: str
     license_number: str
-    qualification: str
+    # qualification: str
     experience_years: int
     availability_days: str
     start_time: time
@@ -32,8 +33,9 @@ class HospitalSignupRequest(BaseModel):
     role: str = "hospital"
     hospital: HospitalBase
 
+
 class HospitalOut(BaseModel):
-    id: UUID
+    id: int
     name: str
     email: str
     phone: str
@@ -46,7 +48,9 @@ class HospitalOut(BaseModel):
     class Config:
         orm_mode = True
 
+# ================================
 # DOCTOR SCHEMAS
+# ================================
 class DoctorCreate(BaseModel):
     npi_number: str
     first_name: str
@@ -63,15 +67,18 @@ class DoctorCreate(BaseModel):
     end_time: Optional[time] = None
     mode_of_consultation: Optional[str] = None
 
+
 class DoctorOut(DoctorCreate):
-    id: UUID
+    id: int
     status: Optional[str] = None
     created_at: Optional[datetime] = None
 
     class Config:
         orm_mode = True
 
+# ================================
 # PATIENT SCHEMAS
+# ================================
 class PatientCreate(BaseModel):
     first_name: str
     last_name: str
@@ -81,6 +88,8 @@ class PatientCreate(BaseModel):
     phone: Optional[str] = None
     email: Optional[EmailStr] = None
     address: Optional[str] = None
+    weight: Optional[float] = None
+    height: Optional[float] = None
     city: Optional[str] = None
     state: Optional[str] = None
     zip_code: Optional[str] = None
@@ -88,14 +97,18 @@ class PatientCreate(BaseModel):
     citizenship_status: Optional[str] = None
     visa_type: Optional[str] = None
 
+
 class PatientOut(PatientCreate):
-    id: UUID
+    id: int
+    public_id: str  # for safe external reference
     created_at: Optional[datetime] = None
 
     class Config:
         orm_mode = True
 
+# ================================
 # AUTH SCHEMAS
+# ================================
 class Token(BaseModel):
     access_token: str
     token_type: str = "bearer"
@@ -105,10 +118,10 @@ class TokenData(BaseModel):
     email: Optional[str] = None
 
 
-# Simple JSON login request (optional, for clients that prefer JSON over form data)
 class LoginRequest(BaseModel):
     username: EmailStr
     password: str
+
 
 class UserCreate(BaseModel):
     email: EmailStr
@@ -116,25 +129,29 @@ class UserCreate(BaseModel):
     full_name: Optional[str]
     role: Optional[str] = "hospital"
 
+
 class UserOut(BaseModel):
-    id: UUID
+    id: int
     email: EmailStr
     full_name: str
     role: str
-    hospital_id: Optional[UUID]
+    hospital_id: Optional[int]
 
     class Config:
         orm_mode = True
+
 
 class SignupResponse(BaseModel):
     user: UserOut
     hospital: HospitalOut
 
-# Appointment Schemas
+# ================================
+# APPOINTMENT SCHEMAS
+# ================================
 class AppointmentCreate(BaseModel):
-    hospital_id: UUID
-    doctor_id: UUID
-    # patient_id: UUID
+    hospital_id: int
+    doctor_id: int
+    # patient_id: int (will be derived from auth)
     appointment_date: date
     appointment_time: time
     reason: Optional[str] = None
@@ -143,12 +160,13 @@ class AppointmentCreate(BaseModel):
     class Config:
         orm_mode = True
 
+
 class AppointmentResponse(BaseModel):
-    id: UUID
+    id: int
     appointment_id: str
-    hospital_id: UUID
-    doctor_id: UUID
-    patient_id: UUID
+    hospital_id: int
+    doctor_id: int
+    patient_id: int
     appointment_date: date
     appointment_time: time
     mode: str
@@ -156,40 +174,40 @@ class AppointmentResponse(BaseModel):
 
     class Config:
         orm_mode = True
-        
-        
-# class MedicationCreate(BaseModel):
-#     patient_id: UUID
-#     doctor_id: Optional[UUID] = None
-#     appointment_id: Optional[UUID] = None
-#     medication_name: str
-#     dosage: str
-#     frequency: str
-#     route: Optional[str] = None
-#     start_date: date
-#     end_date: Optional[date] = None
-#     status: Optional[str] = "active"
-#     notes: Optional[str] = None
 
-#     class Config:
-#         orm_mode = True
+# ================================
+# VITALS SCHEMAS
+# ================================
+class VitalsCreate(BaseModel):
+    height: Optional[float] = None
+    weight: Optional[float] = None
+    blood_pressure: Optional[str] = None
+    heart_rate: Optional[int] = None
+    temperature: Optional[float] = None
+    respiration_rate: Optional[int] = None
+    oxygen_saturation: Optional[int] = None
 
-# class MedicationOut(MedicationCreate):
-#     id: UUID
-#     created_at: Optional[datetime] = None
-#     updated_at: Optional[datetime] = None
-
-#     class Config:
-#         orm_mode = True
+    class Config:
+        orm_mode = True
 
 
-# ============================================================== 
-# ✅ MEDICATION SCHEMAS 
-# ==============================================================
+class VitalsOut(VitalsCreate):
+    id: int
+    encounter_id: Optional[int] = None
+    patient_id: Optional[int] = None
+    recorded_at: datetime
+
+    class Config:
+        orm_mode = True
+
+# ================================
+# MEDICATION SCHEMAS
+# ================================
 class MedicationCreate(BaseModel):
-    patient_id: Optional[UUID] = None
-    doctor_id: Optional[UUID] = None
-    appointment_id: Optional[UUID] = None
+    doctor_id: Optional[int] = None
+    appointment_id: Optional[int] = None
+    encounter_id: Optional[int] = None
+
     medication_name: str
     dosage: str
     frequency: str
@@ -198,16 +216,19 @@ class MedicationCreate(BaseModel):
     end_date: Optional[date] = None
     status: Optional[str] = "active"
     notes: Optional[str] = None
+    icd_code: Optional[str] = None   
+    ndc_code: Optional[str] = None 
 
     class Config:
         orm_mode = True
 
 
 class MedicationOut(BaseModel):
-    id: UUID
-    patient_id: UUID
-    doctor_id: UUID
-    encounter_id: UUID
+    id: int
+    patient_id: int
+    doctor_id: Optional[int] = None
+    encounter_id: Optional[int] = None
+
     medication_name: str
     dosage: str
     frequency: str
@@ -220,43 +241,40 @@ class MedicationOut(BaseModel):
     class Config:
         orm_mode = True
 
-
-# ============================================================== 
-# ✅ ENCOUNTER SCHEMAS 
-# ==============================================================
 class EncounterCreate(BaseModel):
-    patient_id: UUID
-    doctor_id: UUID
-    hospital_id: UUID
+    patient_public_id: str  
+    doctor_id: Optional[int] = None  
+    hospital_id: Optional[int] = None  
     encounter_date: date
     encounter_type: str
     reason_for_visit: Optional[str] = None
     diagnosis: Optional[str] = None
     notes: Optional[str] = None
-    vitals: Optional[dict] = None
-    lab_tests_ordered: Optional[dict] = None
     follow_up_date: Optional[date] = None
     status: Optional[str] = "open"
-    medications: Optional[List[MedicationCreate]] = []  # nested medications
+
+    vitals: Optional[VitalsCreate] = None
+    medications: Optional[List[MedicationCreate]] = []
 
     class Config:
         orm_mode = True
 
 
+
 class EncounterOut(BaseModel):
-    id: UUID
-    patient_id: UUID
-    doctor_id: UUID
-    hospital_id: UUID
+    id: int
+    patient_id: int
+    doctor_id: int
+    hospital_id: int
     encounter_date: date
     encounter_type: str
-    reason_for_visit: Optional[str] = None
-    diagnosis: Optional[str] = None
-    notes: Optional[str] = None
-    vitals: Optional[dict] = {}
-    lab_tests_ordered: Optional[dict] = {}
-    follow_up_date: Optional[date] = None
+    reason_for_visit: Optional[str]
+    diagnosis: Optional[str]
+    notes: Optional[str]
+    follow_up_date: Optional[date]
     status: str
+
+    vitals: List[VitalsOut] = []
     medications: List[MedicationOut] = []
 
     class Config:

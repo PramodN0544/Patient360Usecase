@@ -7,25 +7,23 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 if not DATABASE_URL:
     raise Exception("DATABASE_URL not found")
 
-# ✅ Convert to asyncpg
+# Convert to asyncpg
 if DATABASE_URL.startswith("postgresql://"):
     DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+asyncpg://", 1)
 
-# ✅ Remove unsupported Neon params (sslmode, channel_binding)
+# Remove unsupported Neon params (sslmode, channel_binding)
 if "sslmode=" in DATABASE_URL or "channel_binding=" in DATABASE_URL:
     DATABASE_URL = DATABASE_URL.split("?")[0]
 
-print("✅ Clean DB URL:", DATABASE_URL)
-
-# ✅ Windows-safe SSL for Neon (No verification)
+# Windows-safe SSL for Neon (No verification)
 ssl_ctx = ssl.create_default_context()
 ssl_ctx.check_hostname = False
-ssl_ctx.verify_mode = ssl.CERT_NONE   # ✅ IMPORTANT FIX FOR WINDOWS
+ssl_ctx.verify_mode = ssl.CERT_NONE   
 
 engine = create_async_engine(
     DATABASE_URL,
     echo=True,
-    connect_args={"ssl": ssl_ctx},  # ✅ Keep SSL enabled
+    connect_args={"ssl": ssl_ctx},  
 )
 
 AsyncSessionLocal = sessionmaker(

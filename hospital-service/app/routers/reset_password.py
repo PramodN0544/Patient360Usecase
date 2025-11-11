@@ -52,7 +52,7 @@ async def forgot_password(payload: ForgotPasswordRequest, db: AsyncSession = Dep
 # ------------------------
 @router.post("/auth/reset-password")
 async def reset_password(payload: ResetPasswordRequest, db: AsyncSession = Depends(get_db)):
-    # 1️⃣ Get OTP record from DB
+    # Get OTP record from DB
     record = await crud.get_password_reset_otp(db, payload.email, payload.otp)
     if not record:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid OTP")
@@ -66,16 +66,16 @@ async def reset_password(payload: ResetPasswordRequest, db: AsyncSession = Depen
     if expires_at < datetime.utcnow():
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="OTP expired")
 
-    # 2️⃣ Fetch user by ID
+    # Fetch user by ID
     user = await crud.get_user_by_id(db, user_id)
 
     if not user:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="User not found")
 
-    # 3️⃣ Update password
+    # Update password
     await crud.update_user_password(db, user, payload.new_password)
 
-    # 4️⃣ Mark OTP as used
+    # Mark OTP as used
     await crud.mark_otp_used(db, payload.email, payload.otp)
 
     return {"detail": "Password has been reset successfully."}

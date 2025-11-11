@@ -12,17 +12,23 @@ from app.routers import reset_password
 from app.routers import notifications
 from app.routers import medications
 from app.routers import encounters
+from app.routers import assignments  # adjust import path
 
-# ✅ Import appointment router
+
+
+# Import appointment router
 from app.routers import appointment
 
+
+from app.routers import vitals
 
 
 app = FastAPI(title="CareIQ Patient 360 API")
 
 app.include_router(medications.router)
 app.include_router(notifications.router)
-
+app.include_router(vitals.router)
+app.include_router(assignments.router)
 
 apply_cors(app)
 
@@ -69,7 +75,7 @@ async def read_users_me(current_user=Depends(get_current_user)):
         "hospital_id": str(current_user.hospital_id) if current_user.hospital_id else None
     }
 
-# JSON Login (Optional)
+# JSON Login
 @app.post("/auth/login", response_model=schemas.Token)
 async def login_json(
     credentials: schemas.LoginRequest,
@@ -270,8 +276,14 @@ async def get_all_patients(
 ):
     if current_user.role not in ("hospital", "admin"):
         raise HTTPException(status_code=403, detail="Not permitted")
+    
+    if not current_user.hospital_id:
+        raise HTTPException(status_code=400, detail="Hospital ID not found for this user")
+    
     patients = await crud.get_patients_by_hospital(db, current_user.hospital_id)
+    
     return patients
+
 
 
 @app.get("/hospitals", response_model=schemas.HospitalOut)
