@@ -1,7 +1,7 @@
 from fastapi import FastAPI, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.ext.asyncio import AsyncSession
-from uuid import UUID
+from fastapi.staticfiles import StaticFiles
 
 from app import schemas, crud, utils
 from app.cors import apply_cors, get_frontend_origins
@@ -18,16 +18,16 @@ from app.routers import pharmacy_insurance_master
 
 # Import appointment router
 from app.routers import appointment
-
-
 from app.routers import vitals
 
 
 app = FastAPI(title="CareIQ Patient 360 API")
+app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 
 app.include_router(medications.router)
 app.include_router(notifications.router)
 app.include_router(vitals.router)
+app.include_router(file_upload.router)
 app.include_router(assignments.router)
 app.include_router(insurance_master.router)
 app.include_router(pharmacy_insurance_master.router)
