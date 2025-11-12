@@ -19,6 +19,7 @@ from app.routers import pharmacy_insurance_master
 # Import appointment router
 from app.routers import appointment
 from app.routers import vitals
+from app.routers import file_upload
 
 
 app = FastAPI(title="CareIQ Patient 360 API")
