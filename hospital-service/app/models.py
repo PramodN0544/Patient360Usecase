@@ -6,6 +6,8 @@ from sqlalchemy import (
 from sqlalchemy.orm import relationship
 from app.database import Base
 import uuid
+from sqlalchemy import Column, String, Integer, Float, Date, Text, DateTime
+from sqlalchemy.sql import func
 
 # -------------------- Timestamp Mixin --------------------
 class TimestampMixin:
@@ -127,7 +129,8 @@ class Patient(Base, TimestampMixin):
     vitals = relationship("Vitals", back_populates="patient", cascade="all, delete-orphan")
     encounters = relationship("Encounter", back_populates="patient", cascade="all, delete-orphan")
     doctor_assignments = relationship("PatientDoctorAssignment", back_populates="patient", cascade="all, delete-orphan")
-
+    insurances = relationship("PatientInsurance", back_populates="patient", cascade="all, delete-orphan")
+    pharmacy_insurances = relationship("PatientPharmacyInsurance", back_populates="patient", cascade="all, delete-orphan")
 # -------------------- Appointments --------------------
 class Appointment(Base, TimestampMixin):
     __tablename__ = "appointments"
@@ -271,3 +274,107 @@ class PatientDoctorAssignment(Base):
 
     patient = relationship("Patient", back_populates="doctor_assignments")
     doctor = relationship("Doctor", back_populates="patient_assignments")
+
+    
+    ## insurance master table
+    
+class InsuranceMaster(Base):
+    __tablename__ = "insurance_master"
+
+    id = Column(Integer, primary_key=True, index=True)
+    provider_name = Column(String(100), nullable=False)         # e.g. "Blue Cross Blue Shield"
+    plan_name = Column(String(100), nullable=False)              # e.g. "Silver PPO Plan"
+    plan_type = Column(String(50), nullable=True)                # e.g. "PPO", "HMO", "EPO"
+    coverage_percent = Column(Float, nullable=True)              # e.g. 80.0
+    copay_amount = Column(Float, nullable=True)                  # e.g. 20.0
+    deductible_amount = Column(Float, nullable=True)             # e.g. 1000.0
+    out_of_pocket_max = Column(Float, nullable=True)             # e.g. 6000.0
+    effective_date = Column(Date, nullable=True)                 # e.g. 2025-01-01
+    expiry_date = Column(Date, nullable=True)                    # e.g. 2025-12-31
+    description = Column(Text, nullable=True)                    # Notes about coverage
+    status = Column(String(20), default="Active")                # Active / Inactive
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+
+##  Patient Insurance Table
+
+class PatientInsurance(Base):
+    __tablename__ = "patient_insurance"
+
+    id = Column(Integer, primary_key=True, index=True)
+    
+    # Foreign key to patient
+    patient_id = Column(Integer, ForeignKey("patients.id", ondelete="CASCADE"), nullable=False)
+    
+    # Foreign key to insurance master
+    insurance_id = Column(Integer, ForeignKey("insurance_master.id", ondelete="CASCADE"), nullable=False)
+    
+    provider_name = Column(String(100), nullable=False)
+    plan_name = Column(String(100), nullable=False)
+    plan_type = Column(String(50), nullable=True)
+    coverage_percent = Column(Float, nullable=True)
+    copay_amount = Column(Float, nullable=True)
+    deductible_amount = Column(Float, nullable=True)
+    out_of_pocket_max = Column(Float, nullable=True)
+    effective_date = Column(Date, nullable=False)
+    expiry_date = Column(Date, nullable=False)
+    status = Column(String(20), default="Active")
+    priority = Column(String(20), default="primary")  # "primary" or "secondary"
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    # Relationships
+    patient = relationship("Patient", back_populates="insurances")
+    insurance_master = relationship("InsuranceMaster")
+
+
+
+
+
+
+# -----------------------
+# Pharmacy Insurance Master Table
+# -----------------------
+class PharmacyInsuranceMaster(Base):
+    __tablename__ = "pharmacy_insurance_master"
+
+    id = Column(Integer, primary_key=True, index=True)
+    provider_name = Column(String(100), nullable=False)        # e.g., "CVS Caremark"
+    plan_name = Column(String(100), nullable=False)            # e.g., "Standard Rx Plan"
+    group_number = Column(String(50), nullable=True)           # plan-level group number
+    formulary_type = Column(String(50), nullable=True)         # e.g., "Formulary", "Non-Formulary"
+    prior_auth_required = Column(Boolean, default=False)       # True/False
+    standard_copay = Column(Float, nullable=True)             # optional, default copay amount
+    deductible_amount = Column(Float, nullable=True)
+    status = Column(String(20), default="Active")             # Active / Inactive
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+# -----------------------
+# Patient Pharmacy Insurance Table
+# -----------------------
+
+
+class PatientPharmacyInsurance(Base):
+    __tablename__ = "patient_pharmacy_insurance"
+
+    id = Column(Integer, primary_key=True, index=True)
+    patient_id = Column(Integer, ForeignKey("patients.id", ondelete="CASCADE"), nullable=False)
+    pharmacy_insurance_id = Column(Integer, ForeignKey("pharmacy_insurance_master.id"), nullable=False)
+    
+    provider_name = Column(String(100), nullable=False)       # autofilled from master
+    plan_name = Column(String(100), nullable=False)           # autofilled from master
+    policy_number = Column(String(50), nullable=False)        # patient-specific, manual input
+    group_number = Column(String(50), nullable=True)          # from master
+    formulary_type = Column(String(50), nullable=True)        # from master
+    prior_auth_required = Column(Boolean, default=False)      # from master
+    standard_copay = Column(Float, nullable=True)            # from master
+    deductible_amount = Column(Float, nullable=True)         # from master
+    effective_date = Column(Date, nullable=False)            # patient input
+    expiry_date = Column(Date, nullable=False)               # patient input
+    status = Column(String(20), default="Active")            # Active / Inactive
+    priority = Column(String(20), default="primary")         # primary/secondary
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    # Relationships
+    patient = relationship("Patient", back_populates="pharmacy_insurances")
+    pharmacy_master = relationship("PharmacyInsuranceMaster")

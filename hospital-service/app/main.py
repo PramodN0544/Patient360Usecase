@@ -13,8 +13,8 @@ from app.routers import notifications
 from app.routers import medications
 from app.routers import encounters
 from app.routers import assignments  # adjust import path
-
-
+from app.routers import insurance_master 
+from app.routers import pharmacy_insurance_master
 
 # Import appointment router
 from app.routers import appointment
@@ -29,7 +29,8 @@ app.include_router(medications.router)
 app.include_router(notifications.router)
 app.include_router(vitals.router)
 app.include_router(assignments.router)
-
+app.include_router(insurance_master.router)
+app.include_router(pharmacy_insurance_master.router)
 apply_cors(app)
 
 # Include the appointment routes

@@ -280,3 +280,118 @@ class EncounterOut(BaseModel):
 
     class Config:
         orm_mode = True
+
+
+# ================================
+# INSURANCE MASTER SCHEMAS
+
+
+class InsuranceMasterOut(BaseModel):
+    id: int
+    provider_name: str
+    plan_name: str
+    plan_type: Optional[str] = None
+    coverage_percent: Optional[float] = None
+    copay_amount: Optional[float] = None
+    deductible_amount: Optional[float] = None
+    out_of_pocket_max: Optional[float] = None
+    effective_date: Optional[date] = None
+    expiry_date: Optional[date] = None
+    description: Optional[str] = None
+    status: Optional[str] = None
+    created_at: Optional[datetime] = None
+
+    class Config:
+        orm_mode = True
+
+
+class PharmacyInsuranceMasterOut(BaseModel):
+    id: int
+    provider_name: str
+    plan_name: str
+    group_number: Optional[str]
+    formulary_type: Optional[str]
+    prior_auth_required: bool
+    standard_copay: Optional[float]
+    deductible_amount: Optional[float]
+    status: str
+    created_at: datetime
+
+    class Config:
+        orm_mode = True
+        
+# Input schema for POST request
+# ------------------------------
+class PatientPharmacyInsuranceCreate(BaseModel):
+    patient_id: int
+    pharmacy_insurance_id: int  # Reference to master plan
+    policy_number: str          # Patient-specific, manual input
+    effective_date: date
+    expiry_date: date
+    priority: Optional[str] = "primary"  # primary / secondary
+
+# ------------------------------
+# Output schema for GET response
+# ------------------------------
+class PatientPharmacyInsuranceOut(BaseModel):
+    id: int
+    patient_id: int
+    pharmacy_insurance_id: int
+    provider_name: str
+    plan_name: str
+    policy_number: str
+    group_number: Optional[str]
+    formulary_type: Optional[str]
+    prior_auth_required: bool
+    standard_copay: Optional[float]
+    deductible_amount: Optional[float]
+    effective_date: date
+    expiry_date: date
+    status: str
+    priority: str
+    created_at: datetime
+
+    class Config:
+        orm_mode = True  # allows SQLAlchemy models to be returned directly
+
+
+
+# app/schemas.py
+from pydantic import BaseModel
+from datetime import date, datetime
+from typing import Optional
+
+# -----------------------------
+# Response schema (Out)
+# -----------------------------
+class PatientInsuranceOut(BaseModel):
+    id: int
+    patient_id: int
+    insurance_id: int
+    provider_name: str
+    plan_name: str
+    plan_type: Optional[str]
+    coverage_percent: Optional[float]
+    copay_amount: Optional[float]
+    deductible_amount: Optional[float]
+    out_of_pocket_max: Optional[float]
+    effective_date: date
+    expiry_date: date
+    status: str
+    priority: str
+    created_at: datetime
+
+    class Config:
+        orm_mode = True
+
+# -----------------------------
+# Create schema (input)
+# -----------------------------
+class PatientInsuranceCreate(BaseModel):
+    insurance_id: int                     # link to insurance master
+    effective_date: date
+    expiry_date: date
+    priority: Optional[str] = "primary"  # default to primary
+
+    class Config:
+        orm_mode = True
