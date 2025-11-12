@@ -96,6 +96,9 @@ class PatientCreate(BaseModel):
     country: Optional[str] = None
     citizenship_status: Optional[str] = None
     visa_type: Optional[str] = None
+    photo_url: Optional[str]        
+    id_proof_document: Optional[str] 
+    
 
 
 class PatientOut(PatientCreate):

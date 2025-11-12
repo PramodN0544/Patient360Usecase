@@ -7,6 +7,25 @@ from sqlalchemy.orm import relationship
 from app.database import Base
 import uuid
 
+
+# -------------------- Generate public_id --------------------
+def generate_public_id(context):
+    instance = context.current_parameters
+    first = instance.get("first_name", "unknown").lower()
+    last = instance.get("last_name", "unknown").lower()
+    return f"{first}_{last}_{uuid.uuid4().hex[:8]}"
+
+def generate_doctor_public_id(context):
+    instance = context.current_parameters
+    first = instance.get("first_name", "unknown").lower()
+    last = instance.get("last_name", "unknown").lower()
+    return f"doc_{first}_{last}_{uuid.uuid4().hex[:8]}"
+
+def generate_hospital_public_id(context):
+    instance = context.current_parameters
+    name = instance.get("name", "hospital").lower().replace(" ", "_")
+    return f"hosp_{name}_{uuid.uuid4().hex[:8]}"
+
 # -------------------- Timestamp Mixin --------------------
 class TimestampMixin:
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -17,6 +36,7 @@ class Hospital(Base, TimestampMixin):
     __tablename__ = "hospitals"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
+    public_id = Column(String(150), unique=True, nullable=False, index=True, default=generate_hospital_public_id)
     name = Column(String(200), nullable=False)
     registration_no = Column(String(100))
     email = Column(String(100), unique=True, nullable=False)
@@ -35,6 +55,9 @@ class Hospital(Base, TimestampMixin):
     consultation_fee = Column(Numeric(10,2))
     website = Column(String(200))
     status = Column(String(20), default="active")
+
+    logo_url = Column(String(300), nullable=True)
+    registration_certificate = Column(String(300), nullable=False)
 
     # Relationships
     users = relationship("User", back_populates="hospital", cascade="all, delete-orphan")
@@ -65,6 +88,8 @@ class Doctor(Base, TimestampMixin):
     __tablename__ = "doctors"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
+    public_id = Column(String(150), unique=True, nullable=False, index=True, default=generate_doctor_public_id)
+
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     hospital_id = Column(Integer, ForeignKey("hospitals.id"))
     npi_number = Column(String(100), unique=True)
@@ -83,6 +108,9 @@ class Doctor(Base, TimestampMixin):
     mode_of_consultation = Column(String(50))
     status = Column(String(20), default="Active")
 
+    license_url  = Column(String(300), nullable=True)
+    license_document = Column(String(300), nullable=False)
+
     user = relationship("User", back_populates="doctors")
     hospital = relationship("Hospital", back_populates="doctors")
     encounters = relationship("Encounter", back_populates="doctor", cascade="all, delete-orphan")
@@ -90,12 +118,7 @@ class Doctor(Base, TimestampMixin):
     medications = relationship("Medication", back_populates="doctor")
     patient_assignments = relationship("PatientDoctorAssignment", back_populates="doctor", cascade="all, delete-orphan")
 
-# -------------------- Generate public_id --------------------
-def generate_public_id(context):
-    instance = context.current_parameters
-    first = instance.get("first_name", "unknown").lower()
-    last = instance.get("last_name", "unknown").lower()
-    return f"{first}_{last}_{uuid.uuid4().hex[:8]}"
+
 
 # -------------------- Patients --------------------
 class Patient(Base, TimestampMixin):
@@ -120,6 +143,9 @@ class Patient(Base, TimestampMixin):
     country = Column(String(50), nullable=False)
     citizenship_status = Column(String(50))
     visa_type = Column(String(50))
+
+    photo_url  = Column(String(300), nullable=True)  # URL or file path
+    id_proof_document = Column(String(300), nullable=False)  # Govt ID or insurance proof
 
     user = relationship("User", back_populates="patients")
     appointments = relationship("Appointment", back_populates="patient", cascade="all, delete-orphan")

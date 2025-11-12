@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, update
+from sqlalchemy import select
 from datetime import datetime
 from app.database import get_db
 from app.models import Vitals, Patient
@@ -71,23 +71,14 @@ async def update_vitals(vitals_id: int, payload: dict, db: AsyncSession = Depend
     return {"message": "Vitals updated successfully", "vitals_id": vitals.id, "bmi": bmi}
 
 
+# GET LATEST BMI CATEGORY
 @router.get("/bmi/category")
-async def get_bmi_category(
-    current_user=Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
-):
-    """Return latest BMI value + BMI category of logged-in patient."""
-    
-    # Get patient using current logged-in user
-    result = await db.execute(
-        select(Patient).where(Patient.user_id == current_user.id)
-    )
+async def get_bmi_category(current_user=Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(Patient).where(Patient.user_id == current_user.id))
     patient = result.scalar_one_or_none()
-
     if not patient:
         raise HTTPException(status_code=404, detail="Patient not found")
 
-    # Fetch latest vitals entry with BMI
     vitals_result = await db.execute(
         select(Vitals)
         .where(Vitals.patient_id == patient.id)
@@ -98,15 +89,9 @@ async def get_bmi_category(
 
     latest = vitals_result.scalar_one_or_none()
     if not latest:
-        return {
-            "patient_id": str(patient.id),
-            "bmi": None,
-            "category": "No BMI data"
-        }
+        return {"patient_id": str(patient.id), "bmi": None, "category": "No BMI data"}
 
     bmi = float(latest.bmi)
-
-    # Determine Category
     if bmi < 18.5:
         category = "Underweight"
     elif 18.5 <= bmi < 25:
@@ -120,5 +105,45 @@ async def get_bmi_category(
         "patient_id": str(patient.id),
         "bmi": bmi,
         "category": category,
-        "recorded_at": latest.recorded_at.strftime("%Y-%m-%d %H:%M:%S")
+        "recorded_at": latest.recorded_at.strftime("%Y-%m-%d %H:%M:%S"),
     }
+
+
+# GET FULL VITALS HISTORY (NEW)
+@router.get("/history")
+async def get_vitals_history(
+    current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Returns all vitals records of the logged-in patient in reverse chronological order.
+    """
+    patient_id = await get_patient_id(current_user, db)
+
+    result = await db.execute(
+        select(Vitals)
+        .where(Vitals.patient_id == patient_id)
+        .order_by(Vitals.recorded_at.desc())
+    )
+    vitals_list = result.scalars().all()
+
+    if not vitals_list:
+        raise HTTPException(status_code=404, detail="No vitals records found")
+
+    return [
+        {
+            "id": v.id,
+            "appointment_id": v.appointment_id,
+            "encounter_id": v.encounter_id,
+            "height": v.height,
+            "weight": v.weight,
+            "bmi": v.bmi,
+            "blood_pressure": v.blood_pressure,
+            "heart_rate": v.heart_rate,
+            "temperature": v.temperature,
+            "respiration_rate": v.respiration_rate,
+            "oxygen_saturation": v.oxygen_saturation,
+            "recorded_at": v.recorded_at.strftime("%Y-%m-%d %H:%M:%S"),
+        }
+        for v in vitals_list
+    ]
