@@ -273,7 +273,8 @@ class EncounterOut(BaseModel):
     notes: Optional[str]
     follow_up_date: Optional[date]
     status: str
-
+    doctor_name: Optional[str]  
+    hospital_name: Optional[str] 
     vitals: List[VitalsOut] = []
     medications: List[MedicationOut] = []
 

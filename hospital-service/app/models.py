@@ -36,9 +36,11 @@ class Hospital(Base, TimestampMixin):
     website = Column(String(200))
     status = Column(String(20), default="active")
 
-    users = relationship("User", back_populates="hospital", cascade="all, delete")
-    doctors = relationship("Doctor", back_populates="hospital", cascade="all, delete")
-    appointments = relationship("Appointment", back_populates="hospital", cascade="all, delete")
+    # Relationships
+    users = relationship("User", back_populates="hospital", cascade="all, delete-orphan")
+    doctors = relationship("Doctor", back_populates="hospital", cascade="all, delete-orphan")
+    appointments = relationship("Appointment", back_populates="hospital", cascade="all, delete-orphan")
+    encounters = relationship("Encounter", back_populates="hospital", cascade="all, delete-orphan")
 
 # -------------------- Users --------------------
 class User(Base, TimestampMixin):
@@ -53,6 +55,10 @@ class User(Base, TimestampMixin):
     is_active = Column(Boolean, default=True)
 
     hospital = relationship("Hospital", back_populates="users")
+    patients = relationship("Patient", back_populates="user", cascade="all, delete-orphan")
+    doctors = relationship("Doctor", back_populates="user", cascade="all, delete-orphan")
+    notifications = relationship("Notification", back_populates="user", cascade="all, delete-orphan")
+    password_reset_tokens = relationship("PasswordResetToken", back_populates="user", cascade="all, delete-orphan")
 
 # -------------------- Doctors --------------------
 class Doctor(Base, TimestampMixin):
@@ -77,19 +83,19 @@ class Doctor(Base, TimestampMixin):
     mode_of_consultation = Column(String(50))
     status = Column(String(20), default="Active")
 
+    user = relationship("User", back_populates="doctors")
     hospital = relationship("Hospital", back_populates="doctors")
-    appointments = relationship("Appointment", back_populates="doctor", cascade="all, delete")
-    patient_assignments = relationship(
-    "PatientDoctorAssignment", back_populates="doctor", cascade="all, delete"
-)
-    
+    encounters = relationship("Encounter", back_populates="doctor", cascade="all, delete-orphan")
+    appointments = relationship("Appointment", back_populates="doctor", cascade="all, delete-orphan")
+    medications = relationship("Medication", back_populates="doctor")
+    patient_assignments = relationship("PatientDoctorAssignment", back_populates="doctor", cascade="all, delete-orphan")
+
+# -------------------- Generate public_id --------------------
 def generate_public_id(context):
-    """Generates a human-readable public_id: first_last_UUID"""
-    # Get the instance being inserted
     instance = context.current_parameters
     first = instance.get("first_name", "unknown").lower()
     last = instance.get("last_name", "unknown").lower()
-    return f"{first}_{last}_{uuid.uuid4().hex[:8]}"  # short UUID for readability
+    return f"{first}_{last}_{uuid.uuid4().hex[:8]}"
 
 # -------------------- Patients --------------------
 class Patient(Base, TimestampMixin):
@@ -115,13 +121,12 @@ class Patient(Base, TimestampMixin):
     citizenship_status = Column(String(50))
     visa_type = Column(String(50))
 
-    appointments = relationship("Appointment", back_populates="patient", cascade="all, delete")
-    medications = relationship("Medication", back_populates="patient", cascade="all, delete")
-    vitals = relationship("Vitals", back_populates="patient", cascade="all, delete")
-    encounters = relationship("Encounter", back_populates="patient", cascade="all, delete")
-    doctor_assignments = relationship(
-    "PatientDoctorAssignment", back_populates="patient", cascade="all, delete"
-)
+    user = relationship("User", back_populates="patients")
+    appointments = relationship("Appointment", back_populates="patient", cascade="all, delete-orphan")
+    medications = relationship("Medication", back_populates="patient", cascade="all, delete-orphan")
+    vitals = relationship("Vitals", back_populates="patient", cascade="all, delete-orphan")
+    encounters = relationship("Encounter", back_populates="patient", cascade="all, delete-orphan")
+    doctor_assignments = relationship("PatientDoctorAssignment", back_populates="patient", cascade="all, delete-orphan")
 
 # -------------------- Appointments --------------------
 class Appointment(Base, TimestampMixin):
@@ -141,8 +146,8 @@ class Appointment(Base, TimestampMixin):
     patient = relationship("Patient", back_populates="appointments")
     hospital = relationship("Hospital", back_populates="appointments")
     doctor = relationship("Doctor", back_populates="appointments")
-    vitals = relationship("Vitals", back_populates="appointment")
-    medications = relationship("Medication", back_populates="appointment")
+    vitals = relationship("Vitals", back_populates="appointment", cascade="all, delete-orphan")
+    medications = relationship("Medication", back_populates="appointment", cascade="all, delete-orphan")
 
 # -------------------- Medications --------------------
 class Medication(Base, TimestampMixin):
@@ -161,13 +166,11 @@ class Medication(Base, TimestampMixin):
     end_date = Column(Date, nullable=True)
     status = Column(String(50), default="active")
     notes = Column(Text, nullable=True)
-
     icd_code = Column(String(20), nullable=True)
-    # NDC code for the medication (optional, specific drug identifier)
     ndc_code = Column(String(50), nullable=True)
 
     patient = relationship("Patient", back_populates="medications")
-    doctor = relationship("Doctor")
+    doctor = relationship("Doctor", back_populates="medications")
     appointment = relationship("Appointment", back_populates="medications")
     encounter = relationship("Encounter", back_populates="medications")
 
@@ -188,8 +191,10 @@ class Encounter(Base, TimestampMixin):
     status = Column(String(20), default="open")
 
     patient = relationship("Patient", back_populates="encounters")
-    vitals = relationship("Vitals", back_populates="encounter", cascade="all, delete")
-    medications = relationship("Medication", back_populates="encounter", cascade="all, delete")
+    doctor = relationship("Doctor", back_populates="encounters")
+    hospital = relationship("Hospital", back_populates="encounters")
+    vitals = relationship("Vitals", back_populates="encounter", cascade="all, delete-orphan")
+    medications = relationship("Medication", back_populates="encounter", cascade="all, delete-orphan")
 
 # -------------------- Vitals --------------------
 class Vitals(Base, TimestampMixin):
@@ -225,7 +230,7 @@ class Notification(Base, TimestampMixin):
     status = Column(String(50), default="unread")
     data_id = Column(String(200), nullable=True)
 
-    user = relationship("User")
+    user = relationship("User", back_populates="notifications")
 
 # -------------------- Password Reset Tokens --------------------
 class PasswordResetToken(Base):
@@ -237,7 +242,7 @@ class PasswordResetToken(Base):
     expires_at = Column(DateTime, nullable=False)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
 
-    user = relationship("User")
+    user = relationship("User", back_populates="password_reset_tokens")
 
     def is_expired(self):
         return datetime.utcnow() > self.expires_at
@@ -254,7 +259,7 @@ password_reset_otps_table = Table(
     Column("created_at", DateTime, default=datetime.utcnow)
 )
 
-
+# -------------------- Patient-Doctor Assignment --------------------
 class PatientDoctorAssignment(Base):
     __tablename__ = "patient_doctor_assignment"
 
@@ -264,6 +269,5 @@ class PatientDoctorAssignment(Base):
     hospital_id = Column(Integer, ForeignKey("hospitals.id", ondelete="CASCADE"), nullable=False)
     assigned_at = Column(DateTime, default=datetime.utcnow)
 
-    # Relationships
     patient = relationship("Patient", back_populates="doctor_assignments")
     doctor = relationship("Doctor", back_populates="patient_assignments")

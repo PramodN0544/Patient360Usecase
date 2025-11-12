@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import selectinload, joinedload
 from typing import List
 
 from app.database import get_db
@@ -10,6 +10,7 @@ from app.schemas import EncounterCreate, EncounterOut
 from app.auth import get_current_user
 
 router = APIRouter(prefix="/encounters", tags=["Encounters"])
+
 
 # ===============================
 # CREATE ENCOUNTER
@@ -119,8 +120,8 @@ async def create_encounter(
                 doctor_id=doctor.id,
                 encounter_id=new_encounter.id,
                 medication_name=m.medication_name,
-                icd_code=m.icd_code,
-                ndc_code=m.ndc_code,
+                icd_code=getattr(m, "icd_code", None),
+                ndc_code=getattr(m, "ndc_code", None),
                 dosage=m.dosage,
                 frequency=m.frequency,
                 route=m.route,
@@ -141,11 +142,17 @@ async def create_encounter(
         select(Encounter)
         .options(
             selectinload(Encounter.vitals),
-            selectinload(Encounter.medications)
+            selectinload(Encounter.medications),
+            joinedload(Encounter.doctor),
+            joinedload(Encounter.hospital)
         )
         .where(Encounter.id == new_encounter.id)
     )
-    return final_result.scalar_one()
+    encounter = final_result.scalar_one()
+    encounter_out = EncounterOut.from_orm(encounter)
+    encounter_out.doctor_name = encounter.doctor.name if encounter.doctor else None
+    encounter_out.hospital_name = encounter.hospital.name if encounter.hospital else None
+    return encounter_out
 
 
 # ===============================
@@ -166,11 +173,27 @@ async def get_my_encounters(
 
     result = await db.execute(
         select(Encounter)
-        .options(selectinload(Encounter.vitals), selectinload(Encounter.medications))
+        .options(
+            joinedload(Encounter.vitals),
+            joinedload(Encounter.medications),
+            joinedload(Encounter.doctor),
+            joinedload(Encounter.hospital)
+        )
         .where(Encounter.patient_id == patient.id)
         .order_by(Encounter.encounter_date.desc())
     )
-    return result.scalars().all()
+    encounters = result.unique().scalars().all()
+
+    response = []
+    for e in encounters:
+        encounter_data = EncounterOut.from_orm(e)
+        encounter_data.doctor_name = (
+    f"{e.doctor.first_name} {e.doctor.last_name}" if e.doctor else None
+)
+        encounter_data.hospital_name = e.hospital.name if e.hospital else None
+        response.append(encounter_data)
+
+    return response
 
 
 # ===============================
@@ -184,7 +207,12 @@ async def get_encounter(
 ):
     result = await db.execute(
         select(Encounter)
-        .options(selectinload(Encounter.vitals), selectinload(Encounter.medications))
+        .options(
+            selectinload(Encounter.vitals),
+            selectinload(Encounter.medications),
+            joinedload(Encounter.doctor),
+            joinedload(Encounter.hospital)
+        )
         .where(Encounter.id == encounter_id)
     )
     encounter = result.scalar_one_or_none()
@@ -199,4 +227,8 @@ async def get_encounter(
     if patient and encounter.patient_id != patient.id:
         raise HTTPException(403, "You can only see your own encounters")
 
-    return encounter
+    encounter_out = EncounterOut.from_orm(encounter)
+    encounter_out.doctor_name = encounter.doctor.name if encounter.doctor else None
+    encounter_out.hospital_name = encounter.hospital.name if encounter.hospital else None
+
+    return encounter_out
