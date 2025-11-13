@@ -154,7 +154,6 @@ async def create_encounter(
     encounter_out.hospital_name = encounter.hospital.name if encounter.hospital else None
     return encounter_out
 
-
 # ===============================
 # GET PATIENT'S ENCOUNTERS
 # ===============================
@@ -194,7 +193,6 @@ async def get_my_encounters(
         response.append(encounter_data)
 
     return response
-
 
 # ===============================
 # GET SINGLE ENCOUNTER

@@ -2,7 +2,6 @@ from fastapi import FastAPI, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi.staticfiles import StaticFiles
-
 from app import schemas, crud, utils
 from app.cors import apply_cors, get_frontend_origins
 from app.database import get_db, engine, Base
@@ -20,6 +19,11 @@ from app.routers import pharmacy_insurance_master
 from app.routers import appointment
 from app.routers import vitals
 from app.routers import file_upload
+
+# SQLAlchemy utilities and models used in route handlers
+from sqlalchemy import select
+from sqlalchemy.orm import selectinload
+from app import models
 
 
 app = FastAPI(title="CareIQ Patient 360 API")
@@ -64,7 +68,6 @@ async def login_for_access_token(
         )
     token = utils.create_access_token({"sub": user.email})
     return {"access_token": token, "token_type": "bearer"}
-
 
 
 @app.get("/users/me")
@@ -253,23 +256,47 @@ async def get_all_doctors(
     doctors = await crud.get_doctors_by_hospital(db, current_user.hospital_id)
     return doctors
 
-
-@app.get("/patients", response_model=schemas.PatientOut)
+# For patient login — only their own data
+@app.get("/patient", response_model=schemas.PatientOut)
 async def get_my_profile(
-    current_user = Depends(get_current_user),
+    current_user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     if current_user.role != "patient":
-        raise HTTPException(status_code=403, detail="Only patients can access this endpoint")
+        raise HTTPException(status_code=403, detail="Not permitted")
 
-    # Fetch patient linked to this user
-    patient = await crud.get_patient_by_user_id(db, current_user.id)
+    result = await db.execute(
+        select(models.Patient)
+        .where(models.Patient.user_id == current_user.id)
+        .options(
+            selectinload(models.Patient.allergies),
+            selectinload(models.Patient.consents),
+            selectinload(models.Patient.patient_insurances),
+            selectinload(models.Patient.pharmacy_insurances)
+        )
+    )
+    patient = result.scalars().first()
 
     if not patient:
-        raise HTTPException(status_code=404, detail="Patient profile not found")
+        raise HTTPException(status_code=404, detail="Patient record not found")
 
     return patient
 
+
+# Admin Part – Get all patients
+@app.get("/patients", response_model=list[schemas.PatientOut])
+async def get_patients(db: AsyncSession = Depends(get_db)):
+    result = await db.execute(
+        select(models.Patient)
+        .options(
+            selectinload(models.Patient.allergies),
+            selectinload(models.Patient.consents),
+            selectinload(models.Patient.insurances),
+            selectinload(models.Patient.pharmacy_insurances)
+        )
+    )
+    patients = result.scalars().all()
+    return patients
 
 @app.get("/hospitals/patients", response_model=list[schemas.PatientOut])
 async def get_all_patients(
