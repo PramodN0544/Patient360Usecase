@@ -38,7 +38,7 @@ class Hospital(Base, TimestampMixin):
     __tablename__ = "hospitals"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    public_id = Column(String(150), unique=True, nullable=False, index=True, default=generate_hospital_public_id)
+    # public_id = Column(String(150), unique=True, nullable=False, index=True, default=generate_hospital_public_id)
     name = Column(String(200), nullable=False)
     registration_no = Column(String(100))
     email = Column(String(100), unique=True, nullable=False)
@@ -90,7 +90,7 @@ class Doctor(Base, TimestampMixin):
     __tablename__ = "doctors"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    public_id = Column(String(150), unique=True, nullable=False, index=True, default=generate_doctor_public_id)
+    # public_id = Column(String(150), unique=True, nullable=False, index=True, default=generate_doctor_public_id)
 
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     hospital_id = Column(Integer, ForeignKey("hospitals.id"))

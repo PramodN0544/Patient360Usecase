@@ -29,6 +29,8 @@ from app import models
 app = FastAPI(title="CareIQ Patient 360 API")
 app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 
+apply_cors(app)
+
 app.include_router(medications.router)
 app.include_router(notifications.router)
 app.include_router(vitals.router)
@@ -36,7 +38,7 @@ app.include_router(file_upload.router)
 app.include_router(assignments.router)
 app.include_router(insurance_master.router)
 app.include_router(pharmacy_insurance_master.router)
-apply_cors(app)
+
 
 # Include the appointment routes
 app.include_router(appointment.router)  # no need to repeat prefix; it's already defined inside appointment.py

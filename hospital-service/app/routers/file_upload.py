@@ -1,11 +1,12 @@
 import os
 import shutil
 from datetime import datetime
-from fastapi import APIRouter, UploadFile, File, HTTPException, Depends
+from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, Form
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from app.database import get_db
 from app.models import Patient, Doctor, Hospital
+from app.auth import get_current_user  # Add this import
 
 router = APIRouter(prefix="/upload", tags=["File Upload"])
 
@@ -14,38 +15,31 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 # ✅ File type configuration
 FILE_TYPE_CONFIG = {
-    "patient_photo": {
-        "model": Patient,
+    "photo": {  # Changed from "patient_photo"
+        "model": Hospital,
         "field": "photo_url",
         "allowed_ext": ["jpg", "jpeg", "png"],
+        "max_size": 5 * 1024 * 1024,  # 5MB
     },
-    "patient_document": {
-        "model": Patient,
+    "id_proof": {  # Changed from "patient_document"
+        "model": Hospital,
         "field": "id_proof_document",
-        "allowed_ext": ["pdf", "jpeg"],
+        "allowed_ext": ["pdf", "jpg", "jpeg"],
+        "max_size": 10 * 1024 * 1024,  # 10MB
     },
     "doctor_license": {
         "model": Doctor,
         "field": "license_url",
-        "allowed_ext": ["jpg", "jpeg", "png"],
-    },
-    "doctor_document": {
-        "model": Doctor,
-        "field": "license_document",
-        "allowed_ext": ["pdf", "jpeg"],
+        "allowed_ext": ["jpg", "jpeg", "png", "pdf"],
+        "max_size": 5 * 1024 * 1024,
     },
     "hospital_logo": {
         "model": Hospital,
         "field": "logo_url",
         "allowed_ext": ["jpg", "jpeg", "png"],
-    },
-    "hospital_document": {
-        "model": Hospital,
-        "field": "registration_certificate",
-        "allowed_ext": ["pdf", "jpeg"],
+        "max_size": 5 * 1024 * 1024,
     },
 }
-
 
 @router.post("/{file_type}/{public_id}")
 async def upload_file(
@@ -53,6 +47,7 @@ async def upload_file(
     public_id: str,
     file: UploadFile = File(...),
     db: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_user),  # Add authentication
 ):
     """
     Upload a file (photo, license, or document) for patient/doctor/hospital.
@@ -60,24 +55,41 @@ async def upload_file(
     - Allowed Document formats: pdf, jpeg
 
     Example:
-    - POST /upload/patient_photo/{public_id}
-    - POST /upload/doctor_license/{public_id}
+    - POST /upload/photo/{public_id}
+    - POST /upload/id_proof/{public_id}
     """
+    print(f"📤 Upload request - file_type: {file_type}, public_id: {public_id}")
+
     if file_type not in FILE_TYPE_CONFIG:
-        raise HTTPException(status_code=400, detail="Invalid file_type")
+        raise HTTPException(
+            status_code=400, 
+            detail=f"Invalid file_type: {file_type}. Allowed: {list(FILE_TYPE_CONFIG.keys())}"
+        )
 
     config = FILE_TYPE_CONFIG[file_type]
     model = config["model"]
     field = config["field"]
     allowed_ext = config["allowed_ext"]
+    max_size = config.get("max_size", 10 * 1024 * 1024)
 
     try:
-        # 🧩 Validate file extension
-        ext = os.path.splitext(file.filename)[1].lower().replace(".", "")
-        if ext not in allowed_ext:
+        # 🧩 Validate file extension - FIXED
+        file_extension = file.filename.split('.')[-1].lower() if '.' in file.filename else ''
+        if not file_extension or file_extension not in allowed_ext:
             raise HTTPException(
                 status_code=400,
-                detail=f"Invalid file format. Allowed formats: {', '.join(allowed_ext)}",
+                detail=f"Invalid file format: {file_extension}. Allowed formats: {', '.join(allowed_ext)}",
+            )
+
+        # 🧩 Validate file size
+        file.file.seek(0, 2)  # Seek to end to get file size
+        file_size = file.file.tell()
+        file.file.seek(0)  # Reset to beginning
+        
+        if file_size > max_size:
+            raise HTTPException(
+                status_code=400,
+                detail=f"File too large: {file_size} bytes. Maximum size: {max_size} bytes"
             )
 
         # 📁 Create subfolder if not exists
@@ -86,8 +98,10 @@ async def upload_file(
 
         # 🕓 Unique filename
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"{file_type}_{timestamp}.{ext}"
+        filename = f"{public_id}_{timestamp}.{file_extension}"
         file_path = os.path.join(folder_path, filename)
+
+        print(f"💾 Saving file to: {file_path}")
 
         # 💾 Save file
         with open(file_path, "wb") as buffer:
@@ -96,11 +110,25 @@ async def upload_file(
         # ✅ Convert to URL-safe path (replace backslashes)
         file_url = f"/{file_path}".replace("\\", "/")
 
-        # 🔍 Fetch record dynamically
+        # 🔍 Handle temporary patient IDs (like 'new-patient-temp')
+        if public_id == 'new-patient-temp':
+            print("🆕 Temporary patient ID - skipping database update")
+            return {
+                "message": f"{file_type} uploaded successfully",
+                "file_url": file_url,
+                "filename": filename,
+                "temporary": True
+            }
+
+        # 🔍 Fetch record dynamically for existing patients
         result = await db.execute(select(model).filter(model.public_id == public_id))
         record = result.scalars().first()
+        
         if not record:
-            raise HTTPException(status_code=404, detail=f"{model.__name__} not found")
+            raise HTTPException(
+                status_code=404, 
+                detail=f"{model.__name__} with public_id '{public_id}' not found"
+            )
 
         # ⚡ Update DB field with file URL
         setattr(record, field, file_url)
@@ -110,7 +138,11 @@ async def upload_file(
         return {
             "message": f"{file_type} uploaded successfully",
             "file_url": file_url,
+            "filename": filename,
         }
 
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        print(f"❌ Upload error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
