@@ -1,5 +1,5 @@
 from pydantic import BaseModel, EmailStr, Field
-from typing import List, Optional
+from typing import List, Optional,Dict
 from datetime import date, time, datetime
 # HOSPITAL SCHEMAS
 class HospitalBase(BaseModel):
@@ -449,3 +449,47 @@ class EncounterOut(BaseModel):
 
     class Config:
         orm_mode = True
+
+
+class TreatmentPlanBase(BaseModel):
+    name: str
+    description: Optional[str] = None
+
+class TreatmentPlanResponse(TreatmentPlanBase):
+    id: int
+
+    class Config:
+        orm_mode = True
+
+class DoctorBase(BaseModel):
+    first_name: str
+    last_name: str
+    specialty: Optional[str] = None
+    category: Optional[str] = None
+    status: Optional[str] = None
+
+class DoctorResponse(DoctorBase):
+    id: int
+
+    class Config:
+        orm_mode = True
+
+class AssignmentBase(BaseModel):
+    public_patient_id: str
+    doctor_id: int
+    treatment_plan_id: Optional[int] = None
+    medical_history: Optional[str] = None
+    specialty: Optional[str] = None
+    reason: Optional[str] = None
+    old_medications: Optional[List[Dict[str, str]]] = []
+
+class AssignmentResponse(BaseModel):
+    id: int
+    message: str
+
+    class Config:
+        orm_mode = True
+
+# SPECIALTY SCHEMA
+class SpecialtyResponse(BaseModel):
+    specialty: List[str]

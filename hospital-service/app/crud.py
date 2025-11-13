@@ -9,6 +9,8 @@ from sqlalchemy.orm import aliased
 from app import utils, models
 from app.models import User, Patient, password_reset_otps_table, PasswordResetToken
 
+from app import models, schemas, utils
+
 from app.models import password_reset_otps_table  
 from app.schemas import PatientCreate
 
@@ -88,10 +90,6 @@ async def create_doctor(db: AsyncSession, data: dict, hospital_id: UUID):
     await db.refresh(doctor)
     return doctor, default_password, user.email
 
-from sqlalchemy.future import select
-from sqlalchemy.ext.asyncio import AsyncSession
-from fastapi import HTTPException
-from app import models, schemas, utils
 
 async def create_patient(db: AsyncSession, data: schemas.PatientCreate):
     # -----------------------------
@@ -327,3 +325,13 @@ async def get_patients_by_hospital(db: AsyncSession, hospital_id: str):
     except Exception as e:
         print(f"Error fetching patients for hospital {hospital_id}: {e}")
         raise
+
+async def get_doctors_by_hospital(db: AsyncSession, hospital_id: str):
+    """
+    Get all doctors that belong to a specific hospital.
+    """
+    result = await db.execute(
+        select(models.Doctor).where(models.Doctor.hospital_id == hospital_id)
+    )
+    doctors = result.scalars().all()
+    return doctors

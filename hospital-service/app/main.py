@@ -15,6 +15,7 @@ from app.routers import assignments  # adjust import path
 from app.routers import insurance_master 
 from app.routers import pharmacy_insurance_master
 
+
 # Import appointment router
 from app.routers import appointment
 from app.routers import vitals
@@ -54,22 +55,6 @@ async def startup():
     print("Database schema synchronized successfully")
 
 
-# LOGIN — JWT Token
-@app.post("/auth/token", response_model=schemas.Token)
-async def login_for_access_token(
-    form_data: OAuth2PasswordRequestForm = Depends(),
-    db: AsyncSession = Depends(get_db)
-):
-    user = await crud.authenticate_user(db, form_data.username, form_data.password)
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect username or password"
-        )
-    token = utils.create_access_token({"sub": user.email})
-    return {"access_token": token, "token_type": "bearer"}
-
-
 @app.get("/users/me")
 async def read_users_me(current_user=Depends(get_current_user)):
     return {
@@ -93,7 +78,17 @@ async def login_json(
             detail="Incorrect username or password"
         )
 
-    token = utils.create_access_token({"sub": user.email})
+    token_data = {
+        "sub": user.email,
+        "role": user.role,
+        "user_id": user.id
+    }
+
+    if user.hospital_id is not None:
+        token_data["hospital_id"] = user.hospital_id  # keep as integer
+
+    token = utils.create_access_token(token_data)
+
     return {"access_token": token, "token_type": "bearer"}
 
 
@@ -228,7 +223,7 @@ async def get_config():
 def root():
     return {"message": "CareIQ Patient 360 API is running 🚀"}
 
-
+# Get Doctor Profile — for doctor login
 @app.get("/doctors", response_model=schemas.DoctorOut)
 async def get_my_doctor_profile(
     current_user = Depends(get_current_user),
@@ -245,7 +240,7 @@ async def get_my_doctor_profile(
     return doctor
 
 
-
+# Get all doctors for a hospital
 @app.get("/hospitals/doctors", response_model=list[schemas.DoctorOut])
 async def get_all_doctors(
     current_user=Depends(get_current_user),
@@ -298,6 +293,7 @@ async def get_patients(db: AsyncSession = Depends(get_db)):
     patients = result.scalars().all()
     return patients
 
+# Get all patients for a hospital
 @app.get("/hospitals/patients", response_model=list[schemas.PatientOut])
 async def get_all_patients(
     current_user=Depends(get_current_user),
@@ -314,7 +310,7 @@ async def get_all_patients(
     return patients
 
 
-
+# Get Hospital Profile — for hospital login
 @app.get("/hospitals", response_model=schemas.HospitalOut)
 async def get_my_hospital_profile(
     current_user=Depends(get_current_user),
