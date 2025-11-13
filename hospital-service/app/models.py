@@ -293,6 +293,7 @@ class Encounter(Base, TimestampMixin):
     notes = Column(Text)
     follow_up_date = Column(Date)
     status = Column(String(20), default="open")
+    is_lab_test_required = Column(Boolean, default=False)
 
     patient = relationship("Patient", back_populates="encounters")
     doctor = relationship("Doctor", back_populates="encounters")

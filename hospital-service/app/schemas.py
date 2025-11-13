@@ -421,6 +421,7 @@ class EncounterCreate(BaseModel):
     notes: Optional[str] = None
     follow_up_date: Optional[date] = None
     status: Optional[str] = "open"
+    is_lab_test_required: Optional[bool] = False  # <
 
     vitals: Optional[VitalsCreate] = None
     medications: Optional[List[MedicationCreate]] = []
@@ -446,6 +447,7 @@ class EncounterOut(BaseModel):
     hospital_name: Optional[str] 
     vitals: List[VitalsOut] = []
     medications: List[MedicationOut] = []
+    is_lab_test_required: Optional[bool] = False  # <
 
     class Config:
         orm_mode = True
