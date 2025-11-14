@@ -17,9 +17,7 @@ from app.routers import pharmacy_insurance_master
 
 
 # Import appointment router
-from app.routers import appointment
-from app.routers import vitals
-from app.routers import file_upload
+from app.routers import appointment,vitals,file_upload,assignments,insurance_master,pharmacy_insurance_master,doctors
 
 # SQLAlchemy utilities and models used in route handlers
 from sqlalchemy import select
@@ -39,6 +37,7 @@ app.include_router(file_upload.router)
 app.include_router(assignments.router)
 app.include_router(insurance_master.router)
 app.include_router(pharmacy_insurance_master.router)
+app.include_router(doctors.router)
 
 
 # Include the appointment routes
@@ -187,7 +186,8 @@ async def create_patient(
     if current_user.role not in ("hospital", "admin", "doctor"):
         raise HTTPException(status_code=403, detail="Not permitted")
 
-    patient, password, email = await crud.create_patient(db, patient_in)
+    # Unpack all 4 values returned from crud
+    patient, password, email, public_id = await crud.create_patient(db, patient_in)
 
     utils.send_email(
         email,
@@ -203,10 +203,13 @@ async def create_patient(
         CareIQ
         """
     )
+
     return {
         "patient_id": str(patient.id),
-        "message": "Patient created and login credentials sent via email"
+        "message": "Patient created and login credentials sent via email",
+        "public_id": public_id  # <-- include public patient ID here
     }
+
 
 # Health Check
 @app.get("/health")
@@ -226,7 +229,7 @@ def root():
     return {"message": "CareIQ Patient 360 API is running 🚀"}
 
 # Get Doctor Profile — for doctor login
-@app.get("/doctors", response_model=schemas.DoctorOut)
+@app.get("/doctor", response_model=schemas.DoctorOut)
 async def get_my_doctor_profile(
     current_user = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
