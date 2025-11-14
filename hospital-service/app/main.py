@@ -14,8 +14,7 @@ from app.routers import encounters
 from app.routers import assignments  # adjust import path
 from app.routers import insurance_master 
 from app.routers import pharmacy_insurance_master
-
-
+from app.routers import file_upload
 # Import appointment router
 from app.routers import appointment,vitals,file_upload,assignments,insurance_master,pharmacy_insurance_master,doctors
 
