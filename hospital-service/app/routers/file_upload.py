@@ -19,25 +19,29 @@ FILE_TYPE_CONFIG = {
         "model": Hospital,
         "field": "photo_url",
         "allowed_ext": ["jpg", "jpeg", "png"],
-        "max_size": 5 * 1024 * 1024,  # 5MB
+        "max_size": 5 * 1024 * 1024,  # 5MB,
+       
     },
     "id_proof": {  # Changed from "patient_document"
         "model": Hospital,
         "field": "id_proof_document",
         "allowed_ext": ["pdf", "jpg", "jpeg"],
-        "max_size": 10 * 1024 * 1024,  # 10MB
+        "max_size": 10 * 1024 * 1024,  # 10MB,
+       
     },
     "doctor_license": {
         "model": Doctor,
         "field": "license_url",
         "allowed_ext": ["jpg", "jpeg", "png", "pdf"],
         "max_size": 5 * 1024 * 1024,
+        
     },
     "hospital_logo": {
         "model": Hospital,
         "field": "logo_url",
         "allowed_ext": ["jpg", "jpeg", "png"],
         "max_size": 5 * 1024 * 1024,
+        
     },
 }
 
