@@ -418,7 +418,7 @@ class EncounterCreate(BaseModel):
     patient_public_id: str  
     doctor_id: Optional[int] = None  
     hospital_id: Optional[int] = None  
-    encounter_date: date
+    encounter_date: Optional[date]
     encounter_type: str
     reason_for_visit: Optional[str] = None
     diagnosis: Optional[str] = None
