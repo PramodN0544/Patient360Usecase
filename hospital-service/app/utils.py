@@ -202,3 +202,6 @@ async def send_otp_email(to_email: str, otp: str, fullname: str):
     body = f"Hello {fullname},\n\nYour OTP code is: {otp}\nIt will expire in 5 minutes.\n\nIf you did not request this, please ignore this email."
     
     send_email(to_email, subject, body)
+
+
+

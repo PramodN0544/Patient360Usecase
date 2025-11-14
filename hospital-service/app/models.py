@@ -404,3 +404,48 @@ class PatientPharmacyInsurance(Base):
     # Relationships
     patient = relationship("Patient", back_populates="pharmacy_insurances")
     pharmacy_master = relationship("PharmacyInsuranceMaster")
+
+## -----------------------
+## Lab Master Table
+
+class LabMaster(Base):
+    __tablename__ = "lab_master"
+
+    id = Column(Integer, primary_key=True, index=True)
+    test_code = Column(String(50), unique=True, nullable=False)  # e.g. "GLUCOSE_FASTING"
+    test_name = Column(String(150), nullable=False)               # e.g. "Blood Glucose (Fasting)"
+    description = Column(Text, nullable=True)                     # Optional details
+    sample_type = Column(String(100), nullable=True)              # e.g. "Blood", "Urine"
+    method = Column(String(100), nullable=True)                   # e.g. "Spectrophotometry"
+    reference_range = Column(String(100), nullable=True)          # e.g. "70-120 mg/dL"
+    unit = Column(String(50), nullable=True)                      # e.g. "mg/dL"
+    normal_min = Column(Float, nullable=True)                     # Optional numerical reference
+    normal_max = Column(Float, nullable=True)
+    is_active = Column(Boolean, default=True)
+    price = Column(Float, nullable=False, default=0.0)# Active/inactive
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    
+# -----------------------
+# Lab Orders and Results Tables
+
+class LabOrder(Base):
+    __tablename__ = "lab_orders"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    encounter_id = Column(Integer, ForeignKey("encounters.id", ondelete="CASCADE"))
+    patient_id = Column(Integer, ForeignKey("patients.id"))
+    doctor_id = Column(Integer, ForeignKey("doctors.id"))
+    test_code = Column(String(50))
+    test_name = Column(String(100))
+    sample_type = Column(String(50))
+    status = Column(String(20), default="Pending")  # Pending, Completed
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+class LabResult(Base):
+    __tablename__ = "lab_results"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    lab_order_id = Column(Integer, ForeignKey("lab_orders.id", ondelete="CASCADE"))
+    result_value = Column(String(100), nullable=True)
+    notes = Column(Text, nullable=True)
+    pdf_url = Column(String(255), nullable=True)  # S3 file URL
+    created_at = Column(DateTime, default=datetime.utcnow)

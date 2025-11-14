@@ -15,10 +15,11 @@ from app.routers import encounters
 from app.routers import assignments  # adjust import path
 from app.routers import insurance_master 
 from app.routers import pharmacy_insurance_master
-
+from app.routers import file_upload
 # Import appointment router
 from app.routers import appointment
 from app.routers import vitals
+from app.routers import lab_routes
 
 
 app = FastAPI(title="CareIQ Patient 360 API")
@@ -31,6 +32,7 @@ app.include_router(file_upload.router)
 app.include_router(assignments.router)
 app.include_router(insurance_master.router)
 app.include_router(pharmacy_insurance_master.router)
+app.include_router(lab_routes.router)
 apply_cors(app)
 
 # Include the appointment routes

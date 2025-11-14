@@ -398,3 +398,55 @@ class PatientInsuranceCreate(BaseModel):
 
     class Config:
         orm_mode = True
+
+
+
+# ============================================================
+# Schema for test list (dropdown)
+# ============================================================
+class LabTestCode(BaseModel):
+    test_code: str
+
+    class Config:
+        orm_mode = True
+
+
+# ============================================================
+# Schema for full test details
+# ============================================================
+class LabTestDetail(BaseModel):
+    test_code: str
+    test_name: str
+    sample_type: Optional[str] = None
+    price: Optional[float] = None
+    unit: Optional[str] = None
+    reference_range: Optional[str] = None
+
+    class Config:
+        orm_mode = True
+        
+        
+from pydantic import BaseModel
+from typing import List, Optional
+
+class LabOrderCreate(BaseModel):
+    test_code: str
+
+class LabOrderResponse(BaseModel):
+    id: int
+    encounter_id: int
+    patient_id: int
+    doctor_id: int
+    test_code: str
+    test_name: str
+    sample_type: str
+    status: str
+
+    class Config:
+        orm_mode = True
+
+class LabResultCreate(BaseModel):
+    lab_order_id: int
+    result_value: Optional[str]
+    notes: Optional[str]
+    pdf_url: Optional[str]
