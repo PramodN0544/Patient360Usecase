@@ -3,9 +3,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload, joinedload
 from typing import List
-
+from datetime import date
 from app.database import get_db
-from app.models import Encounter, Doctor, Patient, Vitals, Medication, PatientDoctorAssignment
+from app.models import Encounter, Doctor, Patient, Vitals, Medication, Assignment
 from app.schemas import EncounterCreate, EncounterOut
 from app.auth import get_current_user
 
@@ -42,6 +42,7 @@ async def create_encounter(
         doctor = doctor_result.scalar_one_or_none()
         if not doctor:
             raise HTTPException(404, "Doctor not found in your hospital")
+
     elif not doctor:
         raise HTTPException(403, "Only doctors or hospitals can create encounters")
 
@@ -52,23 +53,25 @@ async def create_encounter(
         select(Patient).where(Patient.public_id == encounter_in.patient_public_id)
     )
     patient = patient_result.scalar_one_or_none()
+
     if not patient:
         raise HTTPException(404, "Patient not found")
 
     # -------------------------------
-    # Optional: check doctor assigned to patient
+    # Check doctor is assigned to patient (Assignment table)
     # -------------------------------
     assignment_result = await db.execute(
-        select(PatientDoctorAssignment)
-        .where(
-            PatientDoctorAssignment.patient_id == patient.id,
-            PatientDoctorAssignment.doctor_id == doctor.id
+        select(Assignment).where(
+            Assignment.patient_id == patient.id,
+            Assignment.doctor_id == doctor.id
         )
     )
     assignment = assignment_result.scalar_one_or_none()
+
     if not assignment:
         raise HTTPException(403, "Doctor is not assigned to this patient")
 
+    encounter_date = encounter_in.encounter_date or date.today()
     # -------------------------------
     # Create encounter
     # -------------------------------
@@ -76,7 +79,7 @@ async def create_encounter(
         patient_id=patient.id,
         doctor_id=doctor.id,
         hospital_id=doctor.hospital_id,
-        encounter_date=encounter_in.encounter_date,
+        encounter_date=encounter_date,
         encounter_type=encounter_in.encounter_type,
         reason_for_visit=encounter_in.reason_for_visit,
         diagnosis=encounter_in.diagnosis,
@@ -86,7 +89,7 @@ async def create_encounter(
         status="open"
     )
     db.add(new_encounter)
-    await db.flush()  
+    await db.flush()  # get encounter ID
 
     # -------------------------------
     # Save vitals
@@ -97,6 +100,7 @@ async def create_encounter(
         if v.height and v.weight:
             height_m = v.height / 100
             bmi = round(v.weight / (height_m ** 2), 2)
+
         vitals_obj = Vitals(
             patient_id=patient.id,
             encounter_id=new_encounter.id,
@@ -121,8 +125,8 @@ async def create_encounter(
                 doctor_id=doctor.id,
                 encounter_id=new_encounter.id,
                 medication_name=m.medication_name,
-                icd_code=getattr(m, "icd_code", None),
-                ndc_code=getattr(m, "ndc_code", None),
+                icd_code=m.icd_code,
+                ndc_code=m.ndc_code,
                 dosage=m.dosage,
                 frequency=m.frequency,
                 route=m.route,
@@ -149,10 +153,16 @@ async def create_encounter(
         )
         .where(Encounter.id == new_encounter.id)
     )
+
     encounter = final_result.scalar_one()
     encounter_out = EncounterOut.from_orm(encounter)
-    encounter_out.doctor_name = encounter.doctor.name if encounter.doctor else None
+
+    encounter_out.doctor_name = (
+        f"{encounter.doctor.first_name} {encounter.doctor.last_name}"
+        if encounter.doctor else None
+    )
     encounter_out.hospital_name = encounter.hospital.name if encounter.hospital else None
+
     return encounter_out
 
 # ===============================
