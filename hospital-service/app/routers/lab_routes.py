@@ -255,13 +255,6 @@ async def get_hospital_lab_results(current_user=Depends(get_current_user), db: A
     return out
 
 
-# ------------------------------------------------------------
-# 9 - Redirect endpoints (optional) — hide presigned URL from client
-# ------------------------------------------------------------
-# -----------------------------
-# View PDF (inline)
-# -----------------------------
-
 # View PDF securely
 
 
