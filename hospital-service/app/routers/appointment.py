@@ -45,6 +45,7 @@ async def get_doctors(
 ):
     query = select(Doctor).filter(func.lower(Doctor.status) == "active")
 
+    # Optional: filter by hospital
     if hospital_id:
         hospital_result = await db.execute(select(Hospital).filter(Hospital.id == hospital_id))
         hospital = hospital_result.scalar_one_or_none()
@@ -52,6 +53,7 @@ async def get_doctors(
             raise HTTPException(status_code=404, detail="Hospital not found")
         query = query.filter(Doctor.hospital_id == hospital_id)
 
+    # Optional: filter by specialty
     if specialty and specialty.lower() != "all" and specialty.strip() != "":
         query = query.filter(func.lower(Doctor.specialty).contains(specialty.lower()))
 
@@ -60,8 +62,10 @@ async def get_doctors(
 
     response = []
     for doc in doctors:
-        hospital_result = await db.execute(select(Hospital).filter(Hospital.id == doc.hospital_id))
-        hosp = hospital_result.scalar_one_or_none()
+        # Fetch hospital per doctor to avoid undefined variable
+        hosp_result = await db.execute(select(Hospital).filter(Hospital.id == doc.hospital_id))
+        hosp = hosp_result.scalar_one_or_none()
+
         response.append({
             "id": doc.id,
             "doctor_id": doc.id,
@@ -73,7 +77,7 @@ async def get_doctors(
             "hospital_id": doc.hospital_id,
             "hospital_name": hosp.name if hosp else "Unknown Hospital",
             "experience_years": doc.experience_years,
-            "consultation_fee": float(hospital.consultation_fee) if hospital and hospital.consultation_fee else 0.0,
+            "consultation_fee": float(hosp.consultation_fee) if hosp and hosp.consultation_fee else 0.0,
             "start_time": _time_to_str(doc.start_time) or "09:00",
             "end_time": _time_to_str(doc.end_time) or "17:00",
             "phone": doc.phone,
@@ -81,7 +85,6 @@ async def get_doctors(
         })
 
     return response
-
 # ============================================================
 # GET /appointments/doctors/specialty/{specialty}
 # ============================================================

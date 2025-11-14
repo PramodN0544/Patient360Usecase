@@ -82,10 +82,11 @@ async def create_encounter(
         diagnosis=encounter_in.diagnosis,
         notes=encounter_in.notes,
         follow_up_date=encounter_in.follow_up_date,
+        is_lab_test_required=encounter_in.is_lab_test_required,
         status="open"
     )
     db.add(new_encounter)
-    await db.flush()  # get new_encounter.id for foreign keys
+    await db.flush()  
 
     # -------------------------------
     # Save vitals
@@ -154,7 +155,6 @@ async def create_encounter(
     encounter_out.hospital_name = encounter.hospital.name if encounter.hospital else None
     return encounter_out
 
-
 # ===============================
 # GET PATIENT'S ENCOUNTERS
 # ===============================
@@ -194,7 +194,6 @@ async def get_my_encounters(
         response.append(encounter_data)
 
     return response
-
 
 # ===============================
 # GET SINGLE ENCOUNTER

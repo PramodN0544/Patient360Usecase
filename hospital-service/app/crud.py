@@ -9,6 +9,8 @@ from sqlalchemy.orm import aliased
 from app import utils, models
 from app.models import User, Patient, password_reset_otps_table, PasswordResetToken
 
+from app import models, schemas, utils
+
 from app.models import password_reset_otps_table  
 from app.schemas import PatientCreate
 
@@ -88,26 +90,29 @@ async def create_doctor(db: AsyncSession, data: dict, hospital_id: UUID):
     await db.refresh(doctor)
     return doctor, default_password, user.email
 
-async def create_patient(db: AsyncSession, data: PatientCreate):
-    # Email unique
+
+async def create_patient(db: AsyncSession, data: schemas.PatientCreate):
+    # -----------------------------
+    # Unique validations
+    # -----------------------------
     if data.email:
-        result = await db.execute(select(Patient).where(Patient.email == data.email))
+        result = await db.execute(select(models.Patient).where(models.Patient.email == data.email))
         if result.scalars().first():
             raise HTTPException(status_code=400, detail="Email already exists")
 
-    # Phone unique
     if data.phone:
-        result = await db.execute(select(Patient).where(Patient.phone == data.phone))
+        result = await db.execute(select(models.Patient).where(models.Patient.phone == data.phone))
         if result.scalars().first():
             raise HTTPException(status_code=400, detail="Phone already exists")
 
-    # SSN unique
     if data.ssn:
-        result = await db.execute(select(Patient).where(Patient.ssn == data.ssn))
+        result = await db.execute(select(models.Patient).where(models.Patient.ssn == data.ssn))
         if result.scalars().first():
             raise HTTPException(status_code=400, detail="SSN already exists")
 
-    # Create User with default password
+    # -----------------------------
+    # Create associated User
+    # -----------------------------
     default_password = utils.generate_default_password()
     full_name = f"{data.first_name} {data.last_name}"
 
@@ -119,15 +124,108 @@ async def create_patient(db: AsyncSession, data: PatientCreate):
         role="patient"
     )
 
-    patient_dict = data.dict()
+    # -----------------------------
+    # Create Patient
+    # -----------------------------
+    patient_dict = data.dict(exclude={"allergies", "consents", "patient_insurances", "pharmacy_insurances"})
     patient_dict["user_id"] = user.id
-
-    patient = Patient(**patient_dict)
+    patient = models.Patient(**patient_dict)
     db.add(patient)
+    await db.flush()  # to get patient.id before commit
+
+    # -----------------------------
+    # Add Allergies
+    # -----------------------------
+    if data.allergies:
+        for allergy_data in data.allergies:
+            allergy = models.Allergy(**allergy_data.dict(), patient_id=patient.id)
+            db.add(allergy)
+
+    # -----------------------------
+    # Add PatientConsent (Mandatory fields enforced)
+    # -----------------------------
+    if not data.consents:
+        raise HTTPException(status_code=400, detail="Consent is required")
+    
+    consent_data = data.consents.dict()
+    mandatory_fields = ["hipaa", "text_messaging", "financial"]
+    for field in mandatory_fields:
+        if consent_data.get(field) is None:
+            raise HTTPException(status_code=400, detail=f"{field} consent is mandatory")
+
+    consent = models.PatientConsent(**consent_data, patient_id=patient.id)
+    db.add(consent)
+
+    # -----------------------------
+    # Add Patient Insurances
+    # -----------------------------
+    if getattr(data, "patient_insurances", None):
+        for insurance_data in data.patient_insurances:
+            # Fetch master insurance details
+            result = await db.execute(
+                select(models.InsuranceMaster).where(models.InsuranceMaster.id == insurance_data.insurance_id)
+            )
+            master = result.scalars().first()
+
+            if not master:
+                raise HTTPException(status_code=404, detail=f"Insurance master with ID {insurance_data.insurance_id} not found")
+
+            insurance = models.PatientInsurance(
+                patient_id=patient.id,
+                insurance_id=insurance_data.insurance_id,
+                policy_number=insurance_data.policy_number,
+                effective_date=insurance_data.effective_date,
+                expiry_date=insurance_data.expiry_date,
+                priority=insurance_data.priority,
+                provider_name=master.provider_name,
+                plan_name=master.plan_name,
+                plan_type=master.plan_type,
+                coverage_percent=master.coverage_percent,
+                copay_amount=master.copay_amount,
+                deductible_amount=master.deductible_amount,
+                out_of_pocket_max=master.out_of_pocket_max
+            )
+            db.add(insurance)
+
+    # -----------------------------
+    # Add Pharmacy Insurances
+    # -----------------------------
+    if getattr(data, "pharmacy_insurances", None):
+        for pharm_data in data.pharmacy_insurances:
+            # Fetch master pharmacy insurance details
+            result = await db.execute(
+                select(models.PharmacyInsuranceMaster).where(models.PharmacyInsuranceMaster.id == pharm_data.pharmacy_insurance_id)
+            )
+            master = result.scalars().first()
+
+            if not master:
+                raise HTTPException(status_code=404, detail=f"Pharmacy insurance master with ID {pharm_data.pharmacy_insurance_id} not found")
+
+            pharmacy_ins = models.PatientPharmacyInsurance(
+                patient_id=patient.id,
+                pharmacy_insurance_id=pharm_data.pharmacy_insurance_id,
+                policy_number=pharm_data.policy_number,
+                effective_date=pharm_data.effective_date,
+                expiry_date=pharm_data.expiry_date,
+                priority=pharm_data.priority,
+                provider_name=master.provider_name,
+                plan_name=master.plan_name,
+                group_number=master.group_number,
+                formulary_type=master.formulary_type,
+                prior_auth_required=master.prior_auth_required,
+                standard_copay=master.standard_copay,
+                deductible_amount=master.deductible_amount
+            )
+            db.add(pharmacy_ins)
+
+    # -----------------------------
+    # Commit all changes
+    # -----------------------------
     await db.commit()
     await db.refresh(patient)
 
     return patient, default_password, user.email
+
 
 async def create_password_reset_token(db: AsyncSession, user_id: UUID, token: str, expires_at: datetime) -> PasswordResetToken:
     new_token = PasswordResetToken(user_id=user_id, token=token, expires_at=expires_at)
@@ -227,3 +325,13 @@ async def get_patients_by_hospital(db: AsyncSession, hospital_id: str):
     except Exception as e:
         print(f"Error fetching patients for hospital {hospital_id}: {e}")
         raise
+
+async def get_doctors_by_hospital(db: AsyncSession, hospital_id: str):
+    """
+    Get all doctors that belong to a specific hospital.
+    """
+    result = await db.execute(
+        select(models.Doctor).where(models.Doctor.hospital_id == hospital_id)
+    )
+    doctors = result.scalars().all()
+    return doctors

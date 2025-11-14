@@ -1,10 +1,7 @@
 from pydantic import BaseModel, EmailStr, Field
-from typing import List, Optional
+from typing import List, Optional,Dict
 from datetime import date, time, datetime
-
-# ================================
 # HOSPITAL SCHEMAS
-# ================================
 class HospitalBase(BaseModel):
     name: str
     address: str
@@ -76,7 +73,128 @@ class DoctorOut(DoctorCreate):
     class Config:
         orm_mode = True
 
-# ================================
+# Allergy Schemas
+class AllergyCreate(BaseModel):
+    name: str
+
+class AllergyOut(AllergyCreate):
+    id: int
+
+    class Config:
+        orm_mode = True
+
+# PatientConsent Schemas
+class PatientConsentCreate(BaseModel):
+    hipaa: bool
+    text_messaging: bool
+    marketing: Optional[bool] = False
+    copay: Optional[bool] = False
+    treatment: Optional[bool] = False
+    financial: bool
+    research: Optional[bool] = False
+
+class PatientConsentOut(PatientConsentCreate):
+    id: int
+
+    class Config:
+        orm_mode = True
+
+# INSURANCE MASTER SCHEMAS
+class InsuranceMasterOut(BaseModel):
+    id: int
+    provider_name: str
+    plan_name: str
+    plan_type: Optional[str] = None
+    coverage_percent: Optional[float] = None
+    copay_amount: Optional[float] = None
+    deductible_amount: Optional[float] = None
+    out_of_pocket_max: Optional[float] = None
+    effective_date: Optional[date] = None
+    expiry_date: Optional[date] = None
+    description: Optional[str] = None
+    status: Optional[str] = None
+    created_at: Optional[datetime] = None
+
+    class Config:
+        orm_mode = True
+
+class PharmacyInsuranceMasterOut(BaseModel):
+    id: int
+    provider_name: str
+    plan_name: str
+    group_number: Optional[str]
+    formulary_type: Optional[str]
+    prior_auth_required: bool
+    standard_copay: Optional[float]
+    deductible_amount: Optional[float]
+    status: str
+    created_at: datetime
+
+    class Config:
+        orm_mode = True
+        
+# Input schema for POST request
+class PatientPharmacyInsuranceCreate(BaseModel):
+    pharmacy_insurance_id: int  # Reference to master plan
+    policy_number: str          # Patient-specific, manual input
+    effective_date: date
+    expiry_date: date
+    priority: Optional[str] = "primary"  # primary / secondary
+
+# Output schema for GET response
+class PatientPharmacyInsuranceOut(BaseModel):
+    id: int
+    patient_id: int
+    pharmacy_insurance_id: int
+    provider_name: str
+    plan_name: str
+    policy_number: str
+    group_number: Optional[str]
+    formulary_type: Optional[str]
+    prior_auth_required: bool
+    standard_copay: Optional[float]
+    deductible_amount: Optional[float]
+    effective_date: date
+    expiry_date: date
+    status: str
+    priority: str
+    created_at: datetime
+
+    class Config:
+        orm_mode = True  # allows SQLAlchemy models to be returned directly
+
+# Response schema 
+class PatientInsuranceOut(BaseModel):
+    id: int
+    patient_id: int
+    insurance_id: int
+    provider_name: str
+    plan_name: str
+    plan_type: Optional[str]
+    coverage_percent: Optional[float]
+    copay_amount: Optional[float]
+    deductible_amount: Optional[float]
+    out_of_pocket_max: Optional[float]
+    effective_date: date
+    expiry_date: date
+    status: str
+    priority: str
+    created_at: datetime
+
+    class Config:
+        orm_mode = True
+
+# Create schema
+class PatientInsuranceCreate(BaseModel):
+    insurance_id: int                     
+    effective_date: date
+    expiry_date: date
+    priority: Optional[str] = "primary" 
+    policy_number: str
+
+    class Config:
+        orm_mode = True
+
 # PATIENT SCHEMAS
 # ================================
 class PatientCreate(BaseModel):
@@ -98,16 +216,68 @@ class PatientCreate(BaseModel):
     visa_type: Optional[str] = None
     photo_url: Optional[str]        
     id_proof_document: Optional[str] 
+    # New fields
+    marital_status: Optional[str] = None
+    preferred_contact: Optional[str] = "phone"
+    has_caregiver: Optional[bool] = False
+    caregiver_name: Optional[str] = None
+    caregiver_relationship: Optional[str] = None
+    caregiver_phone: Optional[str] = None
+    caregiver_email: Optional[str] = None
+    smoking_status: Optional[str] = None
+    alcohol_use: Optional[str] = None
+    diet: Optional[str] = None
+    exercise_frequency: Optional[str] = None
+
+    # Related records
+    allergies: Optional[List[AllergyCreate]] = []
+    consents: Optional[PatientConsentCreate] = None
+    patient_insurances: Optional[List[PatientInsuranceCreate]] = []
+    pharmacy_insurances: Optional[List[PatientPharmacyInsuranceCreate]] = []
     
-
-
-class PatientOut(PatientCreate):
+class PatientOut(BaseModel):
     id: int
-    public_id: str  # for safe external reference
+    public_id: str
+    first_name: str
+    last_name: str
+    dob: Optional[date] = None
+    gender: Optional[str] = None
+    ssn: Optional[str] = None
+    phone: Optional[str] = None
+    email: Optional[EmailStr] = None
+    address: Optional[str] = None
+    weight: Optional[float] = None
+    height: Optional[float] = None
+    city: Optional[str] = None
+    state: Optional[str] = None
+    zip_code: Optional[str] = None
+    country: Optional[str] = None
+    citizenship_status: Optional[str] = None
+    visa_type: Optional[str] = None
+    photo_url: Optional[str]
+    id_proof_document: Optional[str]
+    marital_status: Optional[str] = None
+    preferred_contact: Optional[str] = "phone"
+    has_caregiver: Optional[bool] = False
+    caregiver_name: Optional[str] = None
+    caregiver_relationship: Optional[str] = None
+    caregiver_phone: Optional[str] = None
+    caregiver_email: Optional[str] = None
+    smoking_status: Optional[str] = None
+    alcohol_use: Optional[str] = None
+    diet: Optional[str] = None
+    exercise_frequency: Optional[str] = None
     created_at: Optional[datetime] = None
+
+    # ✅ FIXED NESTED OUTPUT RELATIONS
+    allergies: List[AllergyOut] = []
+    consents: Optional[PatientConsentOut] = None
+    patient_insurances: List[PatientInsuranceOut] = []
+    pharmacy_insurances: List[PatientPharmacyInsuranceOut] = []
 
     class Config:
         orm_mode = True
+
 
 # ================================
 # AUTH SCHEMAS
@@ -255,6 +425,7 @@ class EncounterCreate(BaseModel):
     notes: Optional[str] = None
     follow_up_date: Optional[date] = None
     status: Optional[str] = "open"
+    is_lab_test_required: Optional[bool] = False  # <
 
     vitals: Optional[VitalsCreate] = None
     medications: Optional[List[MedicationCreate]] = []
@@ -280,6 +451,7 @@ class EncounterOut(BaseModel):
     hospital_name: Optional[str] 
     vitals: List[VitalsOut] = []
     medications: List[MedicationOut] = []
+    is_lab_test_required: Optional[bool] = False  # <
 
     class Config:
         orm_mode = True
@@ -387,6 +559,7 @@ class PatientInsuranceOut(BaseModel):
     class Config:
         orm_mode = True
 
+
 # -----------------------------
 # Create schema (input)
 # -----------------------------
@@ -447,6 +620,110 @@ class LabOrderResponse(BaseModel):
 
 class LabResultCreate(BaseModel):
     lab_order_id: int
-    result_value: Optional[str]
-    notes: Optional[str]
-    pdf_url: Optional[str]
+    result_value: Optional[str] = None
+    notes: Optional[str] = None
+    pdf_url: Optional[str] = None
+
+class LabTestCode(BaseModel):
+    test_code: str
+
+class LabTestDetail(BaseModel):
+    test_code: str
+    test_name: str
+    sample_type: str
+    price: float
+    unit: Optional[str] = None
+    reference_range: Optional[str] = None
+
+    class Config:
+        orm_mode = True
+        
+    
+from pydantic import BaseModel
+from datetime import datetime
+from typing import Optional
+
+
+# -----------------------------
+# Base Lab Result Schema
+# -----------------------------
+class LabResultBase(BaseModel):
+    id: int
+    test_name: str
+    result_value: Optional[str] = None
+    result_date: datetime
+    file_url: Optional[str] = None
+    notes: Optional[str] = None
+
+
+# -----------------------------
+# Patient Dashboard Schema
+# -----------------------------
+class LabResultPatientResponse(LabResultBase):
+    class Config:
+        orm_mode = True
+
+
+# -----------------------------
+# Doctor Dashboard Schema
+# -----------------------------
+class LabResultDoctorResponse(LabResultBase):
+    patient_id: int
+    encounter_id: int
+
+    class Config:
+        orm_mode = True
+
+
+# -----------------------------
+# Hospital Dashboard Schema
+# -----------------------------
+class LabResultHospitalResponse(LabResultBase):
+    patient_id: int
+    doctor_id: int
+    encounter_id: int
+    hospital_id: int
+
+    class Config:
+        orm_mode = True
+
+        
+
+
+class SpecialtyResponse(BaseModel):
+    specialty: List[str]
+
+class AssignmentResponse(BaseModel):
+    id: int
+    message: str
+
+class AssignmentBase(BaseModel):
+    public_patient_id: str
+    doctor_id: int
+    treatment_plan_id: Optional[int] = None
+    medical_history: Optional[str] = None
+    specialty: Optional[str] = None
+    reason: Optional[str] = None
+    old_medications: Optional[List[Dict[str, str]]] = []
+
+
+class DoctorBase(BaseModel):
+    first_name: str
+    last_name: str
+    specialty: Optional[str] = None
+    category: Optional[str] = None
+    status: Optional[str] = None
+
+class DoctorResponse(DoctorBase):
+    id: int
+    
+
+class TreatmentPlanBase(BaseModel):
+    name: str
+    description: Optional[str] = None
+
+class TreatmentPlanResponse(TreatmentPlanBase):
+    id: int
+
+    class Config:
+        orm_mode = True

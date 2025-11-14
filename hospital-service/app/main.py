@@ -2,7 +2,6 @@ from fastapi import FastAPI, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi.staticfiles import StaticFiles
-
 from app import schemas, crud, utils
 from app.cors import apply_cors, get_frontend_origins
 from app.database import get_db, engine, Base
@@ -19,11 +18,18 @@ from app.routers import file_upload
 # Import appointment router
 from app.routers import appointment
 from app.routers import vitals
-from app.routers import lab_routes
+from app.routers import file_upload,lab_routes
+
+# SQLAlchemy utilities and models used in route handlers
+from sqlalchemy import select
+from sqlalchemy.orm import selectinload
+from app import models
 
 
 app = FastAPI(title="CareIQ Patient 360 API")
 app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
+
+apply_cors(app)
 
 app.include_router(medications.router)
 app.include_router(notifications.router)
@@ -34,6 +40,7 @@ app.include_router(insurance_master.router)
 app.include_router(pharmacy_insurance_master.router)
 app.include_router(lab_routes.router)
 apply_cors(app)
+
 
 # Include the appointment routes
 app.include_router(appointment.router)  # no need to repeat prefix; it's already defined inside appointment.py
@@ -49,23 +56,6 @@ async def startup():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     print("Database schema synchronized successfully")
-
-
-# LOGIN — JWT Token
-@app.post("/auth/token", response_model=schemas.Token)
-async def login_for_access_token(
-    form_data: OAuth2PasswordRequestForm = Depends(),
-    db: AsyncSession = Depends(get_db)
-):
-    user = await crud.authenticate_user(db, form_data.username, form_data.password)
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect username or password"
-        )
-    token = utils.create_access_token({"sub": user.email})
-    return {"access_token": token, "token_type": "bearer"}
-
 
 
 @app.get("/users/me")
@@ -91,7 +81,17 @@ async def login_json(
             detail="Incorrect username or password"
         )
 
-    token = utils.create_access_token({"sub": user.email})
+    token_data = {
+        "sub": user.email,
+        "role": user.role,
+        "user_id": user.id
+    }
+
+    if user.hospital_id is not None:
+        token_data["hospital_id"] = user.hospital_id  # keep as integer
+
+    token = utils.create_access_token(token_data)
+
     return {"access_token": token, "token_type": "bearer"}
 
 
@@ -226,7 +226,7 @@ async def get_config():
 def root():
     return {"message": "CareIQ Patient 360 API is running 🚀"}
 
-
+# Get Doctor Profile — for doctor login
 @app.get("/doctors", response_model=schemas.DoctorOut)
 async def get_my_doctor_profile(
     current_user = Depends(get_current_user),
@@ -243,7 +243,7 @@ async def get_my_doctor_profile(
     return doctor
 
 
-
+# Get all doctors for a hospital
 @app.get("/hospitals/doctors", response_model=list[schemas.DoctorOut])
 async def get_all_doctors(
     current_user=Depends(get_current_user),
@@ -254,24 +254,49 @@ async def get_all_doctors(
     doctors = await crud.get_doctors_by_hospital(db, current_user.hospital_id)
     return doctors
 
-
-@app.get("/patients", response_model=schemas.PatientOut)
+# For patient login — only their own data
+@app.get("/patient", response_model=schemas.PatientOut)
 async def get_my_profile(
-    current_user = Depends(get_current_user),
+    current_user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     if current_user.role != "patient":
-        raise HTTPException(status_code=403, detail="Only patients can access this endpoint")
+        raise HTTPException(status_code=403, detail="Not permitted")
 
-    # Fetch patient linked to this user
-    patient = await crud.get_patient_by_user_id(db, current_user.id)
+    result = await db.execute(
+        select(models.Patient)
+        .where(models.Patient.user_id == current_user.id)
+        .options(
+            selectinload(models.Patient.allergies),
+            selectinload(models.Patient.consents),
+            selectinload(models.Patient.patient_insurances),
+            selectinload(models.Patient.pharmacy_insurances)
+        )
+    )
+    patient = result.scalars().first()
 
     if not patient:
-        raise HTTPException(status_code=404, detail="Patient profile not found")
+        raise HTTPException(status_code=404, detail="Patient record not found")
 
     return patient
 
 
+# Admin Part – Get all patients
+@app.get("/patients", response_model=list[schemas.PatientOut])
+async def get_patients(db: AsyncSession = Depends(get_db)):
+    result = await db.execute(
+        select(models.Patient)
+        .options(
+            selectinload(models.Patient.allergies),
+            selectinload(models.Patient.consents),
+            selectinload(models.Patient.insurances),
+            selectinload(models.Patient.pharmacy_insurances)
+        )
+    )
+    patients = result.scalars().all()
+    return patients
+
+# Get all patients for a hospital
 @app.get("/hospitals/patients", response_model=list[schemas.PatientOut])
 async def get_all_patients(
     current_user=Depends(get_current_user),
@@ -288,7 +313,7 @@ async def get_all_patients(
     return patients
 
 
-
+# Get Hospital Profile — for hospital login
 @app.get("/hospitals", response_model=schemas.HospitalOut)
 async def get_my_hospital_profile(
     current_user=Depends(get_current_user),

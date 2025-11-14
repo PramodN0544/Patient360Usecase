@@ -1,7 +1,7 @@
 from datetime import datetime
 from sqlalchemy import (
     Column, DateTime, String, Date, Integer, Boolean,
-    ForeignKey, Text, Numeric, Time, Table
+    ForeignKey, Text, Numeric, Time, Table,JSON
 )
 from sqlalchemy.orm import relationship
 from app.database import Base
@@ -28,17 +28,17 @@ def generate_hospital_public_id(context):
     name = instance.get("name", "hospital").lower().replace(" ", "_")
     return f"hosp_{name}_{uuid.uuid4().hex[:8]}"
 
-# -------------------- Timestamp Mixin --------------------
+# Timestamp Mixin 
 class TimestampMixin:
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
-# -------------------- Hospitals --------------------
+# Hospitals 
 class Hospital(Base, TimestampMixin):
     __tablename__ = "hospitals"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    public_id = Column(String(150), unique=True, nullable=False, index=True, default=generate_hospital_public_id)
+    # public_id = Column(String(150), unique=True, nullable=False, index=True, default=generate_hospital_public_id)
     name = Column(String(200), nullable=False)
     registration_no = Column(String(100))
     email = Column(String(100), unique=True, nullable=False)
@@ -67,7 +67,7 @@ class Hospital(Base, TimestampMixin):
     appointments = relationship("Appointment", back_populates="hospital", cascade="all, delete-orphan")
     encounters = relationship("Encounter", back_populates="hospital", cascade="all, delete-orphan")
 
-# -------------------- Users --------------------
+# Users 
 class User(Base, TimestampMixin):
     __tablename__ = "users"
 
@@ -85,12 +85,12 @@ class User(Base, TimestampMixin):
     notifications = relationship("Notification", back_populates="user", cascade="all, delete-orphan")
     password_reset_tokens = relationship("PasswordResetToken", back_populates="user", cascade="all, delete-orphan")
 
-# -------------------- Doctors --------------------
+# Doctors 
 class Doctor(Base, TimestampMixin):
     __tablename__ = "doctors"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    public_id = Column(String(150), unique=True, nullable=False, index=True, default=generate_doctor_public_id)
+    # public_id = Column(String(150), unique=True, nullable=False, index=True, default=generate_doctor_public_id)
 
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     hospital_id = Column(Integer, ForeignKey("hospitals.id"))
@@ -119,10 +119,10 @@ class Doctor(Base, TimestampMixin):
     appointments = relationship("Appointment", back_populates="doctor", cascade="all, delete-orphan")
     medications = relationship("Medication", back_populates="doctor")
     patient_assignments = relationship("PatientDoctorAssignment", back_populates="doctor", cascade="all, delete-orphan")
+    assignments = relationship("Assignment", back_populates="doctor", cascade="all, delete-orphan")
 
 
-
-# -------------------- Patients --------------------
+# Patients 
 class Patient(Base, TimestampMixin):
     __tablename__ = "patients"
 
@@ -146,8 +146,25 @@ class Patient(Base, TimestampMixin):
     citizenship_status = Column(String(50))
     visa_type = Column(String(50))
 
-    photo_url  = Column(String(300), nullable=True)  # URL or file path
-    id_proof_document = Column(String(300), nullable=False)  # Govt ID or insurance proof
+    photo_url  = Column(String(300), nullable=True)  
+    id_proof_document = Column(String(300), nullable=False)  
+
+    marital_status = Column(String(50))
+    weight = Column(Numeric(5, 2), nullable=False)
+    height = Column(Numeric(5, 2), nullable=False)
+
+    preferred_contact = Column(String(20), default="phone")
+
+    has_caregiver = Column(Boolean, default=False)
+    caregiver_name = Column(String(100))
+    caregiver_relationship = Column(String(50))
+    caregiver_phone = Column(String(20))
+    caregiver_email = Column(String(100))
+
+    smoking_status = Column(String(100), nullable=True)       # e.g., "Current Smoker", "Former Smoker", "Never Smoked"
+    alcohol_use = Column(String(100), nullable=True)          # e.g., "Occasional", "Regular", "None"
+    diet = Column(String(200), nullable=True)                 # e.g., "Vegetarian", "Vegan", "Non-Vegetarian", "Low Carb"
+    exercise_frequency = Column(String(100), nullable=True)   # e.g., "Daily", "Weekly", "Rarely", "Never"
 
     user = relationship("User", back_populates="patients")
     appointments = relationship("Appointment", back_populates="patient", cascade="all, delete-orphan")
@@ -155,9 +172,61 @@ class Patient(Base, TimestampMixin):
     vitals = relationship("Vitals", back_populates="patient", cascade="all, delete-orphan")
     encounters = relationship("Encounter", back_populates="patient", cascade="all, delete-orphan")
     doctor_assignments = relationship("PatientDoctorAssignment", back_populates="patient", cascade="all, delete-orphan")
-    insurances = relationship("PatientInsurance", back_populates="patient", cascade="all, delete-orphan")
+    patient_insurances = relationship("PatientInsurance", back_populates="patient", cascade="all, delete-orphan")
     pharmacy_insurances = relationship("PatientPharmacyInsurance", back_populates="patient", cascade="all, delete-orphan")
-# -------------------- Appointments --------------------
+    allergies = relationship("Allergy", back_populates="patient", cascade="all, delete-orphan")
+    consents = relationship("PatientConsent", back_populates="patient", cascade="all, delete-orphan", uselist=False)
+    assignments = relationship("Assignment", back_populates="patient")
+
+class Assignment(Base):
+    __tablename__ = "assignments"
+    id = Column(Integer, primary_key=True, index=True)
+    patient_id = Column(Integer, ForeignKey("patients.id"), nullable=False)
+    doctor_id = Column(Integer, ForeignKey("doctors.id"), nullable=False)
+    treatment_plan_id = Column(Integer, ForeignKey("treatment_plan_master.id"), nullable=True)
+    specialty = Column(String, nullable=True)
+    doctor_category = Column(String, nullable=True)
+    medical_history = Column(String, nullable=True)
+    reason = Column(String, nullable=True)
+    old_medications = Column(JSON, nullable=True)  # store list of medication dicts
+    hospital_id = Column(Integer, ForeignKey("hospitals.id"), nullable=False)
+    created_by = Column(Integer, ForeignKey("users.id"), nullable=False)
+
+    # relationships
+    patient = relationship("Patient", back_populates="assignments")
+    doctor = relationship("Doctor", back_populates="assignments")
+    
+# Allergy 
+class Allergy(Base, TimestampMixin):
+    __tablename__ = "allergies"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    name = Column(String(150), nullable=False)  # e.g. "Peanuts", "Dust", "Penicillin"
+    patient_id = Column(Integer, ForeignKey("patients.id", ondelete="CASCADE"), nullable=False)
+
+    # Relationship
+    patient = relationship("Patient", back_populates="allergies")
+
+# PatientConsent 
+class PatientConsent(Base, TimestampMixin):
+    __tablename__ = "patient_consents"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    patient_id = Column(Integer, ForeignKey("patients.id", ondelete="CASCADE"), nullable=False)
+
+    # Consent fields
+    hipaa = Column(Boolean, default=False)
+    text_messaging = Column(Boolean, default=False)
+    marketing = Column(Boolean, default=False)
+    copay = Column(Boolean, default=False)
+    treatment = Column(Boolean, default=False)
+    financial = Column(Boolean, default=False)
+    research = Column(Boolean, default=False)
+
+    # Relationship
+    patient = relationship("Patient", back_populates="consents")
+
+# Appointments 
 class Appointment(Base, TimestampMixin):
     __tablename__ = "appointments"
 
@@ -178,7 +247,7 @@ class Appointment(Base, TimestampMixin):
     vitals = relationship("Vitals", back_populates="appointment", cascade="all, delete-orphan")
     medications = relationship("Medication", back_populates="appointment", cascade="all, delete-orphan")
 
-# -------------------- Medications --------------------
+# Medications 
 class Medication(Base, TimestampMixin):
     __tablename__ = "medications"
 
@@ -187,6 +256,8 @@ class Medication(Base, TimestampMixin):
     doctor_id = Column(Integer, ForeignKey("doctors.id", ondelete="SET NULL"), nullable=True)
     appointment_id = Column(Integer, ForeignKey("appointments.id", ondelete="SET NULL"), nullable=True)
     encounter_id = Column(Integer, ForeignKey("encounters.id", ondelete="CASCADE"), nullable=True)
+    assignment_id = Column(Integer, ForeignKey("assignments.id"), nullable=True)
+
     medication_name = Column(String(200), nullable=False)
     dosage = Column(String(100), nullable=False)
     frequency = Column(String(100), nullable=False)
@@ -198,12 +269,16 @@ class Medication(Base, TimestampMixin):
     icd_code = Column(String(20), nullable=True)
     ndc_code = Column(String(50), nullable=True)
 
+    assignment_id = Column(Integer, ForeignKey("patient_doctor_assignment.id", ondelete="SET NULL"), nullable=True)
+    assignment = relationship("PatientDoctorAssignment", back_populates="medications")
+
     patient = relationship("Patient", back_populates="medications")
     doctor = relationship("Doctor", back_populates="medications")
     appointment = relationship("Appointment", back_populates="medications")
     encounter = relationship("Encounter", back_populates="medications")
 
-# -------------------- Encounters --------------------
+
+# Encounters
 class Encounter(Base, TimestampMixin):
     __tablename__ = "encounters"
 
@@ -218,6 +293,7 @@ class Encounter(Base, TimestampMixin):
     notes = Column(Text)
     follow_up_date = Column(Date)
     status = Column(String(20), default="open")
+    is_lab_test_required = Column(Boolean, default=False)
 
     patient = relationship("Patient", back_populates="encounters")
     doctor = relationship("Doctor", back_populates="encounters")
@@ -225,7 +301,7 @@ class Encounter(Base, TimestampMixin):
     vitals = relationship("Vitals", back_populates="encounter", cascade="all, delete-orphan")
     medications = relationship("Medication", back_populates="encounter", cascade="all, delete-orphan")
 
-# -------------------- Vitals --------------------
+# Vitals
 class Vitals(Base, TimestampMixin):
     __tablename__ = "vitals"
 
@@ -247,7 +323,7 @@ class Vitals(Base, TimestampMixin):
     appointment = relationship("Appointment", back_populates="vitals")
     encounter = relationship("Encounter", back_populates="vitals")
 
-# -------------------- Notifications --------------------
+# Notifications
 class Notification(Base, TimestampMixin):
     __tablename__ = "notifications"
 
@@ -261,7 +337,7 @@ class Notification(Base, TimestampMixin):
 
     user = relationship("User", back_populates="notifications")
 
-# -------------------- Password Reset Tokens --------------------
+# Password Reset Tokens
 class PasswordResetToken(Base):
     __tablename__ = "password_reset_tokens"
 
@@ -276,7 +352,7 @@ class PasswordResetToken(Base):
     def is_expired(self):
         return datetime.utcnow() > self.expires_at
 
-# -------------------- Password Reset OTPs --------------------
+# Password Reset OTPs
 password_reset_otps_table = Table(
     "password_reset_otps",
     Base.metadata,
@@ -288,22 +364,31 @@ password_reset_otps_table = Table(
     Column("created_at", DateTime, default=datetime.utcnow)
 )
 
-# -------------------- Patient-Doctor Assignment --------------------
-class PatientDoctorAssignment(Base):
+# Patient-Doctor Assignment 
+class PatientDoctorAssignment(Base, TimestampMixin):
     __tablename__ = "patient_doctor_assignment"
 
     id = Column(Integer, primary_key=True, index=True)
+    
     patient_id = Column(Integer, ForeignKey("patients.id", ondelete="CASCADE"), nullable=False)
     doctor_id = Column(Integer, ForeignKey("doctors.id", ondelete="CASCADE"), nullable=False)
     hospital_id = Column(Integer, ForeignKey("hospitals.id", ondelete="CASCADE"), nullable=False)
+    treatment_plan_id = Column(Integer, ForeignKey("treatment_plan_master.id", ondelete="SET NULL"), nullable=True)
+    
+    medical_history = Column(Text, nullable=True)
+    specialty = Column(String(100), nullable=True)
+    doctor_category = Column(String(100), nullable=True)  
+    reason = Column(Text, nullable=True)
     assigned_at = Column(DateTime, default=datetime.utcnow)
 
     patient = relationship("Patient", back_populates="doctor_assignments")
     doctor = relationship("Doctor", back_populates="patient_assignments")
+    treatment_plan = relationship("TreatmentPlanMaster")
+
+    medications = relationship("Medication", back_populates="assignment", cascade="all, delete-orphan")
 
     
-    ## insurance master table
-    
+## insurance master table
 class InsuranceMaster(Base):
     __tablename__ = "insurance_master"
 
@@ -321,10 +406,7 @@ class InsuranceMaster(Base):
     status = Column(String(20), default="Active")                # Active / Inactive
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
-
-
 ##  Patient Insurance Table
-
 class PatientInsurance(Base):
     __tablename__ = "patient_insurance"
 
@@ -340,6 +422,7 @@ class PatientInsurance(Base):
     plan_name = Column(String(100), nullable=False)
     plan_type = Column(String(50), nullable=True)
     coverage_percent = Column(Float, nullable=True)
+    policy_number = Column(String(50), nullable=False)       
     copay_amount = Column(Float, nullable=True)
     deductible_amount = Column(Float, nullable=True)
     out_of_pocket_max = Column(Float, nullable=True)
@@ -350,12 +433,8 @@ class PatientInsurance(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     # Relationships
-    patient = relationship("Patient", back_populates="insurances")
     insurance_master = relationship("InsuranceMaster")
-
-
-
-
+    patient = relationship("Patient", back_populates="patient_insurances")
 
 
 # -----------------------
@@ -375,11 +454,7 @@ class PharmacyInsuranceMaster(Base):
     status = Column(String(20), default="Active")             # Active / Inactive
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
-# -----------------------
 # Patient Pharmacy Insurance Table
-# -----------------------
-
-
 class PatientPharmacyInsurance(Base):
     __tablename__ = "patient_pharmacy_insurance"
 
@@ -449,3 +524,13 @@ class LabResult(Base):
     notes = Column(Text, nullable=True)
     pdf_url = Column(String(255), nullable=True)  # S3 file URL
     created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class TreatmentPlanMaster(Base):
+    __tablename__ = "treatment_plan_master"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(150), nullable=False)        
+    description = Column(Text, nullable=True)
+    status = Column(String(20), default="Active")
+    created_at = Column(DateTime(timezone=True), server_default=func.now())

@@ -3,7 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from typing import List, Optional
 from app.database import get_db
-from app.models import LabMaster, LabOrder, LabResult
+from app.models import LabMaster, LabOrder, LabResult, Patient
 from app.schemas import LabOrderCreate, LabOrderResponse, LabTestCode, LabTestDetail
 from app.auth import get_current_user
 from app.S3connection import upload_lab_result_to_s3
@@ -161,3 +161,143 @@ async def get_lab_orders(encounter_id: int, current_user=Depends(get_current_use
     result = await db.execute(select(LabOrder).where(LabOrder.encounter_id == encounter_id))
     lab_orders = result.scalars().all()
     return lab_orders
+
+##------------------------------------------------------------
+# 6️⃣ Patient: Get My Lab Results
+
+@router.get("/my-results")
+async def get_my_lab_results(
+    current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    if current_user.role != "patient":
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    # 1️⃣ Fetch patient record using user_id
+    patient_query = await db.execute(
+        select(Patient).where(Patient.user_id == current_user.id)
+    )
+    patient = patient_query.scalar_one_or_none()
+
+    if not patient:
+        print("❌ No patient entry found for user_id:", current_user.id)
+        raise HTTPException(status_code=404, detail="Patient profile not found")
+
+    patient_id = patient.id
+    print("PATIENT ID USED FOR QUERY:", patient_id)
+
+    # 2️⃣ Fetch Lab Orders + Results
+    query = await db.execute(
+        select(LabOrder, LabResult)
+        .join(LabResult, LabResult.lab_order_id == LabOrder.id, isouter=True)
+        .where(LabOrder.patient_id == patient_id)
+    )
+
+    rows = query.all()
+    print("ROWS RETURNED:", len(rows))
+    print("===== PATIENT RESULTS DEBUG END =====\n")
+
+    # 3️⃣ Build response
+    response = [
+        {
+            "lab_order_id": order.id,
+            "test_name": order.test_name,
+            "status": order.status,
+            "result_value": result.result_value if result else None,
+            "pdf_url": result.pdf_url if result else None,
+            "notes": result.notes if result else None
+        }
+        for order, result in rows
+    ]
+
+    return response
+
+# ------------------------------------------------------------
+# 7️⃣ Doctor: Get Lab Results for My Patients
+
+@router.get("/doctor-results")
+async def get_doctor_lab_results(
+    current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    if current_user.role != "doctor":
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    # 🔥 Step 1: Get doctor record from doctor table
+    doctor_query = await db.execute(
+        select(Doctor).where(Doctor.user_id == current_user.id)
+    )
+    doctor = doctor_query.scalar_one_or_none()
+
+    print("DOCTOR TABLE RECORD:", doctor)
+
+    if not doctor:
+        print("❌ Doctor not found for user_id:", current_user.id)
+        raise HTTPException(status_code=404, detail="Doctor profile not found")
+
+    doctor_id = doctor.id
+
+    # 🔥 Step 2: Fetch lab results
+    query = await db.execute(
+        select(LabOrder, LabResult, Patient)
+        .join(LabResult, LabResult.lab_order_id == LabOrder.id, isouter=True)
+        .join(Patient, Patient.id == LabOrder.patient_id)
+        .where(LabOrder.doctor_id == doctor_id)
+    )
+
+    rows = query.all()
+
+
+    # 🔥 Step 3: Prepare response
+    response = [
+        {
+            "patient_name": patient.first_name + " " + patient.last_name,
+            "patient_id": patient.id,
+            "lab_order_id": order.id,
+            "test_name": order.test_name,
+            "status": order.status,
+            "result_value": result.result_value if result else None,
+            "pdf_url": result.pdf_url if result else None
+        }
+        for order, result, patient in rows
+    ]
+
+    return response
+
+# ------------------------------------------------------------
+# 8️⃣ Hospital: Get Lab Results for All Patients in My Hospital
+
+
+@router.get("/hospital-results")
+async def get_hospital_lab_results(
+    current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    if current_user.role != "hospital":
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    hospital_id = current_user.hospital_id
+
+    query = await db.execute(
+        select(LabOrder, LabResult, Patient, Doctor)
+        .join(LabResult, LabResult.lab_order_id == LabOrder.id, isouter=True)
+        .join(Patient, Patient.id == LabOrder.patient_id)
+        .join(Doctor, Doctor.id == LabOrder.doctor_id)
+        .where(Doctor.hospital_id == hospital_id)
+    )
+
+    rows = query.all()
+
+    response = [
+        {
+            "patient_name": patient.first_name + " " + patient.last_name,
+            "doctor_name": doctor.first_name + " " + doctor.last_name,
+            "test_name": order.test_name,
+            "status": order.status,
+            "result_value": result.result_value if result else None,
+            "pdf_url": result.pdf_url if result else None
+        }
+        for order, result, patient, doctor in rows
+    ]
+
+    return response
