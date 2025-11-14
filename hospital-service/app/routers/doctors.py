@@ -10,20 +10,21 @@ from app import models, schemas
 
 router = APIRouter(prefix="/doctor", tags=["Doctor"])
 
-# GET PATIENTS UNDER CURRENT DOCTOR
-@router.get("/patients", response_model=List[schemas.PatientOut])
+@router.get("/patients", response_model=schemas.PatientsWithCount)
 async def get_patients_for_doctor(
     current_user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    # Only doctor or hospital roles allowed
+    # Role check
     if current_user.role not in ("doctor", "hospital"):
         raise HTTPException(status_code=403, detail="Not permitted")
 
     patients = []
 
+    # =============================
+    # If DOCTOR → fetch patients assigned to them
+    # =============================
     if current_user.role == "doctor":
-        # Get the doctor record for this user
         doctor_result = await db.execute(
             select(models.Doctor).where(models.Doctor.user_id == current_user.id)
         )
@@ -32,7 +33,6 @@ async def get_patients_for_doctor(
         if not doctor:
             raise HTTPException(status_code=404, detail="Doctor record not found")
 
-        # Fetch patients assigned to this doctor from Assignment table
         result = await db.execute(
             select(models.Patient)
             .join(models.Assignment, models.Patient.id == models.Assignment.patient_id)
@@ -42,20 +42,18 @@ async def get_patients_for_doctor(
                 selectinload(models.Patient.consents),
                 selectinload(models.Patient.patient_insurances),
                 selectinload(models.Patient.pharmacy_insurances),
-                selectinload(models.Patient.vitals),          # vitals
-                selectinload(models.Patient.medications),     # medications
-                selectinload(models.Patient.encounters),      # encounters
-
+                selectinload(models.Patient.vitals),
+                selectinload(models.Patient.medications),
+                selectinload(models.Patient.encounters),
             )
             .order_by(models.Patient.first_name.asc(), models.Patient.last_name.asc())
         )
-        patients = result.scalars().unique().all()  # remove duplicates if patient has multiple assignments
+        patients = result.scalars().unique().all()
 
+    # =============================
+    # If HOSPITAL → fetch all hospital’s patients
+    # =============================
     elif current_user.role == "hospital":
-        if not current_user.hospital_id:
-            raise HTTPException(status_code=400, detail="Hospital ID not found for this user")
-
-        # Fetch all patients under hospital
         result = await db.execute(
             select(models.Patient)
             .join(models.Assignment, models.Patient.id == models.Assignment.patient_id)
@@ -67,11 +65,16 @@ async def get_patients_for_doctor(
                 selectinload(models.Patient.pharmacy_insurances),
                 selectinload(models.Patient.vitals),
                 selectinload(models.Patient.medications),
-                selectinload(models.Patient.encounters)
-                # selectinload(models.Patient.care_plans),
+                selectinload(models.Patient.encounters),
             )
             .order_by(models.Patient.first_name.asc(), models.Patient.last_name.asc())
         )
         patients = result.scalars().unique().all()
 
-    return patients
+    # =============================
+    # Final response with count
+    # =============================
+    return {
+        "total_patients": len(patients),
+        "patients": patients
+    }

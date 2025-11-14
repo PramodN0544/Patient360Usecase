@@ -572,6 +572,14 @@ class PatientInsuranceCreate(BaseModel):
     class Config:
         orm_mode = True
 
+class PatientsWithCount(BaseModel):
+    total_patients: int
+    patients: List[PatientOut]  
+
+    class Config:
+        orm_mode = True
+
+
 
 
 # ============================================================
