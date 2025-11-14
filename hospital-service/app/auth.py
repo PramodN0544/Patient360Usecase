@@ -6,10 +6,9 @@ from sqlalchemy.future import select
 
 from .database import get_db
 from . import models
-from .schemas import TokenData
 from .utils import JWT_SECRET, JWT_ALGORITHM
 
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/token")
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
 
 async def get_current_user(
     token: str = Depends(oauth2_scheme),
@@ -21,24 +20,31 @@ async def get_current_user(
         headers={"WWW-Authenticate": "Bearer"},
     )
 
-    # ✅ Decode JWT token
     try:
         payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
-        email: str = payload.get("sub")
+
+        email = payload.get("sub")
+        role = payload.get("role")
+        hospital_id = payload.get("hospital_id")
+        user_id = payload.get("user_id")
+
         if email is None:
             raise credentials_exception
-
-        token_data = TokenData(email=email)
 
     except JWTError:
         raise credentials_exception
 
-    # ✅ Fetch user from DB
-    query = select(models.User).where(models.User.email == token_data.email)
-    result = await db.execute(query)
+    result = await db.execute(
+        select(models.User).where(models.User.email == email)
+    )
     user = result.scalars().first()
 
-    if user is None:
+    if not user:
         raise credentials_exception
+
+    # Attach JWT fields
+    user.role = role
+    user.hospital_id = hospital_id
+    user.token_user_id = user_id
 
     return user

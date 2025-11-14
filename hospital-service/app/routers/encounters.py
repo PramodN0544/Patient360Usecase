@@ -82,10 +82,11 @@ async def create_encounter(
         diagnosis=encounter_in.diagnosis,
         notes=encounter_in.notes,
         follow_up_date=encounter_in.follow_up_date,
+        is_lab_test_required=encounter_in.is_lab_test_required,
         status="open"
     )
     db.add(new_encounter)
-    await db.flush()  # get new_encounter.id for foreign keys
+    await db.flush()  
 
     # -------------------------------
     # Save vitals
