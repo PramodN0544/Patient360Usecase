@@ -224,7 +224,7 @@ async def create_patient(db: AsyncSession, data: schemas.PatientCreate):
     await db.commit()
     await db.refresh(patient)
 
-    return patient, default_password, user.email
+    return patient, default_password, user.email, patient.public_id
 
 
 async def create_password_reset_token(db: AsyncSession, user_id: UUID, token: str, expires_at: datetime) -> PasswordResetToken:

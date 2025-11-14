@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from app.database import get_db
 from app.models import Patient, Doctor, Hospital
-from app.auth import get_current_user  # Add this import
+from app.auth import get_current_user  
 
 router = APIRouter(prefix="/upload", tags=["File Upload"])
 
@@ -19,25 +19,29 @@ FILE_TYPE_CONFIG = {
         "model": Hospital,
         "field": "photo_url",
         "allowed_ext": ["jpg", "jpeg", "png"],
-        "max_size": 5 * 1024 * 1024,  # 5MB
+        "max_size": 5 * 1024 * 1024,  # 5MB,
+       
     },
     "id_proof": {  # Changed from "patient_document"
         "model": Hospital,
         "field": "id_proof_document",
         "allowed_ext": ["pdf", "jpg", "jpeg"],
-        "max_size": 10 * 1024 * 1024,  # 10MB
+        "max_size": 10 * 1024 * 1024,  # 10MB,
+       
     },
     "doctor_license": {
         "model": Doctor,
         "field": "license_url",
         "allowed_ext": ["jpg", "jpeg", "png", "pdf"],
         "max_size": 5 * 1024 * 1024,
+        
     },
     "hospital_logo": {
         "model": Hospital,
         "field": "logo_url",
         "allowed_ext": ["jpg", "jpeg", "png"],
         "max_size": 5 * 1024 * 1024,
+        
     },
 }
 

@@ -118,7 +118,6 @@ class Doctor(Base, TimestampMixin):
     encounters = relationship("Encounter", back_populates="doctor", cascade="all, delete-orphan")
     appointments = relationship("Appointment", back_populates="doctor", cascade="all, delete-orphan")
     medications = relationship("Medication", back_populates="doctor")
-    patient_assignments = relationship("PatientDoctorAssignment", back_populates="doctor", cascade="all, delete-orphan")
     assignments = relationship("Assignment", back_populates="doctor", cascade="all, delete-orphan")
 
 
@@ -171,12 +170,11 @@ class Patient(Base, TimestampMixin):
     medications = relationship("Medication", back_populates="patient", cascade="all, delete-orphan")
     vitals = relationship("Vitals", back_populates="patient", cascade="all, delete-orphan")
     encounters = relationship("Encounter", back_populates="patient", cascade="all, delete-orphan")
-    doctor_assignments = relationship("PatientDoctorAssignment", back_populates="patient", cascade="all, delete-orphan")
     patient_insurances = relationship("PatientInsurance", back_populates="patient", cascade="all, delete-orphan")
     pharmacy_insurances = relationship("PatientPharmacyInsurance", back_populates="patient", cascade="all, delete-orphan")
     allergies = relationship("Allergy", back_populates="patient", cascade="all, delete-orphan")
     consents = relationship("PatientConsent", back_populates="patient", cascade="all, delete-orphan", uselist=False)
-    assignments = relationship("Assignment", back_populates="patient")
+    assignments = relationship("Assignment", back_populates="patient", cascade="all, delete-orphan")
 
 class Assignment(Base):
     __tablename__ = "assignments"
@@ -269,14 +267,13 @@ class Medication(Base, TimestampMixin):
     icd_code = Column(String(20), nullable=True)
     ndc_code = Column(String(50), nullable=True)
 
-    assignment_id = Column(Integer, ForeignKey("patient_doctor_assignment.id", ondelete="SET NULL"), nullable=True)
-    assignment = relationship("PatientDoctorAssignment", back_populates="medications")
+    assignment_id = Column(Integer, ForeignKey("assignments.id"))
+    # assignment = relationship("PatientDoctorAssignment", back_populates="medications")
 
     patient = relationship("Patient", back_populates="medications")
     doctor = relationship("Doctor", back_populates="medications")
     appointment = relationship("Appointment", back_populates="medications")
     encounter = relationship("Encounter", back_populates="medications")
-
 
 # Encounters
 class Encounter(Base, TimestampMixin):
@@ -364,30 +361,6 @@ password_reset_otps_table = Table(
     Column("created_at", DateTime, default=datetime.utcnow)
 )
 
-# Patient-Doctor Assignment 
-class PatientDoctorAssignment(Base, TimestampMixin):
-    __tablename__ = "patient_doctor_assignment"
-
-    id = Column(Integer, primary_key=True, index=True)
-    
-    patient_id = Column(Integer, ForeignKey("patients.id", ondelete="CASCADE"), nullable=False)
-    doctor_id = Column(Integer, ForeignKey("doctors.id", ondelete="CASCADE"), nullable=False)
-    hospital_id = Column(Integer, ForeignKey("hospitals.id", ondelete="CASCADE"), nullable=False)
-    treatment_plan_id = Column(Integer, ForeignKey("treatment_plan_master.id", ondelete="SET NULL"), nullable=True)
-    
-    medical_history = Column(Text, nullable=True)
-    specialty = Column(String(100), nullable=True)
-    doctor_category = Column(String(100), nullable=True)  
-    reason = Column(Text, nullable=True)
-    assigned_at = Column(DateTime, default=datetime.utcnow)
-
-    patient = relationship("Patient", back_populates="doctor_assignments")
-    doctor = relationship("Doctor", back_populates="patient_assignments")
-    treatment_plan = relationship("TreatmentPlanMaster")
-
-    medications = relationship("Medication", back_populates="assignment", cascade="all, delete-orphan")
-
-    
 ## insurance master table
 class InsuranceMaster(Base):
     __tablename__ = "insurance_master"
@@ -435,7 +408,6 @@ class PatientInsurance(Base):
     # Relationships
     insurance_master = relationship("InsuranceMaster")
     patient = relationship("Patient", back_populates="patient_insurances")
-
 
 # -----------------------
 # Pharmacy Insurance Master Table

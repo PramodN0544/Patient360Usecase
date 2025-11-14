@@ -10,12 +10,12 @@ from app.auth import get_current_user
 router = APIRouter(prefix="/patients", tags=["Patients Search"])
 
 
-@router.get("/search", response_model=List[schemas.PatientOut])
+@router.get("/search")
 async def search_patients(
     patient_id: Optional[str] = None,
     name: Optional[str] = None,
     phone: Optional[str] = None,
-    ssn: Optional[str] = None,                   
+    ssn: Optional[str] = None,
     db: AsyncSession = Depends(get_db),
     current_user: schemas.UserOut = Depends(get_current_user)
 ):
@@ -39,7 +39,7 @@ async def search_patients(
         filters.append(models.Patient.phone.ilike(f"%{phone}%"))
 
     if ssn:
-        filters.append(models.Patient.ssn.ilike(f"%{ssn}%")) 
+        filters.append(models.Patient.ssn.ilike(f"%{ssn}%"))
 
     if filters:
         stmt = stmt.where(*filters)
@@ -50,4 +50,22 @@ async def search_patients(
     if not patients:
         raise HTTPException(status_code=404, detail="No patients found")
 
-    return patients
+    # ✅ RETURN SAFE DICTIONARY (NOT ORM OBJECTS)
+    return [
+        {
+            "id": p.id,
+            "public_id": p.public_id,
+            "first_name": p.first_name,
+            "last_name": p.last_name,
+            "email": p.email,
+            "phone": p.phone,
+            "dob": str(p.dob) if p.dob else None,
+            "gender": p.gender,
+            "ssn": p.ssn,
+            "address": p.address,
+            "city": p.city,
+            "state": p.state,
+            "zip_code": p.zip_code,
+        }
+        for p in patients
+    ]
