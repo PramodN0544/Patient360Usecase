@@ -42,7 +42,6 @@ async def assign_doctor_to_patient(
     db: AsyncSession = Depends(get_db),
     current_user=Depends(get_current_user)
 ):
-    # Only hospital or admin can assign
     if current_user.role not in ("hospital", "admin"):
         raise HTTPException(status_code=403, detail="Not permitted to assign doctors")
 
@@ -66,7 +65,7 @@ async def assign_doctor_to_patient(
         if not treatment_plan:
             raise HTTPException(status_code=404, detail="Treatment plan not found")
 
-    # Create assignment
+    # Create assignment instance
     new_assignment = models.Assignment(
         patient_id=patient.id,
         doctor_id=doctor.id,
@@ -74,18 +73,21 @@ async def assign_doctor_to_patient(
         specialty=assignment.specialty or doctor.specialty,
         medical_history=assignment.medical_history,
         reason=assignment.reason,
-        old_medications=assignment.old_medications or [], 
+        old_medications=assignment.old_medications or [],
         hospital_id=current_user.hospital_id,
         created_by=current_user.id
     )
 
     db.add(new_assignment)
 
-    # Add old medications to Medication table
+    # 🔥 FIRST COMMIT + REFRESH HERE → So new_assignment.id gets generated
+    await db.commit()
+    await db.refresh(new_assignment)
+
+    # Now add old medications (assignment_id now valid)
     if assignment.old_medications:
         try:
             for med in assignment.old_medications:
-                # Convert start_date and end_date to date objects if provided
                 start_date = (
                     datetime.strptime(med.get("start_date"), "%Y-%m-%d").date()
                     if med.get("start_date") else date.today()
@@ -110,6 +112,7 @@ async def assign_doctor_to_patient(
                 db.add(medication)
 
             await db.commit()
+
         except Exception as e:
             await db.rollback()
             raise HTTPException(status_code=400, detail=str(e))
