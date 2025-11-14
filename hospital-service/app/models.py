@@ -269,8 +269,8 @@ class Medication(Base, TimestampMixin):
     icd_code = Column(String(20), nullable=True)
     ndc_code = Column(String(50), nullable=True)
 
-    assignment_id = Column(Integer, ForeignKey("patient_doctor_assignment.id", ondelete="SET NULL"), nullable=True)
-    assignment = relationship("PatientDoctorAssignment", back_populates="medications")
+    assignment_id = Column(Integer, ForeignKey("assignments.id"))
+    # assignment = relationship("PatientDoctorAssignment", back_populates="medications")
 
     patient = relationship("Patient", back_populates="medications")
     doctor = relationship("Doctor", back_populates="medications")
@@ -364,30 +364,29 @@ password_reset_otps_table = Table(
     Column("created_at", DateTime, default=datetime.utcnow)
 )
 
-# Patient-Doctor Assignment 
-class PatientDoctorAssignment(Base, TimestampMixin):
-    __tablename__ = "patient_doctor_assignment"
+# # Patient-Doctor Assignment 
+# class PatientDoctorAssignment(Base, TimestampMixin):
+#     __tablename__ = "patient_doctor_assignment"
 
-    id = Column(Integer, primary_key=True, index=True)
+#     id = Column(Integer, primary_key=True, index=True)
     
-    patient_id = Column(Integer, ForeignKey("patients.id", ondelete="CASCADE"), nullable=False)
-    doctor_id = Column(Integer, ForeignKey("doctors.id", ondelete="CASCADE"), nullable=False)
-    hospital_id = Column(Integer, ForeignKey("hospitals.id", ondelete="CASCADE"), nullable=False)
-    treatment_plan_id = Column(Integer, ForeignKey("treatment_plan_master.id", ondelete="SET NULL"), nullable=True)
+#     patient_id = Column(Integer, ForeignKey("patients.id", ondelete="CASCADE"), nullable=False)
+#     doctor_id = Column(Integer, ForeignKey("doctors.id", ondelete="CASCADE"), nullable=False)
+#     hospital_id = Column(Integer, ForeignKey("hospitals.id", ondelete="CASCADE"), nullable=False)
+#     treatment_plan_id = Column(Integer, ForeignKey("treatment_plan_master.id", ondelete="SET NULL"), nullable=True)
     
-    medical_history = Column(Text, nullable=True)
-    specialty = Column(String(100), nullable=True)
-    doctor_category = Column(String(100), nullable=True)  
-    reason = Column(Text, nullable=True)
-    assigned_at = Column(DateTime, default=datetime.utcnow)
+#     medical_history = Column(Text, nullable=True)
+#     specialty = Column(String(100), nullable=True)
+#     doctor_category = Column(String(100), nullable=True)  
+#     reason = Column(Text, nullable=True)
+#     assigned_at = Column(DateTime, default=datetime.utcnow)
 
-    patient = relationship("Patient", back_populates="doctor_assignments")
-    doctor = relationship("Doctor", back_populates="patient_assignments")
-    treatment_plan = relationship("TreatmentPlanMaster")
+#     patient = relationship("Patient", back_populates="doctor_assignments")
+#     doctor = relationship("Doctor", back_populates="patient_assignments")
+#     treatment_plan = relationship("TreatmentPlanMaster")
 
-    medications = relationship("Medication", back_populates="assignment", cascade="all, delete-orphan")
+#     medications = relationship("Medication", back_populates="assignment", cascade="all, delete-orphan")
 
-    
 ## insurance master table
 class InsuranceMaster(Base):
     __tablename__ = "insurance_master"
