@@ -275,7 +275,6 @@ class Medication(Base, TimestampMixin):
     appointment = relationship("Appointment", back_populates="medications")
     encounter = relationship("Encounter", back_populates="medications")
 
-
 # Encounters
 class Encounter(Base, TimestampMixin):
     __tablename__ = "encounters"

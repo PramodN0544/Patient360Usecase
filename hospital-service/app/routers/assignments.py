@@ -80,7 +80,7 @@ async def assign_doctor_to_patient(
 
     db.add(new_assignment)
 
-    # 🔥 FIRST COMMIT + REFRESH HERE → So new_assignment.id gets generated
+    # FIRST COMMIT + REFRESH HERE → So new_assignment.id gets generated
     await db.commit()
     await db.refresh(new_assignment)
 

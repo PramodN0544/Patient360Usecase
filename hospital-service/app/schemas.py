@@ -348,6 +348,7 @@ class AppointmentResponse(BaseModel):
     class Config:
         orm_mode = True
 
+
 # ================================
 # VITALS SCHEMAS
 # ================================
@@ -415,7 +416,7 @@ class MedicationOut(BaseModel):
         orm_mode = True
 
 class EncounterCreate(BaseModel):
-    patient_public_id: str  
+    patient_public_id: Optional[str]  
     doctor_id: Optional[int] = None  
     hospital_id: Optional[int] = None  
     encounter_date: Optional[date]
@@ -456,11 +457,38 @@ class EncounterOut(BaseModel):
     class Config:
         orm_mode = True
 
+class VitalsUpdate(BaseModel):
+    height: Optional[float]
+    weight: Optional[float]
+    blood_pressure: Optional[str]
+    heart_rate: Optional[int]
+    temperature: Optional[float]
+    respiration_rate: Optional[int]
+    oxygen_saturation: Optional[int]
 
-# ================================
+class MedicationUpdate(BaseModel):
+    medication_name: Optional[str]
+    dosage: Optional[str]
+    frequency: Optional[str]
+    route: Optional[str]
+    start_date: Optional[date]
+    end_date: Optional[date]
+    status: Optional[str]
+    notes: Optional[str]
+    icd_code: Optional[str]
+    ndc_code: Optional[str]
+
+class EncounterUpdate(BaseModel):
+    encounter_type: Optional[str]
+    reason_for_visit: Optional[str]
+    diagnosis: Optional[str]
+    notes: Optional[str]
+    follow_up_date: Optional[date]
+    is_lab_test_required: Optional[bool]
+    vitals: Optional[VitalsUpdate]
+    medications: Optional[List[MedicationUpdate]]
+
 # INSURANCE MASTER SCHEMAS
-
-
 class InsuranceMasterOut(BaseModel):
     id: int
     provider_name: str

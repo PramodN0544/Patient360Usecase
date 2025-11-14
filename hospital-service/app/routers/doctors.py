@@ -2,7 +2,6 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
-from typing import List
 
 from app.database import get_db
 from app.auth import get_current_user
@@ -71,9 +70,7 @@ async def get_patients_for_doctor(
         )
         patients = result.scalars().unique().all()
 
-    # =============================
     # Final response with count
-    # =============================
     return {
         "total_patients": len(patients),
         "patients": patients
