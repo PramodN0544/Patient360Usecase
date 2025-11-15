@@ -71,7 +71,7 @@ async def create_encounter(
     if not assignment:
         raise HTTPException(403, "Doctor is not assigned to this patient")
 
-    encounter_date = encounter_in.encounter_date or date.today()
+    encounter_date_today = encounter_in.encounter_date or date.today()
     # -------------------------------
     # Create encounter
     # -------------------------------
@@ -79,7 +79,7 @@ async def create_encounter(
         patient_id=patient.id,
         doctor_id=doctor.id,
         hospital_id=doctor.hospital_id,
-        encounter_date=encounter_date,
+        encounter_date=encounter_date_today,
         encounter_type=encounter_in.encounter_type,
         reason_for_visit=encounter_in.reason_for_visit,
         diagnosis=encounter_in.diagnosis,
