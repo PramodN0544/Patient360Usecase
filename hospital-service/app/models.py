@@ -275,7 +275,6 @@ class Medication(Base, TimestampMixin):
     appointment = relationship("Appointment", back_populates="medications")
     encounter = relationship("Encounter", back_populates="medications")
 
-
 # Encounters
 class Encounter(Base, TimestampMixin):
     __tablename__ = "encounters"
@@ -495,9 +494,10 @@ class LabResult(Base):
     lab_order_id = Column(Integer, ForeignKey("lab_orders.id", ondelete="CASCADE"))
     result_value = Column(String(100), nullable=True)
     notes = Column(Text, nullable=True)
-    pdf_url = Column(String(255), nullable=True)  # S3 file URL
+    file_key = Column(String(512), nullable=True)  # S3 object key for the PDF result
     created_at = Column(DateTime, default=datetime.utcnow)
-
+    # relationships (optional)
+    lab_order = relationship("LabOrder", backref="lab_results", lazy="joined")
 
 class TreatmentPlanMaster(Base):
     __tablename__ = "treatment_plan_master"
