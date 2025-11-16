@@ -1,3 +1,4 @@
+# app/routers/doctors.py
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -7,22 +8,25 @@ from app.database import get_db
 from app.auth import get_current_user
 from app import models, schemas
 
-router = APIRouter(prefix="/doctor", tags=["Doctor"])
+router = APIRouter(
+    prefix="/doctor",
+    tags=["Doctor"]
+)
 
 @router.get("/patients", response_model=schemas.PatientsWithCount)
 async def get_patients_for_doctor(
     current_user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    # Role check
+    # Only doctors and hospitals allowed
     if current_user.role not in ("doctor", "hospital"):
         raise HTTPException(status_code=403, detail="Not permitted")
 
     patients = []
 
-    # =============================
-    # If DOCTOR → fetch patients assigned to them
-    # =============================
+    # -------------------------------
+    # Fetch patients for a doctor
+    # -------------------------------
     if current_user.role == "doctor":
         doctor_result = await db.execute(
             select(models.Doctor).where(models.Doctor.user_id == current_user.id)
@@ -32,7 +36,7 @@ async def get_patients_for_doctor(
         if not doctor:
             raise HTTPException(status_code=404, detail="Doctor record not found")
 
-        result = await db.execute(
+        stmt = (
             select(models.Patient)
             .join(models.Assignment, models.Patient.id == models.Assignment.patient_id)
             .where(models.Assignment.doctor_id == doctor.id)
@@ -41,19 +45,22 @@ async def get_patients_for_doctor(
                 selectinload(models.Patient.consents),
                 selectinload(models.Patient.patient_insurances),
                 selectinload(models.Patient.pharmacy_insurances),
-                selectinload(models.Patient.vitals),
-                selectinload(models.Patient.medications),
-                selectinload(models.Patient.encounters),
+                selectinload(models.Patient.encounters)
+                    .selectinload(models.Encounter.vitals),
+                selectinload(models.Patient.encounters)
+                    .selectinload(models.Encounter.medications),
             )
             .order_by(models.Patient.first_name.asc(), models.Patient.last_name.asc())
         )
+
+        result = await db.execute(stmt)
         patients = result.scalars().unique().all()
 
-    # =============================
-    # If HOSPITAL → fetch all hospital’s patients
-    # =============================
+    # -------------------------------
+    # Fetch patients for a hospital
+    # -------------------------------
     elif current_user.role == "hospital":
-        result = await db.execute(
+        stmt = (
             select(models.Patient)
             .join(models.Assignment, models.Patient.id == models.Assignment.patient_id)
             .where(models.Assignment.hospital_id == current_user.hospital_id)
@@ -62,16 +69,21 @@ async def get_patients_for_doctor(
                 selectinload(models.Patient.consents),
                 selectinload(models.Patient.patient_insurances),
                 selectinload(models.Patient.pharmacy_insurances),
-                selectinload(models.Patient.vitals),
-                selectinload(models.Patient.medications),
-                selectinload(models.Patient.encounters),
+                selectinload(models.Patient.encounters)
+                    .selectinload(models.Encounter.vitals),
+                selectinload(models.Patient.encounters)
+                    .selectinload(models.Encounter.medications),
             )
             .order_by(models.Patient.first_name.asc(), models.Patient.last_name.asc())
         )
+
+        result = await db.execute(stmt)
         patients = result.scalars().unique().all()
 
-    # Final response with count
-    return {
-        "total_patients": len(patients),
-        "patients": patients
-    }
+    # -------------------------------
+    # Return response
+    # -------------------------------
+    return schemas.PatientsWithCount(
+        total_patients=len(patients),
+        patients=patients
+    )
