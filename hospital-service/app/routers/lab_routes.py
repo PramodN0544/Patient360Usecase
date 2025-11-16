@@ -25,7 +25,7 @@ async def get_all_test_codes(current_user=Depends(get_current_user), db: AsyncSe
         raise HTTPException(status_code=403, detail="Access denied")
     r = await db.execute(select(LabMaster).where(LabMaster.is_active == True))
     tests = r.scalars().all()
-    return [{"test_code": t.test_code} for t in tests]
+    return [{"test_code": t.test_code } for t in tests]
 
 
 # 2 - test detail
@@ -38,6 +38,40 @@ async def get_test_details(test_code: str, current_user=Depends(get_current_user
     if not test:
         raise HTTPException(status_code=404, detail="Test code not found")
     return test
+
+
+@router.get("/requests")
+async def get_all_lab_requests(
+    current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    if current_user.role not in ["hospital", "labassistant"]:
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    r = await db.execute(
+        select(LabOrder, Patient, Doctor)
+        .join(Patient, Patient.id == LabOrder.patient_id)
+        .join(Doctor, Doctor.id == LabOrder.doctor_id)
+        .where(Doctor.hospital_id == current_user.hospital_id)
+        .order_by(LabOrder.created_at.desc())
+    )
+
+    rows = r.all()
+
+    out = []
+    for order, patient, doctor in rows:
+        out.append({
+            "lab_order_id": order.id,
+            "test_code": order.test_code,
+            "test_name": order.test_name,
+            "sample_type": order.sample_type,
+            "status": order.status,
+            "patient_name": f"{patient.first_name} {patient.last_name}",
+            "doctor_name": f"{doctor.first_name} {doctor.last_name}",
+            "created_at": order.created_at
+        })
+
+    return out
 
 
 # 3 - create lab orders

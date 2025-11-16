@@ -21,12 +21,14 @@ FILE_TYPE_CONFIG = {
         "allowed_ext": ["jpg", "jpeg", "png"],
         "max_size": 5 * 1024 * 1024,  # 5MB,
        
+       
     },
     "id_proof": {  # Changed from "patient_document"
         "model": Hospital,
         "field": "id_proof_document",
         "allowed_ext": ["pdf", "jpg", "jpeg"],
         "max_size": 10 * 1024 * 1024,  # 10MB,
+       
        
     },
     "doctor_license": {

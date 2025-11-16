@@ -1,14 +1,19 @@
-from fastapi import APIRouter, Depends, HTTPException
+# app/routers/doctors.py
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
-
+from typing import List
+ 
 from app.database import get_db
 from app.auth import get_current_user
 from app import models, schemas
-
-router = APIRouter(prefix="/doctor", tags=["Doctor"])
-
+ 
+router = APIRouter(
+    prefix="/doctor",
+    tags=["Doctor"]
+)
+ 
 @router.get("/patients", response_model=schemas.PatientsWithCount)
 async def get_patients_for_doctor(
     current_user=Depends(get_current_user),
@@ -17,9 +22,9 @@ async def get_patients_for_doctor(
     # Role check
     if current_user.role not in ("doctor", "hospital"):
         raise HTTPException(status_code=403, detail="Not permitted")
-
+ 
     patients = []
-
+ 
     # =============================
     # If DOCTOR → fetch patients assigned to them
     # =============================
@@ -28,10 +33,10 @@ async def get_patients_for_doctor(
             select(models.Doctor).where(models.Doctor.user_id == current_user.id)
         )
         doctor = doctor_result.scalars().first()
-
+ 
         if not doctor:
             raise HTTPException(status_code=404, detail="Doctor record not found")
-
+ 
         result = await db.execute(
             select(models.Patient)
             .join(models.Assignment, models.Patient.id == models.Assignment.patient_id)
@@ -39,16 +44,17 @@ async def get_patients_for_doctor(
             .options(
                 selectinload(models.Patient.allergies),
                 selectinload(models.Patient.consents),
-                selectinload(models.Patient.patient_insurances),
-                selectinload(models.Patient.pharmacy_insurances),
-                selectinload(models.Patient.vitals),
-                selectinload(models.Patient.medications),
-                selectinload(models.Patient.encounters),
+               # selectinload(models.Patient.patient_insurances),
+               # selectinload(models.Patient.pharmacy_insurances),
+                # Load encounters and nested vitals & medications
+                selectinload(models.Patient.encounters)
+                    .selectinload(models.Encounter.vitals)
+                    .selectinload(models.Encounter.medications),
             )
             .order_by(models.Patient.first_name.asc(), models.Patient.last_name.asc())
         )
         patients = result.scalars().unique().all()
-
+ 
     # =============================
     # If HOSPITAL → fetch all hospital’s patients
     # =============================
@@ -62,16 +68,18 @@ async def get_patients_for_doctor(
                 selectinload(models.Patient.consents),
                 selectinload(models.Patient.patient_insurances),
                 selectinload(models.Patient.pharmacy_insurances),
-                selectinload(models.Patient.vitals),
-                selectinload(models.Patient.medications),
-                selectinload(models.Patient.encounters),
+                # Load encounters and nested vitals & medications
+                selectinload(models.Patient.encounters)
+                    .selectinload(models.Encounter.vitals)
+                    .selectinload(models.Encounter.medications),
             )
             .order_by(models.Patient.first_name.asc(), models.Patient.last_name.asc())
         )
         patients = result.scalars().unique().all()
-
+ 
     # Final response with count
     return {
         "total_patients": len(patients),
         "patients": patients
     }
+ 

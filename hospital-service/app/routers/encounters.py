@@ -165,9 +165,51 @@ async def create_encounter(
 
     return encounter_out
 
+
+
+
+
 # ===============================
 # GET PATIENT'S ENCOUNTERS
 # ===============================
+
+
+@router.get("/patient/{patient_id}", response_model=List[EncounterOut])
+async def get_patient_encounters(
+    patient_id: int,
+    current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    # Only doctors or hospitals can fetch encounters
+    if current_user.role not in ["doctor", "hospital"]:
+        raise HTTPException(403, "Not permitted")
+
+    # Check doctor assignment
+    if current_user.role == "doctor":
+        doctor_result = await db.execute(select(models.Doctor).where(models.Doctor.user_id == current_user.id))
+        doctor = doctor_result.scalar_one_or_none()
+        if not doctor:
+            raise HTTPException(404, "Doctor record not found")
+
+        assignment_result = await db.execute(
+            select(models.Assignment).where(
+                models.Assignment.patient_id == patient_id,
+                models.Assignment.doctor_id == doctor.id
+            )
+        )
+        assignment = assignment_result.scalar_one_or_none()
+        if not assignment:
+            raise HTTPException(403, "Doctor is not assigned to this patient")
+
+    # Fetch encounters
+    result = await db.execute(
+        select(Encounter)
+        .where(Encounter.patient_id == patient_id)
+        .order_by(Encounter.encounter_date.desc())
+    )
+    encounters = result.scalars().all()
+    return [EncounterOut.from_orm(e) for e in encounters]
+
 @router.get("/patient", response_model=List[EncounterOut])
 async def get_my_encounters(
     current_user=Depends(get_current_user),

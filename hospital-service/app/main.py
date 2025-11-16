@@ -15,6 +15,7 @@ from app.routers import assignments  # adjust import path
 from app.routers import insurance_master 
 from app.routers import pharmacy_insurance_master
 from app.routers import file_upload
+from app.routers import lab_routes
 from app.routers import appointment,vitals,file_upload,assignments,insurance_master,pharmacy_insurance_master,doctors
 
 # SQLAlchemy utilities and models used in route handlers
@@ -36,6 +37,8 @@ app.include_router(assignments.router)
 app.include_router(insurance_master.router)
 app.include_router(pharmacy_insurance_master.router)
 app.include_router(doctors.router)
+app.include_router(lab_routes.router)
+
 
 
 # Include the appointment routes
