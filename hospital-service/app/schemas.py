@@ -441,11 +441,9 @@ class EncounterCreate(BaseModel):
     class Config:
         orm_mode = True
 
-
-
 class EncounterOut(BaseModel):
     id: int
-    patient_id: int
+    patient_public_id: str
     doctor_id: int
     hospital_id: int
     encounter_date: date
@@ -621,7 +619,7 @@ class PatientInsuranceOut(BaseModel):
 # Create schema (input)
 # -----------------------------
 class PatientInsuranceCreate(BaseModel):
-    insurance_id: int                     # link to insurance master
+    insurance_id: int                     
     effective_date: date
     expiry_date: date
     priority: Optional[str] = "primary" 
