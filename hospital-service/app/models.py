@@ -305,6 +305,7 @@ class Encounter(Base, TimestampMixin):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     patient_id = Column(Integer, ForeignKey("patients.id", ondelete="CASCADE"), nullable=False)
+    patient_public_id = Column(String(150), nullable=False)
     doctor_id = Column(Integer, ForeignKey("doctors.id", ondelete="SET NULL"), nullable=True)
     hospital_id = Column(Integer, ForeignKey("hospitals.id", ondelete="SET NULL"), nullable=True)
     encounter_date = Column(Date, nullable=False)

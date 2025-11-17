@@ -13,23 +13,20 @@ from app.auth import get_current_user
 
 router = APIRouter(prefix="/encounters", tags=["Encounters"])
 
-def calculate_status(encounter_in):
-
-    # 1️⃣ If any critical data missing → Pending
+def calculate_status(enc):
+    # If anything missing → Pending
     if (
-        not encounter_in.diagnosis
-        or not encounter_in.notes
-        or not encounter_in.vitals
+        not enc.diagnosis
+        or not enc.notes
+        or not enc.vitals
     ):
         return "Pending"
 
-    # 2️⃣ If follow up OR lab is required → In Progress
-    if encounter_in.follow_up_date or encounter_in.is_lab_test_required:
+    # If follow up OR lab test → In Progress
+    if enc.follow_up_date or enc.is_lab_test_required:
         return "In Progress"
 
-    # 3️⃣ Otherwise → Completed
     return "Completed"
-
 
 @router.post("/", response_model=EncounterOut)
 async def create_encounter(
@@ -37,13 +34,12 @@ async def create_encounter(
     current_user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    # Get doctor from user
+    # -------- DOCTOR / HOSPITAL VALIDATION ----------
     doctor_result = await db.execute(
         select(Doctor).where(Doctor.user_id == current_user.id)
     )
     doctor = doctor_result.scalar_one_or_none()
 
-    # If hospital creates encounter → doctor_id comes from body
     if current_user.role == "hospital":
         doctor_result = await db.execute(
             select(Doctor).where(
@@ -53,11 +49,14 @@ async def create_encounter(
         )
         doctor = doctor_result.scalar_one_or_none()
         if not doctor:
-            raise HTTPException(404, "Doctor not found in hospital")
+            raise HTTPException(404, "Doctor not found")
     elif not doctor:
         raise HTTPException(403, "Only doctors or hospitals can create encounters")
 
-    # Fetch patient using PUBLIC ID
+    # -------- FETCH PATIENT USING PUBLIC ID ----------
+    if not encounter_in.patient_public_id:
+        raise HTTPException(400, "patient_public_id is required")
+
     patient_result = await db.execute(
         select(Patient).where(Patient.public_id == encounter_in.patient_public_id)
     )
@@ -65,7 +64,7 @@ async def create_encounter(
     if not patient:
         raise HTTPException(404, "Patient not found")
 
-    # Check doctor assigned
+    # -------- ASSIGNMENT CHECK ----------
     assign = await db.execute(
         select(Assignment).where(
             Assignment.patient_id == patient.id,
@@ -73,9 +72,9 @@ async def create_encounter(
         )
     )
     if not assign.scalar_one_or_none():
-        raise HTTPException(403, "Doctor is not assigned to this patient")
+        raise HTTPException(403, "Doctor not assigned to this patient")
 
-    # Create encounter
+    # -------- CREATE ENCOUNTER ----------
     new_encounter = Encounter(
         patient_id=patient.id,
         doctor_id=doctor.id,
@@ -87,13 +86,13 @@ async def create_encounter(
         notes=encounter_in.notes,
         follow_up_date=encounter_in.follow_up_date,
         is_lab_test_required=encounter_in.is_lab_test_required,
-        status=calculate_status(encounter_in)   # ← UPDATED LOGIC
+        status=calculate_status(encounter_in)
     )
 
     db.add(new_encounter)
     await db.flush()
 
-    # Save vitals
+    # -------- SAVE VITALS ----------
     if encounter_in.vitals:
         v = encounter_in.vitals
         bmi = None
@@ -113,7 +112,7 @@ async def create_encounter(
             oxygen_saturation=v.oxygen_saturation,
         ))
 
-    # Save medications
+    # -------- SAVE MEDICATIONS ----------
     if encounter_in.medications:
         for m in encounter_in.medications:
             db.add(Medication(
@@ -135,7 +134,7 @@ async def create_encounter(
     await db.commit()
     await db.refresh(new_encounter)
 
-    # Return with full data
+    # -------- RESPONSE WITH PUBLIC ID ----------
     final = await db.execute(
         select(Encounter)
         .options(
@@ -148,15 +147,14 @@ async def create_encounter(
         .where(Encounter.id == new_encounter.id)
     )
 
-    encounter = final.scalar_one()
-    out = EncounterOut.from_orm(encounter)
+    e = final.scalar_one()
+    out = EncounterOut.from_orm(e)
 
     out.doctor_name = f"{doctor.first_name} {doctor.last_name}"
-    out.hospital_name = encounter.hospital.name
-    out.patient_public_id = encounter.patient.public_id
+    out.hospital_name = e.hospital.name
+    out.patient_public_id = e.patient.public_id
 
     return out
-
 
 
 @router.get("/patient/{public_id}", response_model=List[EncounterOut])
@@ -254,8 +252,11 @@ async def get_my_encounters(
     return response
 
 @router.get("/{encounter_id}", response_model=EncounterOut)
-async def get_encounter(encounter_id: int, current_user=Depends(get_current_user), db: AsyncSession = Depends(get_db)):
-
+async def get_encounter(
+    encounter_id: int,
+    current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
     result = await db.execute(
         select(Encounter)
         .options(
@@ -271,13 +272,10 @@ async def get_encounter(encounter_id: int, current_user=Depends(get_current_user
     if not encounter:
         raise HTTPException(404, "Encounter not found")
 
-    # Patient security check
-    patient_result = await db.execute(
-        select(Patient).where(Patient.user_id == current_user.id)
-    )
-    patient = patient_result.scalar_one_or_none()
-    if patient and patient.id != encounter.patient_id:
-        raise HTTPException(403, "You can only view your own encounters")
+    # Patient can see only their encounter
+    if current_user.role == "patient":
+        if encounter.patient.user_id != current_user.id:
+            raise HTTPException(403, "You can only see your own encounters")
 
     out = EncounterOut.from_orm(encounter)
     out.doctor_name = f"{encounter.doctor.first_name} {encounter.doctor.last_name}"
@@ -293,7 +291,7 @@ async def update_encounter(
     current_user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-
+    # FETCH ENCOUNTER
     result = await db.execute(
         select(Encounter)
         .options(
@@ -306,42 +304,40 @@ async def update_encounter(
         .where(Encounter.id == encounter_id)
     )
     encounter = result.scalar_one_or_none()
-
     if not encounter:
         raise HTTPException(404, "Encounter not found")
 
-    # Permission check
-    doctor_result = await db.execute(select(Doctor).where(Doctor.user_id == current_user.id))
+    # PERMISSIONS
+    doctor_result = await db.execute(
+        select(Doctor).where(Doctor.user_id == current_user.id)
+    )
     doctor = doctor_result.scalar_one_or_none()
-
     if not doctor and current_user.role != "hospital":
         raise HTTPException(403, "Not allowed")
 
-    # Update basic fields
+    # UPDATE FIELDS
     for field, value in encounter_in.dict(exclude_unset=True).items():
-        if field not in ["vitals", "medications"]:
+        if field not in ("vitals", "medications"):
             setattr(encounter, field, value)
 
-    # NEW STATUS LOGIC
+    # UPDATE STATUS
     encounter.status = calculate_status(encounter_in)
 
-    # Update vitals
+    # UPDATE VITALS
     if encounter_in.vitals:
         vitals_result = await db.execute(
             select(Vitals).where(Vitals.encounter_id == encounter.id)
         )
         vitals = vitals_result.scalar_one_or_none()
-
         if vitals:
             for f, val in encounter_in.vitals.dict(exclude_unset=True).items():
                 setattr(vitals, f, val)
 
-    # Replace medications
+    # UPDATE MEDICATIONS
     if encounter_in.medications:
         await db.execute(
             Medication.__table__.delete().where(Medication.encounter_id == encounter.id)
         )
-
         for m in encounter_in.medications:
             db.add(Medication(
                 patient_id=encounter.patient_id,
@@ -360,24 +356,11 @@ async def update_encounter(
             ))
 
     await db.commit()
+    await db.refresh(encounter)
 
-    # Reload full encounter
-    final = await db.execute(
-        select(Encounter)
-        .options(
-            selectinload(Encounter.vitals),
-            selectinload(Encounter.medications),
-            selectinload(Encounter.doctor),
-            selectinload(Encounter.hospital),
-            selectinload(Encounter.patient)
-        )
-        .where(Encounter.id == encounter_id)
-    )
-    updated = final.scalar_one()
-
-    out = EncounterOut.from_orm(updated)
-    out.doctor_name = f"{updated.doctor.first_name} {updated.doctor.last_name}"
-    out.hospital_name = updated.hospital.name
-    out.patient_public_id = updated.patient.public_id
+    out = EncounterOut.from_orm(encounter)
+    out.doctor_name = f"{encounter.doctor.first_name} {encounter.doctor.last_name}"
+    out.hospital_name = encounter.hospital.name
+    out.patient_public_id = encounter.patient.public_id
 
     return out

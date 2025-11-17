@@ -3,10 +3,11 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
-
+from sqlalchemy import select, func
 from app.database import get_db
 from app.auth import get_current_user
 from app import models, schemas
+from datetime import date
 
 router = APIRouter(
     prefix="/doctor",
@@ -212,3 +213,53 @@ async def search_patients_for_doctor(
         },
         "patients": filtered
     }
+
+#  GET TODAY'S APPOINTMENT COUNT
+@router.get("/appointments/today")
+async def get_today_appointment_count(
+    current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+
+    # Validate role
+    if current_user.role not in ("doctor", "hospital"):
+        raise HTTPException(status_code=403, detail="Not permitted")
+
+    # Get today
+    today = date.today()
+
+
+    # CASE 1: DOCTOR LOGGED IN
+    if current_user.role == "doctor":
+        doctor_result = await db.execute(
+            select(models.Doctor)
+            .where(models.Doctor.user_id == current_user.id)
+        )
+        doctor = doctor_result.scalar_one_or_none()
+        if not doctor:
+            raise HTTPException(404, "Doctor record not found")
+
+        # Count appointments for this doctor
+        count_result = await db.execute(
+            select(func.count(models.Appointment.id))
+            .where(
+                models.Appointment.doctor_id == doctor.id,
+                models.Appointment.appointment_date == today
+            )
+        )
+        count = count_result.scalar()
+
+        return {"today_appointments": count}
+
+    # CASE 2: HOSPITAL LOGGED IN
+    elif current_user.role == "hospital":
+        count_result = await db.execute(
+            select(func.count(models.Appointment.id))
+            .where(
+                models.Appointment.hospital_id == current_user.hospital_id,
+                models.Appointment.appointment_date == today
+            )
+        )
+        count = count_result.scalar()
+
+        return {"today_appointments": count}

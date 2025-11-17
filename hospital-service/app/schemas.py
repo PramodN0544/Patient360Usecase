@@ -433,8 +433,7 @@ class EncounterCreate(BaseModel):
     notes: Optional[str] = None
     follow_up_date: Optional[date] = None
     status: Optional[str] = "open"
-    is_lab_test_required: Optional[bool] = False  # <
-
+    is_lab_test_required: Optional[bool] = False  
     vitals: Optional[VitalsCreate] = None
     medications: Optional[List[MedicationCreate]] = []
 
