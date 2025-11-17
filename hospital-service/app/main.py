@@ -22,7 +22,7 @@ from app.routers import appointment,vitals,file_upload,assignments,insurance_mas
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 from app import models
-
+from app.auth import router as auth_router
 
 app = FastAPI(title="CareIQ Patient 360 API")
 app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
@@ -43,6 +43,7 @@ app.include_router(appointment.router)  # no need to repeat prefix; it's already
 app.include_router(reset_password.router)
 app.include_router(searchPatientInHospital.router)
 app.include_router(encounters.router)
+app.include_router(auth_router)
 # Auto-create tables
 
 @app.on_event("startup")
