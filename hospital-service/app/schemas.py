@@ -1,6 +1,8 @@
 from pydantic import BaseModel, EmailStr, Field
 from typing import List, Optional,Dict
 from datetime import date, time, datetime
+
+
 # HOSPITAL SCHEMAS
 class HospitalBase(BaseModel):
     name: str
@@ -235,6 +237,8 @@ class PatientCreate(BaseModel):
     patient_insurances: Optional[List[PatientInsuranceCreate]] = []
     pharmacy_insurances: Optional[List[PatientPharmacyInsuranceCreate]] = []
     
+    
+    
 class PatientOut(BaseModel):
     id: int
     public_id: str
@@ -268,12 +272,15 @@ class PatientOut(BaseModel):
     diet: Optional[str] = None
     exercise_frequency: Optional[str] = None
     created_at: Optional[datetime] = None
-
+   
     # ✅ FIXED NESTED OUTPUT RELATIONS
     allergies: List[AllergyOut] = []
     consents: Optional[PatientConsentOut] = None
     patient_insurances: List[PatientInsuranceOut] = []
     pharmacy_insurances: List[PatientPharmacyInsuranceOut] = []
+    encounters: List["EncounterOut"] = []
+    
+    
 
     class Config:
         orm_mode = True
@@ -456,6 +463,35 @@ class EncounterOut(BaseModel):
 
     class Config:
         orm_mode = True
+        
+class EncounterBase(BaseModel):
+    encounter_id: str
+    encounter_type: str
+    reason: str | None = None
+    visit_date: datetime
+    provider_name: str | None = None
+    notes: str | None = None
+
+    class Config:
+        orm_mode = True
+
+
+class EncounterResponse(BaseModel):
+    id: int
+    encounter_id: str
+    encounter_type: str
+    reason: str | None
+    visit_date: datetime
+    provider_name: str | None
+    notes: str | None
+
+    class Config:
+        orm_mode = True
+
+
+class PatientEncounterResponse(EncounterBase):
+    id: int
+    patient_id: int
 
 class VitalsUpdate(BaseModel):
     height: Optional[float]
@@ -556,14 +592,6 @@ class PatientPharmacyInsuranceOut(BaseModel):
 
     class Config:
         orm_mode = True  # allows SQLAlchemy models to be returned directly
-
-
-
-# app/schemas.py
-from pydantic import BaseModel
-from datetime import date, datetime
-from typing import Optional
-
 # -----------------------------
 # Response schema (Out)
 # -----------------------------
@@ -634,11 +662,6 @@ class LabTestDetail(BaseModel):
     class Config:
         orm_mode = True
         
-        
-# app/schemas/lab_schemas.py
-from pydantic import BaseModel
-from typing import Optional, List
-from datetime import datetime
 
 class LabOrderCreate(BaseModel):
     test_code: str
@@ -687,12 +710,6 @@ class LabTestDetail(BaseModel):
 
     class Config:
         orm_mode = True
-
-        
-    
-from pydantic import BaseModel
-from datetime import datetime
-from typing import Optional
 
 
 # -----------------------------
@@ -778,3 +795,9 @@ class TreatmentPlanResponse(TreatmentPlanBase):
 
     class Config:
         orm_mode = True
+
+
+# Resolve forward references for Pydantic models defined out-of-order
+PatientOut.update_forward_refs()
+PatientsWithCount.update_forward_refs() 
+        

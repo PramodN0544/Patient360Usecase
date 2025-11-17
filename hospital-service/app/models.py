@@ -175,7 +175,7 @@ class Patient(Base, TimestampMixin):
     allergies = relationship("Allergy", back_populates="patient", cascade="all, delete-orphan")
     consents = relationship("PatientConsent", back_populates="patient", cascade="all, delete-orphan", uselist=False)
     assignments = relationship("Assignment", back_populates="patient", cascade="all, delete-orphan")
-
+    
 class Assignment(Base):
     __tablename__ = "assignments"
     id = Column(Integer, primary_key=True, index=True)
@@ -274,6 +274,30 @@ class Medication(Base, TimestampMixin):
     doctor = relationship("Doctor", back_populates="medications")
     appointment = relationship("Appointment", back_populates="medications")
     encounter = relationship("Encounter", back_populates="medications")
+    
+    
+# Vitals
+class Vitals(Base, TimestampMixin):
+    __tablename__ = "vitals"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    patient_id = Column(Integer, ForeignKey("patients.id", ondelete="CASCADE"), nullable=False)
+    appointment_id = Column(Integer, ForeignKey("appointments.id", ondelete="SET NULL"), nullable=True)
+    encounter_id = Column(Integer, ForeignKey("encounters.id", ondelete="SET NULL"), nullable=True)
+    height = Column(Numeric(5,2), nullable=True)
+    weight = Column(Numeric(5,2), nullable=True)
+    bmi = Column(Numeric(5,2), nullable=True)
+    blood_pressure = Column(String(20), nullable=True)
+    heart_rate = Column(Integer, nullable=True)
+    temperature = Column(Numeric(5,2), nullable=True)
+    respiration_rate = Column(Integer, nullable=True)
+    oxygen_saturation = Column(Integer, nullable=True)
+    recorded_at = Column(DateTime, default=datetime.utcnow)
+
+    patient = relationship("Patient", back_populates="vitals")
+    appointment = relationship("Appointment", back_populates="vitals")
+    encounter = relationship("Encounter", back_populates="vitals")
+
 
 # Encounters
 class Encounter(Base, TimestampMixin):
@@ -297,28 +321,7 @@ class Encounter(Base, TimestampMixin):
     hospital = relationship("Hospital", back_populates="encounters")
     vitals = relationship("Vitals", back_populates="encounter", cascade="all, delete-orphan")
     medications = relationship("Medication", back_populates="encounter", cascade="all, delete-orphan")
-
-# Vitals
-class Vitals(Base, TimestampMixin):
-    __tablename__ = "vitals"
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    patient_id = Column(Integer, ForeignKey("patients.id", ondelete="CASCADE"), nullable=False)
-    appointment_id = Column(Integer, ForeignKey("appointments.id", ondelete="SET NULL"), nullable=True)
-    encounter_id = Column(Integer, ForeignKey("encounters.id", ondelete="SET NULL"), nullable=True)
-    height = Column(Numeric(5,2), nullable=True)
-    weight = Column(Numeric(5,2), nullable=True)
-    bmi = Column(Numeric(5,2), nullable=True)
-    blood_pressure = Column(String(20), nullable=True)
-    heart_rate = Column(Integer, nullable=True)
-    temperature = Column(Numeric(5,2), nullable=True)
-    respiration_rate = Column(Integer, nullable=True)
-    oxygen_saturation = Column(Integer, nullable=True)
-    recorded_at = Column(DateTime, default=datetime.utcnow)
-
-    patient = relationship("Patient", back_populates="vitals")
-    appointment = relationship("Appointment", back_populates="vitals")
-    encounter = relationship("Encounter", back_populates="vitals")
+ 
 
 # Notifications
 class Notification(Base, TimestampMixin):
