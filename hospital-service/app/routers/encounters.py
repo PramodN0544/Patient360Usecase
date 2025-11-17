@@ -1,9 +1,11 @@
+# app/routers/encounters.py
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload, joinedload
 from typing import List
 from datetime import date
+
 from app.database import get_db
 from app.models import Encounter, Doctor, Patient, Vitals, Medication, Assignment
 from app.schemas import EncounterCreate, EncounterOut, EncounterUpdate
@@ -22,16 +24,13 @@ async def create_encounter(
     db: AsyncSession = Depends(get_db)
 ):
 
-    # -------------------------------
     # Determine doctor
-    # -------------------------------
     doctor_result = await db.execute(
         select(Doctor).where(Doctor.user_id == current_user.id)
     )
     doctor = doctor_result.scalar_one_or_none()
 
     if current_user.role == "hospital":
-        # Hospital creating encounter → doctor must be passed
         doctor_id = encounter_in.doctor_id
         doctor_result = await db.execute(
             select(Doctor).where(
@@ -46,9 +45,7 @@ async def create_encounter(
     elif not doctor:
         raise HTTPException(403, "Only doctors or hospitals can create encounters")
 
-    # -------------------------------
     # Fetch patient by public_id
-    # -------------------------------
     patient_result = await db.execute(
         select(Patient).where(Patient.public_id == encounter_in.patient_public_id)
     )
@@ -57,9 +54,7 @@ async def create_encounter(
     if not patient:
         raise HTTPException(404, "Patient not found")
 
-    # -------------------------------
-    # Check doctor is assigned to patient (Assignment table)
-    # -------------------------------
+    # Check doctor is assigned to patient
     assignment_result = await db.execute(
         select(Assignment).where(
             Assignment.patient_id == patient.id,
@@ -72,9 +67,8 @@ async def create_encounter(
         raise HTTPException(403, "Doctor is not assigned to this patient")
 
     encounter_date_today = encounter_in.encounter_date or date.today()
-    # -------------------------------
+
     # Create encounter
-    # -------------------------------
     new_encounter = Encounter(
         patient_id=patient.id,
         doctor_id=doctor.id,
@@ -91,9 +85,7 @@ async def create_encounter(
     db.add(new_encounter)
     await db.flush()  # get encounter ID
 
-    # -------------------------------
     # Save vitals
-    # -------------------------------
     if encounter_in.vitals:
         v = encounter_in.vitals
         bmi = None
@@ -115,9 +107,7 @@ async def create_encounter(
         )
         db.add(vitals_obj)
 
-    # -------------------------------
     # Save medications
-    # -------------------------------
     if encounter_in.medications:
         for m in encounter_in.medications:
             med_obj = Medication(
@@ -140,16 +130,14 @@ async def create_encounter(
     await db.commit()
     await db.refresh(new_encounter)
 
-    # -------------------------------
-    # Return encounter with relations
-    # -------------------------------
+    # Return encounter with relations — eagerly load everything schema might need
     final_result = await db.execute(
         select(Encounter)
         .options(
             selectinload(Encounter.vitals),
             selectinload(Encounter.medications),
-            joinedload(Encounter.doctor),
-            joinedload(Encounter.hospital)
+            selectinload(Encounter.doctor),   # ensure doctor is loaded
+            selectinload(Encounter.hospital)  # ensure hospital is loaded
         )
         .where(Encounter.id == new_encounter.id)
     )
@@ -166,14 +154,9 @@ async def create_encounter(
     return encounter_out
 
 
-
-
-
 # ===============================
 # GET PATIENT'S ENCOUNTERS
 # ===============================
-
-
 @router.get("/patient/{patient_id}", response_model=List[EncounterOut])
 async def get_patient_encounters(
     patient_id: int,
@@ -186,29 +169,36 @@ async def get_patient_encounters(
 
     # Check doctor assignment
     if current_user.role == "doctor":
-        doctor_result = await db.execute(select(models.Doctor).where(models.Doctor.user_id == current_user.id))
+        doctor_result = await db.execute(select(Doctor).where(Doctor.user_id == current_user.id))
         doctor = doctor_result.scalar_one_or_none()
         if not doctor:
             raise HTTPException(404, "Doctor record not found")
 
         assignment_result = await db.execute(
-            select(models.Assignment).where(
-                models.Assignment.patient_id == patient_id,
-                models.Assignment.doctor_id == doctor.id
+            select(Assignment).where(
+                Assignment.patient_id == patient_id,
+                Assignment.doctor_id == doctor.id
             )
         )
         assignment = assignment_result.scalar_one_or_none()
         if not assignment:
             raise HTTPException(403, "Doctor is not assigned to this patient")
 
-    # Fetch encounters
+    # Fetch encounters with eager loads (prevent lazy loads in async)
     result = await db.execute(
         select(Encounter)
+        .options(
+            selectinload(Encounter.vitals),
+            selectinload(Encounter.medications),
+            selectinload(Encounter.doctor),
+            selectinload(Encounter.hospital)
+        )
         .where(Encounter.patient_id == patient_id)
         .order_by(Encounter.encounter_date.desc())
     )
     encounters = result.scalars().all()
     return [EncounterOut.from_orm(e) for e in encounters]
+
 
 @router.get("/patient", response_model=List[EncounterOut])
 async def get_my_encounters(
@@ -226,10 +216,10 @@ async def get_my_encounters(
     result = await db.execute(
         select(Encounter)
         .options(
-            joinedload(Encounter.vitals),
-            joinedload(Encounter.medications),
-            joinedload(Encounter.doctor),
-            joinedload(Encounter.hospital)
+            selectinload(Encounter.vitals),
+            selectinload(Encounter.medications),
+            selectinload(Encounter.doctor),
+            selectinload(Encounter.hospital)
         )
         .where(Encounter.patient_id == patient.id)
         .order_by(Encounter.encounter_date.desc())
@@ -240,12 +230,13 @@ async def get_my_encounters(
     for e in encounters:
         encounter_data = EncounterOut.from_orm(e)
         encounter_data.doctor_name = (
-    f"{e.doctor.first_name} {e.doctor.last_name}" if e.doctor else None
-)
+            f"{e.doctor.first_name} {e.doctor.last_name}" if e.doctor else None
+        )
         encounter_data.hospital_name = e.hospital.name if e.hospital else None
         response.append(encounter_data)
 
     return response
+
 
 # ===============================
 # GET SINGLE ENCOUNTER
@@ -261,8 +252,8 @@ async def get_encounter(
         .options(
             selectinload(Encounter.vitals),
             selectinload(Encounter.medications),
-            joinedload(Encounter.doctor),
-            joinedload(Encounter.hospital)
+            selectinload(Encounter.doctor),
+            selectinload(Encounter.hospital)
         )
         .where(Encounter.id == encounter_id)
     )
@@ -297,14 +288,14 @@ async def update_encounter(
     current_user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    # Fetch encounter
+    # Fetch encounter with related objects
     result = await db.execute(
         select(Encounter)
         .options(
-            joinedload(Encounter.doctor),
-            joinedload(Encounter.hospital),
             selectinload(Encounter.vitals),
-            selectinload(Encounter.medications)
+            selectinload(Encounter.medications),
+            selectinload(Encounter.doctor),
+            selectinload(Encounter.hospital)
         )
         .where(Encounter.id == encounter_id)
     )
@@ -370,4 +361,15 @@ async def update_encounter(
     await db.commit()
     await db.refresh(encounter)
 
-    return EncounterOut.from_orm(encounter)
+    # Refresh with eager loads before returning
+    final = await db.execute(
+        select(Encounter)
+        .options(
+            selectinload(Encounter.vitals),
+            selectinload(Encounter.medications),
+            selectinload(Encounter.doctor),
+            selectinload(Encounter.hospital)
+        ).where(Encounter.id == encounter.id)
+    )
+    refreshed = final.scalar_one()
+    return EncounterOut.from_orm(refreshed)
