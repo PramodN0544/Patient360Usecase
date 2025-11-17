@@ -263,3 +263,165 @@ async def get_today_appointment_count(
         count = count_result.scalar()
 
         return {"today_appointments": count}
+
+
+@router.get("/patient-visits/monthly")
+async def get_monthly_patient_visits(
+    current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+
+    # Validate role
+    if current_user.role not in ("doctor", "hospital"):
+        raise HTTPException(403, "Not permitted")
+
+    # Case 1: DOCTOR logged in
+    if current_user.role == "doctor":
+        doctor_result = await db.execute(
+            select(models.Doctor).where(models.Doctor.user_id == current_user.id)
+        )
+        doctor = doctor_result.scalar_one_or_none()
+        if not doctor:
+            raise HTTPException(404, "Doctor record not found")
+
+        stmt = (
+            select(
+                func.to_char(models.Encounter.encounter_date, 'Month').label("month"),
+                func.count(models.Encounter.id).label("patient_visits")
+            )
+            .where(models.Encounter.doctor_id == doctor.id)
+            .group_by("month")
+            .order_by("month")
+        )
+
+    # Case 2: HOSPITAL logged in
+    else:
+        stmt = (
+            select(
+                func.to_char(models.Encounter.encounter_date, 'Month').label("month"),
+                func.count(models.Encounter.id).label("patient_visits")
+            )
+            .where(models.Encounter.hospital_id == current_user.hospital_id)
+            .group_by("month")
+            .order_by("month")
+        )
+
+    result = await db.execute(stmt)
+    rows = result.all()
+
+    # Format month names properly (strip spaces)
+    response = [
+        {
+            "month": row.month.strip(), 
+            "patient_visits": row.patient_visits
+        }
+        for row in rows
+    ]
+
+    return response
+
+@router.get("/appointments/upcoming")
+async def get_upcoming_appointments(
+    current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+
+    # Validate role
+    if current_user.role not in ("doctor", "hospital"):
+        raise HTTPException(403, "Not permitted")
+
+    today = date.today()
+
+    # Doctor Login
+    if current_user.role == "doctor":
+        doctor_result = await db.execute(
+            select(models.Doctor).where(models.Doctor.user_id == current_user.id)
+        )
+        doctor = doctor_result.scalar_one_or_none()
+        if not doctor:
+            raise HTTPException(404, "Doctor record not found")
+
+        stmt = (
+            select(models.Appointment)
+            .where(
+                models.Appointment.doctor_id == doctor.id,
+                models.Appointment.appointment_date >= today
+            )
+            .order_by(models.Appointment.appointment_date.asc(),
+                      models.Appointment.appointment_time.asc())
+            .options(
+                selectinload(models.Appointment.patient)
+            )
+        )
+
+    # Hospital Login
+    else:
+        stmt = (
+            select(models.Appointment)
+            .where(
+                models.Appointment.hospital_id == current_user.hospital_id,
+                models.Appointment.appointment_date >= today
+            )
+            .order_by(models.Appointment.appointment_date.asc(),
+                      models.Appointment.appointment_time.asc())
+            .options(
+                selectinload(models.Appointment.patient)
+            )
+        )
+
+    result = await db.execute(stmt)
+    appointments = result.scalars().all()
+
+    # Format response cleanly
+    response = []
+    for a in appointments:
+        response.append({
+            "appointment_id": a.id,
+            "patient_public_id": a.patient.public_id,
+            "patient_name": f"{a.patient.first_name} {a.patient.last_name}",
+            "date": a.appointment_date,
+            "time": a.appointment_time,
+            "reason": a.reason,
+            "status": a.status,
+        })
+
+    return {"upcoming_appointments": response}
+
+
+@router.get("/patient/{public_id}")
+async def get_patient_full_details(
+    public_id: str,
+    current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+
+    # Only doctor or hospital
+    if current_user.role not in ("doctor", "hospital"):
+        raise HTTPException(403, "Not permitted")
+
+    # Fetch patient
+    patient_result = await db.execute(
+        select(models.Patient)
+        .where(models.Patient.public_id == public_id)
+        .options(
+            selectinload(models.Patient.allergies),
+            selectinload(models.Patient.consents),
+            selectinload(models.Patient.patient_insurances),
+            selectinload(models.Patient.pharmacy_insurances),
+
+            selectinload(models.Patient.encounters)
+                .selectinload(models.Encounter.vitals),
+            selectinload(models.Patient.encounters)
+                .selectinload(models.Encounter.medications),
+            selectinload(models.Patient.encounters)
+                .selectinload(models.Encounter.doctor),
+            selectinload(models.Patient.encounters)
+                .selectinload(models.Encounter.hospital),
+        )
+    )
+    patient = patient_result.scalars().unique().first()
+
+    if not patient:
+        raise HTTPException(404, "Patient not found")
+
+    return patient

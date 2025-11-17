@@ -341,3 +341,10 @@ async def get_my_hospital_profile(
     return hospital
 
 
+
+@app.post("/auth/logout")
+async def logout(current_user=Depends(get_current_user)):
+    """
+    Stateless logout – the frontend must delete the token.
+    """
+    return {"message": "Logged out successfully"}
