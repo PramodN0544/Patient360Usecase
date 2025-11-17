@@ -13,10 +13,7 @@ from app.auth import get_current_user
 
 router = APIRouter(prefix="/encounters", tags=["Encounters"])
 
-
-# ===============================
 # CREATE ENCOUNTER
-# ===============================
 @router.post("/", response_model=EncounterOut)
 async def create_encounter(
     encounter_in: EncounterCreate,
@@ -154,9 +151,7 @@ async def create_encounter(
     return encounter_out
 
 
-# ===============================
-# GET PATIENT'S ENCOUNTERS
-# ===============================
+# GET PATIENT'S ENCOUNTERS - In Doctor/Hospital Dashboard
 @router.get("/patient/{patient_id}", response_model=List[EncounterOut])
 async def get_patient_encounters(
     patient_id: int,
@@ -200,6 +195,7 @@ async def get_patient_encounters(
     return [EncounterOut.from_orm(e) for e in encounters]
 
 
+# Get logged-in patient's encounters - In Patient Dashboard
 @router.get("/patient", response_model=List[EncounterOut])
 async def get_my_encounters(
     current_user=Depends(get_current_user),
@@ -237,10 +233,7 @@ async def get_my_encounters(
 
     return response
 
-
-# ===============================
 # GET SINGLE ENCOUNTER
-# ===============================
 @router.get("/{encounter_id}", response_model=EncounterOut)
 async def get_encounter(
     encounter_id: int,
@@ -288,7 +281,9 @@ async def update_encounter(
     current_user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    # Fetch encounter with related objects
+    # -------------------------------------------------------
+    # FETCH ENCOUNTER WITH ALL RELATIONS (NO LAZY LOAD)
+    # -------------------------------------------------------
     result = await db.execute(
         select(Encounter)
         .options(
@@ -302,44 +297,51 @@ async def update_encounter(
     encounter = result.scalar_one_or_none()
 
     if not encounter:
-        raise HTTPException(status_code=404, detail="Encounter not found")
+        raise HTTPException(404, "Encounter not found")
 
-    # Only doctor/hospital who created assignment can update
+    # -------------------------------------------------------
+    # PERMISSION CHECK
+    # -------------------------------------------------------
     doctor_result = await db.execute(
         select(Doctor).where(Doctor.user_id == current_user.id)
     )
     doctor = doctor_result.scalar_one_or_none()
 
     if not doctor and current_user.role != "hospital":
-        raise HTTPException(status_code=403, detail="Not allowed")
+        raise HTTPException(403, "Not allowed")
 
+    # -------------------------------------------------------
     # UPDATE MAIN FIELDS
+    # -------------------------------------------------------
     update_data = encounter_in.dict(exclude_unset=True)
 
     for field, value in update_data.items():
-        if field not in ["vitals", "medications"]:
+        if field not in ["vitals", "medications"]:   # skip nested objects
             setattr(encounter, field, value)
 
+    # -------------------------------------------------------
     # UPDATE VITALS
+    # -------------------------------------------------------
     if encounter_in.vitals:
-        v = encounter_in.vitals
         vitals_result = await db.execute(
             select(Vitals).where(Vitals.encounter_id == encounter.id)
         )
         vitals = vitals_result.scalar_one_or_none()
 
         if vitals:
-            for f, val in v.dict(exclude_unset=True).items():
+            for f, val in encounter_in.vitals.dict(exclude_unset=True).items():
                 setattr(vitals, f, val)
 
+    # -------------------------------------------------------
     # UPDATE MEDICATIONS
+    # -------------------------------------------------------
     if encounter_in.medications:
-        # Delete old meds
+        # delete all old
         await db.execute(
             Medication.__table__.delete().where(Medication.encounter_id == encounter.id)
         )
 
-        # Insert new meds
+        # insert new meds
         for m in encounter_in.medications:
             new_med = Medication(
                 patient_id=encounter.patient_id,
@@ -358,18 +360,32 @@ async def update_encounter(
             )
             db.add(new_med)
 
-    await db.commit()
-    await db.refresh(encounter)
 
-    # Refresh with eager loads before returning
-    final = await db.execute(
+    # SAVE CHANGES
+    await db.commit()
+
+    # RELOAD ENCOUNTER WITH ALL RELATIONS (NO LAZY LOAD!)
+    final_result = await db.execute(
         select(Encounter)
         .options(
             selectinload(Encounter.vitals),
             selectinload(Encounter.medications),
             selectinload(Encounter.doctor),
             selectinload(Encounter.hospital)
-        ).where(Encounter.id == encounter.id)
+        )
+        .where(Encounter.id == encounter.id)
     )
-    refreshed = final.scalar_one()
-    return EncounterOut.from_orm(refreshed)
+    updated_encounter = final_result.scalar_one()
+    # BUILD RESPONSE
+    response = EncounterOut.from_orm(updated_encounter)
+
+    response.doctor_name = (
+        f"{updated_encounter.doctor.first_name} {updated_encounter.doctor.last_name}"
+        if updated_encounter.doctor else None
+    )
+
+    response.hospital_name = (
+        updated_encounter.hospital.name if updated_encounter.hospital else None
+    )
+
+    return response

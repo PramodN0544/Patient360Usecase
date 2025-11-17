@@ -270,10 +270,21 @@ async def get_my_profile(
         select(models.Patient)
         .where(models.Patient.user_id == current_user.id)
         .options(
+            # BASIC DETAILS
             selectinload(models.Patient.allergies),
             selectinload(models.Patient.consents),
             selectinload(models.Patient.patient_insurances),
-            selectinload(models.Patient.pharmacy_insurances)
+            selectinload(models.Patient.pharmacy_insurances),
+
+            # ADD THESE TO PREVENT LAZY LOAD ERRORS
+            selectinload(models.Patient.encounters)
+                .selectinload(models.Encounter.vitals),
+            selectinload(models.Patient.encounters)
+                .selectinload(models.Encounter.medications),
+            selectinload(models.Patient.encounters)
+                .selectinload(models.Encounter.doctor),
+            selectinload(models.Patient.encounters)
+                .selectinload(models.Encounter.hospital),
         )
     )
     patient = result.scalars().first()
@@ -292,7 +303,7 @@ async def get_patients(db: AsyncSession = Depends(get_db)):
         .options(
             selectinload(models.Patient.allergies),
             selectinload(models.Patient.consents),
-            selectinload(models.Patient.insurances),
+            selectinload(models.Patient.patient_insurances),
             selectinload(models.Patient.pharmacy_insurances)
         )
     )
