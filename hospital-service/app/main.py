@@ -38,14 +38,9 @@ app.include_router(insurance_master.router)
 app.include_router(pharmacy_insurance_master.router)
 app.include_router(doctors.router)
 app.include_router(lab_routes.router)
-
-
-
 # Include the appointment routes
 app.include_router(appointment.router)  # no need to repeat prefix; it's already defined inside appointment.py
-
 app.include_router(reset_password.router)
-
 app.include_router(searchPatientInHospital.router)
 app.include_router(encounters.router)
 # Auto-create tables
@@ -273,7 +268,9 @@ async def get_my_profile(
             # BASIC DETAILS
             selectinload(models.Patient.allergies),
             selectinload(models.Patient.consents),
-            selectinload(models.Patient.patient_insurances),
+            selectinload(models.Patient.patient_insurances)
+    .selectinload(models.PatientInsurance.insurance_master),
+
             selectinload(models.Patient.pharmacy_insurances),
 
             # ADD THESE TO PREVENT LAZY LOAD ERRORS
@@ -293,7 +290,6 @@ async def get_my_profile(
         raise HTTPException(status_code=404, detail="Patient record not found")
 
     return patient
-
 
 # Admin Part – Get all patients
 @app.get("/patients", response_model=list[schemas.PatientOut])

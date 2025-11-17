@@ -13,6 +13,20 @@ from app.auth import get_current_user
 
 router = APIRouter(prefix="/encounters", tags=["Encounters"])
 
+def calculate_status(encounter_in):
+ 
+    if (
+        not encounter_in.diagnosis
+        or not encounter_in.notes
+        or not encounter_in.vitals
+    ):
+        return "Pending"
+
+    if encounter_in.follow_up_date:
+        return "In Progress"
+
+    return "Completed"
+
 # CREATE ENCOUNTER
 @router.post("/", response_model=EncounterOut)
 async def create_encounter(
@@ -77,11 +91,11 @@ async def create_encounter(
         notes=encounter_in.notes,
         follow_up_date=encounter_in.follow_up_date,
         is_lab_test_required=encounter_in.is_lab_test_required,
-        status="open"
+        status=calculate_status(encounter_in)   
     )
-    db.add(new_encounter)
-    await db.flush()  # get encounter ID
 
+    db.add(new_encounter)
+    await db.flush()  
     # Save vitals
     if encounter_in.vitals:
         v = encounter_in.vitals
@@ -281,9 +295,8 @@ async def update_encounter(
     current_user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    # -------------------------------------------------------
-    # FETCH ENCOUNTER WITH ALL RELATIONS (NO LAZY LOAD)
-    # -------------------------------------------------------
+
+    # FETCH ENCOUNTER
     result = await db.execute(
         select(Encounter)
         .options(
@@ -299,9 +312,7 @@ async def update_encounter(
     if not encounter:
         raise HTTPException(404, "Encounter not found")
 
-    # -------------------------------------------------------
     # PERMISSION CHECK
-    # -------------------------------------------------------
     doctor_result = await db.execute(
         select(Doctor).where(Doctor.user_id == current_user.id)
     )
@@ -310,18 +321,17 @@ async def update_encounter(
     if not doctor and current_user.role != "hospital":
         raise HTTPException(403, "Not allowed")
 
-    # -------------------------------------------------------
     # UPDATE MAIN FIELDS
-    # -------------------------------------------------------
     update_data = encounter_in.dict(exclude_unset=True)
 
     for field, value in update_data.items():
-        if field not in ["vitals", "medications"]:   # skip nested objects
+        if field not in ["vitals", "medications"]:
             setattr(encounter, field, value)
 
-    # -------------------------------------------------------
+    # APPLY STATUS LOGIC
+    encounter.status = calculate_status(encounter_in)
+
     # UPDATE VITALS
-    # -------------------------------------------------------
     if encounter_in.vitals:
         vitals_result = await db.execute(
             select(Vitals).where(Vitals.encounter_id == encounter.id)
@@ -332,16 +342,12 @@ async def update_encounter(
             for f, val in encounter_in.vitals.dict(exclude_unset=True).items():
                 setattr(vitals, f, val)
 
-    # -------------------------------------------------------
     # UPDATE MEDICATIONS
-    # -------------------------------------------------------
     if encounter_in.medications:
-        # delete all old
         await db.execute(
             Medication.__table__.delete().where(Medication.encounter_id == encounter.id)
         )
 
-        # insert new meds
         for m in encounter_in.medications:
             new_med = Medication(
                 patient_id=encounter.patient_id,
@@ -360,12 +366,11 @@ async def update_encounter(
             )
             db.add(new_med)
 
-
-    # SAVE CHANGES
+    # SAVE
     await db.commit()
 
-    # RELOAD ENCOUNTER WITH ALL RELATIONS (NO LAZY LOAD!)
-    final_result = await db.execute(
+    # RELOAD
+    final = await db.execute(
         select(Encounter)
         .options(
             selectinload(Encounter.vitals),
@@ -375,17 +380,15 @@ async def update_encounter(
         )
         .where(Encounter.id == encounter.id)
     )
-    updated_encounter = final_result.scalar_one()
-    # BUILD RESPONSE
-    response = EncounterOut.from_orm(updated_encounter)
+    updated = final.scalar_one()
 
+    response = EncounterOut.from_orm(updated)
     response.doctor_name = (
-        f"{updated_encounter.doctor.first_name} {updated_encounter.doctor.last_name}"
-        if updated_encounter.doctor else None
+        f"{updated.doctor.first_name} {updated.doctor.last_name}"
+        if updated.doctor else None
     )
-
     response.hospital_name = (
-        updated_encounter.hospital.name if updated_encounter.hospital else None
+        updated.hospital.name if updated.hospital else None
     )
 
     return response

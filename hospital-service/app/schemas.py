@@ -601,6 +601,7 @@ class PatientInsuranceOut(BaseModel):
     insurance_id: int
     provider_name: str
     plan_name: str
+    policy_number: str
     plan_type: Optional[str]
     coverage_percent: Optional[float]
     copay_amount: Optional[float]
@@ -623,7 +624,8 @@ class PatientInsuranceCreate(BaseModel):
     insurance_id: int                     # link to insurance master
     effective_date: date
     expiry_date: date
-    priority: Optional[str] = "primary"  # default to primary
+    priority: Optional[str] = "primary" 
+    policy_number: str
 
     class Config:
         orm_mode = True
