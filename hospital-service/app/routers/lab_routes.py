@@ -174,14 +174,18 @@ async def get_lab_orders(encounter_id: int, current_user=Depends(get_current_use
     return lab_orders
 
 
-# 6 - patient: my results (includes presigned URLs)
-@router.get("/my-results", response_model=List[LabResultResponse])
+#@router.get("/my-results", response_model=List[LabResultResponse])
 async def get_my_lab_results(current_user=Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     if current_user.role != "patient":
         raise HTTPException(status_code=403, detail="Access denied")
 
-    r = await db.execute(select(Patient).where(Patient.user_id == current_user.id))
-    patient = r.scalar_one_or_none()
+    r = await db.execute(
+        select(Patient).where(Patient.user_id == current_user.id)
+    )
+    
+    # FIX: use unique() before scalar_one_or_none()
+    patient = r.unique().scalar_one_or_none()
+
     if not patient:
         raise HTTPException(status_code=404, detail="Patient profile not found")
 
@@ -209,8 +213,8 @@ async def get_my_lab_results(current_user=Depends(get_current_user), db: AsyncSe
             "file_key": result.file_key if result else None,
             "created_at": result.created_at if result else None
         })
-    return out
 
+    return out
 
 # 7 - doctor: results for my patients (includes presigned URLs)
 @router.get("/doctor-results", response_model=List[LabResultResponse])

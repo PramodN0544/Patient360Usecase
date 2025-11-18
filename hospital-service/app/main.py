@@ -53,42 +53,40 @@ async def startup():
     print("Database schema synchronized successfully")
 
 
-@app.get("/users/me")
-async def read_users_me(current_user=Depends(get_current_user)):
-    return {
-        "id": str(current_user.id),
-        "email": current_user.email,
-        "full_name": current_user.full_name,
-        "role": current_user.role,
-        "hospital_id": str(current_user.hospital_id) if current_user.hospital_id else None
-    }
+from datetime import timedelta
+from .utils import create_access_token
 
-# JSON Login
-@app.post("/auth/login", response_model=schemas.Token)
-async def login_json(
-    credentials: schemas.LoginRequest,
-    db: AsyncSession = Depends(get_db)
-):
+ACCESS_TOKEN_EXPIRE_MINUTES = 60
+
+@app.post("/auth/login")
+async def login_json(credentials: schemas.LoginRequest, db: AsyncSession = Depends(get_db)):
     user = await crud.authenticate_user(db, credentials.username, credentials.password)
     if not user:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect username or password"
-        )
+        raise HTTPException(status_code=401, detail="Incorrect username or password")
 
+    # Build JWT payload
     token_data = {
         "sub": user.email,
+        "email": user.email,
+        "user_id": user.id,
         "role": user.role,
-        "user_id": user.id
+        "hospital_id": user.hospital_id
     }
 
-    if user.hospital_id is not None:
-        token_data["hospital_id"] = user.hospital_id  # keep as integer
+    # Create access token
+    access_token = create_access_token(token_data)
 
-    token = utils.create_access_token(token_data)
-
-    return {"access_token": token, "token_type": "bearer"}
-
+    # RETURN FULL PROFILE DIRECTLY
+    return {
+        "access_token": access_token,
+        "user": {
+            "id": user.id,
+            "email": user.email,
+            "full_name": user.full_name,
+            "role": user.role,
+            "hospital_id": user.hospital_id
+        }
+    }
 
 @app.post("/hospitals/signup", response_model=schemas.SignupResponse)
 async def hospital_signup(

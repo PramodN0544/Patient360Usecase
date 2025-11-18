@@ -451,7 +451,7 @@ Patient360 Team
 async def get_my_appointments(current_user=Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     # Fetch patient by user_id
     patient_result = await db.execute(select(Patient).filter(Patient.user_id == current_user.id))
-    patient = patient_result.scalar_one_or_none()
+    patient = patient_result.unique().scalar_one_or_none()
     if not patient:
         raise HTTPException(status_code=404, detail="Patient profile not found")
 
@@ -464,15 +464,15 @@ async def get_my_appointments(current_user=Depends(get_current_user), db: AsyncS
             Appointment.appointment_time.desc().nullslast()
         )
     )
-    appointments = result.scalars().all()
+    appointments = result.unique().scalars().all()
 
     enriched = []
     for appt in appointments:
         doctor_result = await db.execute(select(Doctor).filter(Doctor.id == appt.doctor_id))
-        doctor = doctor_result.scalar_one_or_none()
+        doctor = doctor_result.unique().scalar_one_or_none()
 
         hosp_result = await db.execute(select(Hospital).filter(Hospital.id == appt.hospital_id))
-        hosp = hosp_result.scalar_one_or_none()
+        hosp = hosp_result.unique().scalar_one_or_none()
 
         enriched.append({
             "appointment_id": appt.id,

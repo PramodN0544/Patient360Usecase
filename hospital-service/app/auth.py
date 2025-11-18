@@ -13,9 +13,6 @@ router = APIRouter()
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
 
 
-# ---------------------------------------------------------
-# ✅ EXISTING LOGIC — DO NOT TOUCH (You asked to keep same)
-# ---------------------------------------------------------
 async def get_current_user(
     token: str = Depends(oauth2_scheme),
     db: AsyncSession = Depends(get_db)
@@ -29,31 +26,37 @@ async def get_current_user(
     try:
         payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
 
-        email = payload.get("sub")
+        # FIX: Try email first, else user_id
+        email = payload.get("email") or payload.get("sub")
+        user_id = payload.get("user_id")
         role = payload.get("role")
         hospital_id = payload.get("hospital_id")
-        user_id = payload.get("user_id")
 
-        if email is None:
+        if not email and not user_id:
             raise credentials_exception
 
     except JWTError:
         raise credentials_exception
 
-    result = await db.execute(
-        select(models.User).where(models.User.email == email)
-    )
+    # FIX: Load by email or id
+    if email and "@" in email:
+        query = select(models.User).where(models.User.email == email)
+    else:
+        query = select(models.User).where(models.User.id == user_id)
+
+    result = await db.execute(query)
     user = result.scalars().first()
 
     if not user:
         raise credentials_exception
 
-    # Attach JWT fields to user object
+    # Attach extra fields
     user.role = role
     user.hospital_id = hospital_id
     user.token_user_id = user_id
 
     return user
+
 
 
 
