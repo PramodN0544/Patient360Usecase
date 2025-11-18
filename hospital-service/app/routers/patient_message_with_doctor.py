@@ -9,14 +9,24 @@ from datetime import datetime
 
 router = APIRouter(prefix="/chat", tags=["Chat"])
 
-# Recent Doctor Visits (YOUR ORIGINAL ENDPOINT)
 @router.get("/patient/recent-visits")
 async def get_recent_doctor_visits(
     current_user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    patient_id = current_user.id
+    # 1️⃣ Fetch patient record using USER ID
+    patient_result = await db.execute(
+        select(Patient).where(Patient.user_id == current_user.id)
+    )
+    patient = patient_result.scalar()
 
+    if not patient:
+        return []   # User logged in but no patient profile found
+
+    # 2️⃣ Use REAL patient_id from Patient table
+    patient_id = patient.id
+
+    # 3️⃣ Now fetch encounters correctly
     result = await db.execute(
         select(Encounter, Doctor)
         .join(Doctor, Doctor.id == Encounter.doctor_id)
@@ -39,6 +49,7 @@ async def get_recent_doctor_visits(
         })
 
     return visits
+
 
 
 # Send message (patient ↔ doctor)
