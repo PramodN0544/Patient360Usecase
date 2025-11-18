@@ -437,6 +437,7 @@ Patient360 Team
                 server.login(EMAIL_USER, EMAIL_PASS)
                 server.send_message(msg)
             print(f"✅ Confirmation email sent to {to_email}")
+            print("User Mail is :", to_email)
         except Exception as e:
             print(f"❌ Failed to send email to {to_email}: {e}")
     else:
