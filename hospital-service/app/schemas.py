@@ -41,7 +41,10 @@ class HospitalOut(BaseModel):
     specialty: str
     city: str
     state: str
+    address: str
+    zip_code: str
     license_number: str
+    website: Optional[str] = None
     consultation_fee: float
 
     class Config:

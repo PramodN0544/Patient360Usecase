@@ -174,7 +174,7 @@ async def get_lab_orders(encounter_id: int, current_user=Depends(get_current_use
     return lab_orders
 
 
-#@router.get("/my-results", response_model=List[LabResultResponse])
+@router.get("/my-results", response_model=List[LabResultResponse])
 async def get_my_lab_results(current_user=Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     if current_user.role != "patient":
         raise HTTPException(status_code=403, detail="Access denied")
@@ -194,7 +194,7 @@ async def get_my_lab_results(current_user=Depends(get_current_user), db: AsyncSe
         .join(LabResult, LabResult.lab_order_id == LabOrder.id, isouter=True)
         .where(LabOrder.patient_id == patient.id)
     )
-    rows = q.all()
+    rows = q.unique().all()
 
     out = []
     for order, result in rows:
@@ -229,12 +229,14 @@ async def get_doctor_lab_results(current_user=Depends(get_current_user), db: Asy
     doctor_id = doctor.id
 
     q = await db.execute(
-        select(LabOrder, LabResult, Patient)
-        .join(LabResult, LabResult.lab_order_id == LabOrder.id, isouter=True)
-        .join(Patient, Patient.id == LabOrder.patient_id)
-        .where(LabOrder.doctor_id == doctor_id)
+    select(LabOrder, LabResult, Patient)
+    .join(LabResult, LabResult.lab_order_id == LabOrder.id, isouter=True)
+    .join(Patient, Patient.id == LabOrder.patient_id)
+    .where(LabOrder.doctor_id == doctor_id)
     )
-    rows = q.all()
+
+    rows = q.unique().all()
+
 
     out = []
     for order, result, patient in rows:
@@ -271,7 +273,7 @@ async def get_hospital_lab_results(current_user=Depends(get_current_user), db: A
         .join(Doctor, Doctor.id == LabOrder.doctor_id)
         .where(Doctor.hospital_id == hospital_id)
     )
-    rows = q.all()
+    rows = q.unique().all()
 
     out = []
     for order, result, patient, doctor in rows:

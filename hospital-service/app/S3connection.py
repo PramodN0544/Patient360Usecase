@@ -37,10 +37,11 @@ def generate_presigned_url(file_key: str, expiration: int = 3600, disposition: s
             Params={
                 "Bucket": AWS_BUCKET_NAME,
                 "Key": file_key,
-                "ResponseContentDisposition": f'{disposition}; filename="{os.path.basename(file_key)}"'
+                "ResponseContentDisposition": f'{disposition}; filename="{os.path.basename(file_key)}"',
+                "ResponseContentType": "application/pdf"
             },
             ExpiresIn=expiration
-        )
+        )   
         return url
     except ClientError as e:
         print("❌ Error generating presigned URL:", e)
