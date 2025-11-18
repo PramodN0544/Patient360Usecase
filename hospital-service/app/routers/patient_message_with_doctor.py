@@ -32,7 +32,7 @@ async def get_recent_doctor_visits(
         .join(Doctor, Doctor.id == Encounter.doctor_id)
         .filter(Encounter.patient_id == patient_id)
         .order_by(Encounter.encounter_date.desc())
-        .limit(10)
+        .limit(1)
     )
 
     rows = result.all()
