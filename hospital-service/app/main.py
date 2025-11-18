@@ -16,6 +16,7 @@ from app.routers import insurance_master
 from app.routers import pharmacy_insurance_master
 from app.routers import file_upload
 from app.routers import lab_routes
+from app.routers import hospitals
 from app.routers import appointment,vitals,file_upload,assignments,insurance_master,pharmacy_insurance_master,doctors
 
 # SQLAlchemy utilities and models used in route handlers
@@ -45,6 +46,7 @@ app.include_router(reset_password.router)
 app.include_router(searchPatientInHospital.router)
 app.include_router(encounters.router)
 app.include_router(auth_router)
+app.include_router(hospitals.router)
 app.include_router(patient_message_with_doctor.router)
 # Auto-create tables
 
