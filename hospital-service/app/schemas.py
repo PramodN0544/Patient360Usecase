@@ -796,6 +796,32 @@ class TreatmentPlanResponse(TreatmentPlanBase):
         orm_mode = True
 
 
+
+class ChatBase(BaseModel):
+    message: str
+
+
+class ChatCreate(ChatBase):
+    receiver_id: int
+    doctor_id: int | None = None
+    patient_id: int | None = None
+
+
+class ChatOut(BaseModel):
+    id: int
+    sender_id: int
+    receiver_id: int
+    doctor_id: int | None
+    patient_id: int | None
+    message: str
+    timestamp: datetime
+    doctor_name: str | None = None
+    patient_name: str | None = None
+
+    class Config:
+        orm_mode = True
+
+
 # Resolve forward references for Pydantic models defined out-of-order
 PatientOut.update_forward_refs()
 PatientsWithCount.update_forward_refs() 
