@@ -511,3 +511,26 @@ class TreatmentPlanMaster(Base):
     description = Column(Text, nullable=True)
     status = Column(String(20), default="Active")
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class ChatMessage(Base):
+    __tablename__ = "chat_messages"
+
+    id = Column(Integer, primary_key=True, index=True)
+    
+    sender_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    receiver_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+
+    doctor_id = Column(Integer, ForeignKey("doctors.id"), nullable=True)
+    patient_id = Column(Integer, ForeignKey("patients.id"), nullable=True)
+
+    message = Column(Text, nullable=False)
+
+    timestamp = Column(DateTime, default=datetime.utcnow)
+
+    # Optional relationships
+    sender = relationship("User", foreign_keys=[sender_id])
+    receiver = relationship("User", foreign_keys=[receiver_id])
+
+    doctor = relationship("Doctor", foreign_keys=[doctor_id])
+    patient = relationship("Patient", foreign_keys=[patient_id])

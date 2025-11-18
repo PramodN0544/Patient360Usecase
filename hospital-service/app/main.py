@@ -24,6 +24,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 from app import models
 from app.auth import router as auth_router
+from app.routers import patient_message_with_doctor
 
 app = FastAPI(title="CareIQ Patient 360 API")
 app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
@@ -46,6 +47,7 @@ app.include_router(searchPatientInHospital.router)
 app.include_router(encounters.router)
 app.include_router(auth_router)
 app.include_router(hospitals.router)
+app.include_router(patient_message_with_doctor.router)
 # Auto-create tables
 
 @app.on_event("startup")
@@ -205,6 +207,16 @@ async def create_patient(
         "patient_id": str(patient.id),
         "message": "Patient created and login credentials sent via email",
         "public_id": public_id  # <-- include public patient ID here
+    }
+
+@app.get("/users/me")
+async def read_users_me(current_user=Depends(get_current_user)):
+    return {
+        "id": str(current_user.id),
+        "email": current_user.email,
+        "full_name": current_user.full_name,
+        "role": current_user.role,
+        "hospital_id": str(current_user.hospital_id) if current_user.hospital_id else None
     }
 
 
