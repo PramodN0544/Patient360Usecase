@@ -25,6 +25,7 @@ from sqlalchemy.orm import selectinload
 from app import models
 from app.auth import router as auth_router
 from app.routers import patient_message_with_doctor
+from .utils import create_access_token
 
 app = FastAPI(title="CareIQ Patient 360 API")
 app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
@@ -40,14 +41,14 @@ app.include_router(insurance_master.router)
 app.include_router(pharmacy_insurance_master.router)
 app.include_router(doctors.router)
 app.include_router(lab_routes.router)
-# Include the appointment routes
-app.include_router(appointment.router)  # no need to repeat prefix; it's already defined inside appointment.py
+app.include_router(appointment.router)
 app.include_router(reset_password.router)
 app.include_router(searchPatientInHospital.router)
 app.include_router(encounters.router)
 app.include_router(auth_router)
 app.include_router(hospitals.router)
 app.include_router(patient_message_with_doctor.router)
+app.include_router(hospitals.router)
 # Auto-create tables
 
 @app.on_event("startup")
@@ -56,9 +57,6 @@ async def startup():
         await conn.run_sync(Base.metadata.create_all)
     print("Database schema synchronized successfully")
 
-
-from datetime import timedelta
-from .utils import create_access_token
 
 ACCESS_TOKEN_EXPIRE_MINUTES = 60
 
@@ -253,18 +251,6 @@ async def get_my_doctor_profile(
 
     return doctor
 
-
-# Get all doctors for a hospital
-@app.get("/hospitals/doctors", response_model=list[schemas.DoctorOut])
-async def get_all_doctors(
-    current_user=Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
-):
-    if current_user.role != "hospital":
-        raise HTTPException(status_code=403, detail="Only hospital can view doctors")
-    doctors = await crud.get_doctors_by_hospital(db, current_user.hospital_id)
-    return doctors
-
 # For patient login — only their own data
 @app.get("/patient", response_model=schemas.PatientOut)
 async def get_my_profile(
@@ -318,39 +304,6 @@ async def get_patients(db: AsyncSession = Depends(get_db)):
     )
     patients = result.scalars().all()
     return patients
-
-# Get all patients for a hospital
-@app.get("/hospitals/patients", response_model=list[schemas.PatientOut])
-async def get_all_patients(
-    current_user=Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
-):
-    if current_user.role not in ("hospital", "admin"):
-        raise HTTPException(status_code=403, detail="Not permitted")
-    
-    if not current_user.hospital_id:
-        raise HTTPException(status_code=400, detail="Hospital ID not found for this user")
-    
-    patients = await crud.get_patients_by_hospital(db, current_user.hospital_id)
-    
-    return patients
-
-
-# Get Hospital Profile — for hospital login
-@app.get("/hospitals", response_model=schemas.HospitalOut)
-async def get_my_hospital_profile(
-    current_user=Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
-):
-    if current_user.role != "hospital":
-        raise HTTPException(status_code=403, detail="Only hospitals can access this")
-
-    hospital = await crud.get_hospital_by_id(db, current_user.hospital_id)
-
-    if not hospital:
-        raise HTTPException(status_code=404, detail="Hospital profile not found")
-
-    return hospital
 
 
 

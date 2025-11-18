@@ -1,107 +1,65 @@
-
+# app/routers/hospitals.py
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import String, select, func
+from sqlalchemy import select, func, String
 from sqlalchemy.orm import selectinload
 from datetime import date
 
 from app.database import get_db
 from app.auth import get_current_user
 from app import models, schemas
+from app import crud
 
-router = APIRouter(
-    prefix="/hospital",
-    tags=["Hospital"]
-)
+# ROUTER
+router = APIRouter(prefix="/hospitals", tags=["Hospital"])
 
-# -----------------------------------------------------------
-# 1️GET LOGGED-IN HOSPITAL PROFILE
-# -----------------------------------------------------------
-@router.get("/profile", response_model=schemas.HospitalOut)
-async def get_hospital_profile(
+
+# GET MY HOSPITAL PROFILE (Hospital Login)
+@router.get("/", response_model=schemas.HospitalOut)
+async def get_my_hospital_profile(
     current_user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     if current_user.role != "hospital":
         raise HTTPException(403, "Only hospitals can access this")
 
-    result = await db.execute(
-        select(models.Hospital)
-        .where(models.Hospital.id == current_user.hospital_id)
-    )
-    hospital = result.scalar_one_or_none()
-
+    hospital = await crud.get_hospital_by_id(db, current_user.hospital_id)
     if not hospital:
-        raise HTTPException(404, "Hospital not found")
+        raise HTTPException(404, "Hospital profile not found")
 
     return hospital
 
-
-# -----------------------------------------------------------
-# 2️ GET ALL DOCTORS UNDER THIS HOSPITAL
-# -----------------------------------------------------------
+# GET ALL DOCTORS FOR THIS HOSPITAL
 @router.get("/doctors", response_model=list[schemas.DoctorOut])
-async def get_hospital_doctors(
+async def get_all_doctors(
     current_user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
+
     if current_user.role != "hospital":
-        raise HTTPException(403, "Only hospitals can access this")
+        raise HTTPException(403, "Only hospital can view doctors")
 
-    stmt = (
-        select(models.Doctor)
-        .where(models.Doctor.hospital_id == current_user.hospital_id)
-        .options(
-            selectinload(models.Doctor.user)  # load doctor user info
-        )
-        .order_by(models.Doctor.first_name.asc())
-    )
-
-    result = await db.execute(stmt)
-    doctors = result.scalars().all()
-
+    doctors = await crud.get_doctors_by_hospital(db, current_user.hospital_id)
     return doctors
 
-
-# -----------------------------------------------------------
-# 3️ GET ALL PATIENTS OF THIS HOSPITAL
-# -----------------------------------------------------------
-@router.get("/patients", response_model=schemas.PatientsWithCount)
-async def get_hospital_patients(
+# GET ALL PATIENTS ASSIGNED TO THIS HOSPITAL
+@router.get("/patients", response_model=list[schemas.PatientOut])
+async def get_all_patients(
     current_user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
 
-    if current_user.role != "hospital":
+    if current_user.role not in ("hospital", "admin"):
         raise HTTPException(403, "Not permitted")
 
-    stmt = (
-        select(models.Patient)
-        .join(models.Assignment, models.Patient.id == models.Assignment.patient_id)
-        .where(models.Assignment.hospital_id == current_user.hospital_id)
-        .options(
-            selectinload(models.Patient.allergies),
-            selectinload(models.Patient.consents),
-            selectinload(models.Patient.patient_insurances),
-            selectinload(models.Patient.pharmacy_insurances),
-            selectinload(models.Patient.encounters)
-                .selectinload(models.Encounter.doctor),
-        )
-    )
+    if not current_user.hospital_id:
+        raise HTTPException(400, "Hospital ID missing from user")
 
-    result = await db.execute(stmt)
-    patients = result.scalars().unique().all()
+    patients = await crud.get_patients_by_hospital(db, current_user.hospital_id)
+    return patients
 
-    return {
-        "total_patients": len(patients),
-        "patients": patients
-    }
-
-
-# -----------------------------------------------------------
-# 4️ TODAY'S APPOINTMENTS COUNT
-# -----------------------------------------------------------
+# TODAY'S APPOINTMENT COUNT
 @router.get("/appointments/today")
 async def get_today_appointment_count(
     current_user=Depends(get_current_user),
@@ -120,14 +78,10 @@ async def get_today_appointment_count(
             models.Appointment.appointment_date == today
         )
     )
-    count = count_result.scalar()
 
-    return {"today_appointments": count}
+    return {"today_appointments": count_result.scalar()}
 
-
-# -----------------------------------------------------------
-# 5️UPCOMING APPOINTMENTS FOR HOSPITAL
-# -----------------------------------------------------------
+# UPCOMING APPOINTMENTS LIST
 @router.get("/appointments/upcoming")
 async def get_upcoming_appointments(
     current_user=Depends(get_current_user),
@@ -169,21 +123,19 @@ async def get_upcoming_appointments(
 
     return {"upcoming_appointments": formatted}
 
-
-# -----------------------------------------------------------
-# 6️HOSPITAL DASHBOARD METRICS
-# -----------------------------------------------------------
+# HOSPITAL DASHBOARD METRICS
 @router.get("/dashboard")
 async def hospital_dashboard(
     current_user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
+
     if current_user.role != "hospital":
         raise HTTPException(403, "Only hospitals can access this")
 
     hospital_id = current_user.hospital_id
 
-    # Total Patients
+    # Total Patients assigned
     patient_count = (
         await db.execute(
             select(func.count(models.Assignment.id))
@@ -213,10 +165,7 @@ async def hospital_dashboard(
         "total_encounters": encounter_count
     }
 
-
-# -----------------------------------------------------------
-# 7️ SEARCH DOCTORS IN HOSPITAL
-# -----------------------------------------------------------
+# SEARCH DOCTORS BY NAME / ID
 @router.get("/search/doctors", response_model=list[schemas.DoctorOut])
 async def search_doctors(
     query: str,
@@ -227,20 +176,18 @@ async def search_doctors(
     if current_user.role != "hospital":
         raise HTTPException(403, "Only hospital can search doctors")
 
-    search_filter = f"%{query.lower()}%"
+    like_query = f"%{query.lower()}%"
 
     stmt = (
         select(models.Doctor)
         .where(models.Doctor.hospital_id == current_user.hospital_id)
         .where(
-            (models.Doctor.first_name.ilike(search_filter)) |
-            (models.Doctor.last_name.ilike(search_filter)) |
-            (func.cast(models.Doctor.id, String).ilike(search_filter))
+            (models.Doctor.first_name.ilike(like_query)) |
+            (models.Doctor.last_name.ilike(like_query)) |
+            (func.cast(models.Doctor.id, String).ilike(like_query))
         )
         .options(selectinload(models.Doctor.user))
     )
 
     result = await db.execute(stmt)
-    doctors = result.scalars().all()
-
-    return doctors
+    return result.scalars().all()
