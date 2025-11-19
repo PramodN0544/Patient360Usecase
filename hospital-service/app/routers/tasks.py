@@ -24,7 +24,7 @@ async def create_task(
     # find patient by user_id
     patient = (await db.execute(
         select(models.Patient).where(models.Patient.user_id == current_user.id)
-    )).scalar_one_or_none()
+    )).unique().scalar_one_or_none()
 
     if not patient:
         raise HTTPException(404, "Patient not found")
@@ -55,7 +55,7 @@ async def get_my_tasks(
 
     patient = (await db.execute(
         select(models.Patient).where(models.Patient.user_id == current_user.id)
-    )).scalar_one_or_none()
+    )).unique().scalar_one_or_none()
 
     if not patient:
         raise HTTPException(404, "Patient not found")
@@ -83,7 +83,7 @@ async def update_task(
 
     patient = (await db.execute(
         select(models.Patient).where(models.Patient.user_id == current_user.id)
-    )).scalar_one_or_none()
+    )).unique().scalar_one_or_none()
 
     result = await db.execute(
         select(models.PatientTask)
@@ -117,7 +117,7 @@ async def delete_task(
 
     patient = (await db.execute(
         select(models.Patient).where(models.Patient.user_id == current_user.id)
-    )).scalar_one_or_none()
+    )).unique().scalar_one_or_none()
 
     result = await db.execute(
         select(models.PatientTask)
@@ -133,3 +133,55 @@ async def delete_task(
     await db.commit()
 
     return {"message": "Task deleted successfully"}
+
+
+from sqlalchemy.orm import selectinload
+
+# GET DOCTOR NOTES FOR LOGGED IN PATIENT
+@router.get("/notes", tags=["Doctor Notes"])
+async def get_doctor_notes(
+    current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    if current_user.role != "patient":
+        raise HTTPException(403, "Only patients can view notes")
+
+    # Find patient by user
+    patient = (
+        await db.execute(
+            select(models.Patient).where(models.Patient.user_id == current_user.id)
+        )
+    ).unique().scalar_one_or_none()
+
+    if not patient:
+        raise HTTPException(404, "Patient not found")
+
+    # Fetch encounters WITH doctor details
+    result = await db.execute(
+        select(models.Encounter)
+        .options(selectinload(models.Encounter.doctor))
+        .where(
+            models.Encounter.patient_id == patient.id,
+            models.Encounter.notes != None
+        )
+        .order_by(models.Encounter.created_at.desc())
+    )
+
+    encounters = result.unique().scalars().all()
+
+    notes = []
+    for e in encounters:
+        doctor_name = None
+        if e.doctor:
+            doctor_name = f"{e.doctor.first_name} {e.doctor.last_name}"
+
+        notes.append({
+            "id": e.id,
+            "doctor_name": doctor_name,
+            "note": e.notes,
+            "date": e.encounter_date,
+        })
+
+    return notes
+
+

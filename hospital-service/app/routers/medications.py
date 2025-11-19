@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from typing import List
+from sqlalchemy.orm import selectinload
 from datetime import date
 
 from app.models import Medication, Patient, Notification
@@ -10,7 +11,6 @@ from app.schemas import MedicationCreate, MedicationOut
 from app.auth import get_current_user
 
 router = APIRouter(prefix="/medications", tags=["Medications"])
-
 
 # Helper — get patient by current user
 async def get_logged_in_patient(current_user, db: AsyncSession):
@@ -132,18 +132,29 @@ async def get_medication_dashboard(
     today = date.today()
 
     result = await db.execute(
-        select(Medication).where(Medication.patient_id == patient.id)
+        select(Medication)
+        .where(Medication.patient_id == patient.id)
+        .options(
+            selectinload(Medication.doctor)   
+        )
     )
     meds = result.scalars().all()
 
     current_meds, past_meds = [], []
 
     for med in meds:
+        # Check if medication is currently active
         is_current = (
             med.start_date <= today and
             (med.end_date is None or med.end_date >= today)
         )
-        
+
+        # Safely build doctor name
+        doctor_name = (
+            f"{med.doctor.first_name} {med.doctor.last_name}"
+            if med.doctor else "Unknown"
+        )
+
         med_data = {
             "id": med.id,
             "medication_name": med.medication_name,
@@ -155,6 +166,7 @@ async def get_medication_dashboard(
             "status": med.status,
             "notes": med.notes,
             "doctor_id": med.doctor_id,
+            "doctor_name": doctor_name,     
             "appointment_id": med.appointment_id,
             "created_at": med.created_at,
             "updated_at": med.updated_at
@@ -166,7 +178,6 @@ async def get_medication_dashboard(
             past_meds.append(med_data)
 
     return {
-        "patient_id": patient.id,
         "current_medications": current_meds,
         "past_medications": past_meds
     }
