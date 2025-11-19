@@ -13,7 +13,6 @@ from app.auth import get_current_user
 
 router = APIRouter(prefix="/encounters", tags=["Encounters"])
 
-
 def calculate_status(enc):
     # If anything missing → Pending
     if (
@@ -30,9 +29,7 @@ def calculate_status(enc):
     return "Completed"
 
 
-# =====================================================
 # CREATE ENCOUNTER
-# =====================================================
 @router.post("/", response_model=EncounterOut)
 async def create_encounter(
     encounter_in: EncounterCreate,
@@ -87,7 +84,7 @@ async def create_encounter(
     # ---------- CREATE ENCOUNTER ----------
     new_encounter = Encounter(
         patient_id=patient.id,
-        patient_public_id=patient.public_id,   # ✅ CRITICAL FIX ADDED
+        patient_public_id=patient.public_id,  
         doctor_id=doctor.id,
         hospital_id=doctor.hospital_id,
         encounter_date=encounter_in.encounter_date or date.today(),
@@ -169,10 +166,7 @@ async def create_encounter(
 
     return out
 
-
-# =====================================================
 # GET ENCOUNTERS BY PUBLIC PATIENT ID
-# =====================================================
 @router.get("/patient/{public_id}", response_model=List[EncounterOut])
 async def get_patient_encounters(
     public_id: str,
@@ -221,9 +215,7 @@ async def get_patient_encounters(
     return [EncounterOut.from_orm(e) for e in encounters]
 
 
-# =====================================================
 # GET MY OWN ENCOUNTERS (PATIENT)
-# =====================================================
 @router.get("/patient", response_model=List[EncounterOut])
 async def get_my_encounters(
     current_user=Depends(get_current_user),
@@ -260,10 +252,7 @@ async def get_my_encounters(
 
     return response
 
-
-# =====================================================
 # GET SINGLE ENCOUNTER
-# =====================================================
 @router.get("/{encounter_id}", response_model=EncounterOut)
 async def get_encounter(
     encounter_id: int,
@@ -299,10 +288,7 @@ async def get_encounter(
 
     return out
 
-
-# =====================================================
 # UPDATE ENCOUNTER
-# =====================================================
 @router.put("/{encounter_id}", response_model=EncounterOut)
 async def update_encounter(
     encounter_id: int,

@@ -17,7 +17,7 @@ from app.routers import pharmacy_insurance_master
 from app.routers import file_upload
 from app.routers import lab_routes
 from app.routers import hospitals
-from app.routers import appointment,vitals,file_upload,assignments,insurance_master,pharmacy_insurance_master,doctors
+from app.routers import appointment,vitals,file_upload,assignments,insurance_master,pharmacy_insurance_master,doctors, tasks
 
 # SQLAlchemy utilities and models used in route handlers
 from sqlalchemy import select
@@ -49,7 +49,7 @@ app.include_router(auth_router)
 app.include_router(hospitals.router)
 app.include_router(patient_message_with_doctor.router)
 app.include_router(hospitals.router)
-# Auto-create tables
+app.include_router(tasks.router)
 
 @app.on_event("startup")
 async def startup():

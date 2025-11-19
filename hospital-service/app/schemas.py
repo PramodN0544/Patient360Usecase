@@ -824,6 +824,30 @@ class ChatOut(BaseModel):
     class Config:
         orm_mode = True
 
+class TaskCreate(BaseModel):
+    title: str
+    description: Optional[str] = None
+    due_date: Optional[date] = None
+    priority: Optional[str] = "normal"
+
+class TaskUpdate(BaseModel):
+    title: Optional[str]
+    description: Optional[str]
+    due_date: Optional[date]
+    priority: Optional[str]
+    status: Optional[str]
+
+class TaskOut(BaseModel):
+    id: int
+    title: str
+    description: Optional[str]
+    due_date: Optional[date]
+    priority: str
+    status: str
+    created_at: Optional[date]
+
+    class Config:
+        orm_mode = True
 
 # Resolve forward references for Pydantic models defined out-of-order
 PatientOut.update_forward_refs()

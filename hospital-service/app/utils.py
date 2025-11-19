@@ -8,6 +8,9 @@ from email.mime.multipart import MIMEMultipart
 import random
 import string
 
+from app.models import Notification
+from sqlalchemy.ext.asyncio import AsyncSession
+
 # =========================================================
 # ✅ JWT CONFIG
 # =========================================================
@@ -202,6 +205,19 @@ async def send_otp_email(to_email: str, otp: str, fullname: str):
     body = f"Hello {fullname},\n\nYour OTP code is: {otp}\nIt will expire in 5 minutes.\n\nIf you did not request this, please ignore this email."
     
     send_email(to_email, subject, body)
+
+
+
+async def send_notification(db: AsyncSession, user_id: int, title: str, desc: str, type: str, data_id: str = None):
+    notif = Notification(
+        user_id=user_id,
+        title=title,
+        desc=desc,
+        type=type,
+        data_id=data_id
+    )
+    db.add(notif)
+    await db.commit()
 
 
 

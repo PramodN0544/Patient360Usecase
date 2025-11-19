@@ -306,20 +306,20 @@ async def book_appointment(
 
     # Fetch patient
     patient_result = await db.execute(select(Patient).filter(Patient.user_id == user_id))
-    patient = patient_result.scalar_one_or_none()
+    patient = patient_result.unique().scalar_one_or_none()
     if not patient:
         raise HTTPException(status_code=404, detail="Patient not found")
     patient_id = patient.id
 
     # Fetch hospital
     hospital_result = await db.execute(select(Hospital).filter(Hospital.id == appointment.hospital_id))
-    hospital = hospital_result.scalar_one_or_none()
+    hospital = hospital_result.unique().scalar_one_or_none()
     if not hospital:
         raise HTTPException(status_code=404, detail="Hospital not found")
 
     # Fetch doctor
     doctor_result = await db.execute(select(Doctor).filter(Doctor.id == appointment.doctor_id))
-    doctor = doctor_result.scalar_one_or_none()
+    doctor = doctor_result.unique().scalar_one_or_none()
     if not doctor:
         raise HTTPException(status_code=404, detail="Doctor not found")
 
@@ -373,6 +373,7 @@ async def book_appointment(
         type="appointment",
         status="unread",
     )
+
     db.add(notif)
     await db.commit()
     await db.refresh(notif)
