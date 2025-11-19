@@ -534,3 +534,19 @@ class ChatMessage(Base):
 
     doctor = relationship("Doctor", foreign_keys=[doctor_id])
     patient = relationship("Patient", foreign_keys=[patient_id])
+
+
+class PatientTask(Base, TimestampMixin):
+    __tablename__ = "patient_tasks"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    patient_id = Column(Integer, ForeignKey("patients.id", ondelete="CASCADE"), nullable=False)
+
+    title = Column(String(200), nullable=False)
+    description = Column(Text, nullable=True)
+    due_date = Column(Date, nullable=True)
+
+    priority = Column(String(20), default="normal")   
+    status = Column(String(20), default="pending")    
+
+    patient = relationship("Patient", backref="tasks")
