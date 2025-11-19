@@ -1,8 +1,8 @@
-# app/routers/hospitals.py
+
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, String
+from sqlalchemy import case, literal_column, select, func, String
 from sqlalchemy.orm import selectinload
 from datetime import date
 
@@ -10,7 +10,8 @@ from app.database import get_db
 from app.auth import get_current_user
 from app import models, schemas
 from app import crud
-
+from app.schemas import HospitalPatientOut
+from sqlalchemy import func
 # ROUTER
 router = APIRouter(prefix="/hospitals", tags=["Hospital"])
 
@@ -44,20 +45,91 @@ async def get_all_doctors(
     return doctors
 
 # GET ALL PATIENTS ASSIGNED TO THIS HOSPITAL
-@router.get("/patients", response_model=list[schemas.PatientOut])
-async def get_all_patients(
+
+
+@router.get("/patients", response_model=list[HospitalPatientOut])
+async def get_hospital_patients(
     current_user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
+    if current_user.role != "hospital":
+        raise HTTPException(403, "Only hospitals can access this")
 
-    if current_user.role not in ("hospital", "admin"):
-        raise HTTPException(403, "Not permitted")
+    hospital_id = current_user.hospital_id
 
-    if not current_user.hospital_id:
-        raise HTTPException(400, "Hospital ID missing from user")
+    query = (
+        select(
+            models.Patient.id.label("patient_id"),  # Keep as patient_id
+            models.Patient.first_name,
+            models.Patient.last_name,
+            models.Patient.email,
+            models.Patient.city,
+            models.Patient.state,
+            models.Patient.zip_code,
+            models.Patient.citizenship_status,
+            models.Patient.created_at,
 
-    patients = await crud.get_patients_by_hospital(db, current_user.hospital_id)
-    return patients
+            # ✅ Calculate age using DOB
+            func.date_part(
+                'year',
+                func.age(func.now(), models.Patient.dob)
+            ).label("age"),
+
+            models.Patient.dob,
+            models.Patient.gender,
+            models.Patient.phone,
+
+            # Set default values for frontend
+            literal_column("'Active'").label("admission_status"),
+            literal_column("'MRN001'").label("mrn"),
+            literal_column("'Room 101'").label("room_bed"),
+
+            models.Encounter.created_at.label("last_visit_date"),
+            models.Encounter.diagnosis.label("diagnosis"),
+
+            (models.Patient.first_name + " " + models.Patient.last_name)
+                .label("patient_name"),
+
+            (models.Doctor.first_name + " " + models.Doctor.last_name)
+                .label("assigned_doctor"),
+
+            # Insurance info
+            models.PatientInsurance.policy_number.label("policy_number"),
+            models.PatientPharmacyInsurance.policy_number.label("pharma_policy_number"),
+            
+            # Add insurance status based on policy existence
+            case(
+                (models.PatientInsurance.policy_number.isnot(None), "Insured"),
+                else_="Not Insured"
+            ).label("insurance_status"),
+        )
+        .join(models.Assignment, models.Assignment.patient_id == models.Patient.id)
+        .join(models.Encounter, models.Encounter.patient_id == models.Patient.id, isouter=True)
+        .join(models.Doctor, models.Doctor.id == models.Encounter.doctor_id, isouter=True)
+        .join(
+            models.PatientInsurance,
+            models.PatientInsurance.patient_id == models.Patient.id,
+            isouter=True
+        )
+        .join(
+            models.PatientPharmacyInsurance,
+            models.PatientPharmacyInsurance.patient_id == models.Patient.id,
+            isouter=True
+        )
+        .where(models.Assignment.hospital_id == hospital_id)
+        .distinct()
+    )
+
+    try:
+        result = await db.execute(query)
+        rows = result.mappings().all()
+        return [HospitalPatientOut(**row) for row in rows]
+
+    except Exception as e:
+        print("ERROR:", e)
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(500, f"Internal Error: {e}")
 
 # TODAY'S APPOINTMENT COUNT
 @router.get("/appointments/today")

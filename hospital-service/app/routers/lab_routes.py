@@ -56,7 +56,7 @@ async def get_all_lab_requests(
         .order_by(LabOrder.created_at.desc())
     )
 
-    rows = r.all()
+    rows = r.unique().all()
 
     out = []
     for order, patient, doctor in rows:

@@ -829,3 +829,28 @@ class ChatOut(BaseModel):
 PatientOut.update_forward_refs()
 PatientsWithCount.update_forward_refs() 
         
+# ================================
+# Hospital Patient Overview Schema
+
+class HospitalPatientOut(BaseModel):
+    patient_id: int
+    patient_name: str | None
+    age: int | None = None
+    dob: date | None = None
+    gender: str | None = None
+    phone: str | None = None
+
+    admission_status: str | None = None
+    assigned_doctor: str | None = None
+    last_visit_date: datetime | None = None
+
+    mrn: str | None = None
+    insurance_status: str | None = None
+    diagnosis: str | None = None
+    room_bed: str | None = None
+
+    policy_number: str | None = None
+    pharma_policy_number: str | None = None
+
+    class Config:
+        orm_mode = True
