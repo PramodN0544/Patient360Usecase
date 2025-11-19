@@ -14,7 +14,6 @@ from app import crud
 # ROUTER
 router = APIRouter(prefix="/hospitals", tags=["Hospital"])
 
-
 # GET MY HOSPITAL PROFILE (Hospital Login)
 @router.get("/", response_model=schemas.HospitalOut)
 async def get_my_hospital_profile(

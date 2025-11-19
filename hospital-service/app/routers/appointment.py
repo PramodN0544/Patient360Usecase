@@ -373,6 +373,7 @@ async def book_appointment(
         type="appointment",
         status="unread",
     )
+
     db.add(notif)
     await db.commit()
     await db.refresh(notif)
