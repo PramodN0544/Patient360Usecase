@@ -169,10 +169,7 @@ async def create_encounter(
 
     return out
 
-
-# =====================================================
 # GET ENCOUNTERS BY PUBLIC PATIENT ID
-# =====================================================
 @router.get("/patient/{public_id}", response_model=List[EncounterOut])
 async def get_patient_encounters(
     public_id: str,
@@ -221,9 +218,7 @@ async def get_patient_encounters(
     return [EncounterOut.from_orm(e) for e in encounters]
 
 
-# =====================================================
 # GET MY OWN ENCOUNTERS (PATIENT)
-# =====================================================
 @router.get("/patient", response_model=List[EncounterOut])
 async def get_my_encounters(
     current_user=Depends(get_current_user),
