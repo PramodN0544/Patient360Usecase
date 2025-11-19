@@ -121,13 +121,11 @@ async def add_lab_result(
     if current_user.role not in ["labassistant", "doctor", "hospital"]:
         raise HTTPException(status_code=403, detail="Access denied")
 
-    # fetch lab order
     r = await db.execute(select(LabOrder).where(LabOrder.id == lab_order_id))
     lab_order = r.scalar_one_or_none()
     if not lab_order:
         raise HTTPException(status_code=404, detail="Lab order not found")
 
-    # fetch doctor to find hospital_id
     r = await db.execute(select(Doctor).where(Doctor.id == lab_order.doctor_id))
     doctor = r.scalar_one_or_none()
     if not doctor:
@@ -135,7 +133,6 @@ async def add_lab_result(
 
     hospital_id = doctor.hospital_id
 
-    # upload to S3 -> file_key
     file_key = await upload_lab_result_to_s3(
         file=file,
         patient_id=lab_order.patient_id,
@@ -144,7 +141,6 @@ async def add_lab_result(
         encounter_id=lab_order.encounter_id
     )
 
-    # save lab result
     lab_result = LabResult(
         lab_order_id=lab_order_id,
         result_value=result_value,
@@ -156,13 +152,11 @@ async def add_lab_result(
     await db.commit()
     await db.refresh(lab_result)
 
-    # return file_key only; presigned urls can be fetched via /view & /download endpoints
     return {
         "message": "Lab result saved successfully",
         "lab_result_id": lab_result.id,
         "file_key": file_key
     }
-
 
 # 5 - list orders for encounter
 @router.get("/orders/{encounter_id}", response_model=List[LabOrderResponse])
@@ -294,20 +288,16 @@ async def get_hospital_lab_results(current_user=Depends(get_current_user), db: A
         })
     return out
 
-
-# View PDF securely
-
-
 # View PDF securely (inline)
 @router.get("/view/{lab_result_id}")
 async def view_lab_result(lab_result_id: int, current_user=Depends(get_current_user), db: AsyncSession = Depends(get_db)):
-    # 1️⃣ Fetch the lab result
+    # Fetch the lab result
     r = await db.execute(select(LabResult).where(LabResult.id == lab_result_id))
     result = r.scalar_one_or_none()
     if not result:
         raise HTTPException(status_code=404, detail="Lab result not found")
 
-    # 2️⃣ RBAC
+    # RBAC
     if current_user.role == "patient":
         r = await db.execute(select(Patient).where(Patient.user_id == current_user.id))
         patient = r.scalar_one_or_none()
@@ -321,10 +311,10 @@ async def view_lab_result(lab_result_id: int, current_user=Depends(get_current_u
     elif current_user.role != "hospital":
         raise HTTPException(status_code=403, detail="Access denied")
 
-    # 3️⃣ Generate presigned URL internally
+    # Generate presigned URL internally
     presigned_url = generate_presigned_url(result.file_key, disposition="inline")
 
-    # 4️⃣ Stream content from S3 to client
+    # Stream content from S3 to client
     async with aiohttp.ClientSession() as session:
         async with session.get(presigned_url) as resp:
             if resp.status != 200:
@@ -369,3 +359,52 @@ async def download_lab_result(lab_result_id: int, current_user=Depends(get_curre
     return StreamingResponse(file_data, media_type="application/pdf", headers={
         "Content-Disposition": f'attachment; filename="{result.file_key.split("/")[-1]}"'
     })
+
+
+@router.get("/hospital-results/search", response_model=List[LabResultResponse])
+async def search_hospital_lab_results(
+    query: str,
+    current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    if current_user.role != "hospital":
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    q = await db.execute(
+        select(LabOrder, LabResult, Patient, Doctor)
+        .join(LabResult, LabResult.lab_order_id == LabOrder.id, isouter=True)
+        .join(Patient, Patient.id == LabOrder.patient_id)
+        .join(Doctor, Doctor.id == LabOrder.doctor_id)
+        .where(
+            Doctor.hospital_id == current_user.hospital_id,
+            (
+                LabOrder.test_name.ilike(f"%{query}%") |
+                LabResult.result_value.ilike(f"%{query}%")
+            )
+        )
+    )
+
+    rows = q.unique().all()
+    out = []
+
+    for order, result, patient, doctor in rows:
+        if result and result.file_key:
+            view_url = generate_presigned_url(result.file_key, "inline")
+            download_url = generate_presigned_url(result.file_key, "attachment")
+        else:
+            view_url = download_url = None
+
+        out.append({
+            "lab_order_id": order.id,
+            "patient_name": f"{patient.first_name} {patient.last_name}",
+            "test_name": order.test_name,
+            "result_value": result.result_value if result else None,
+            "notes": result.notes if result else None,
+            "view_url": view_url,
+            "download_url": download_url,
+            "file_key": result.file_key if result else None,
+            "created_at": result.created_at if result else None
+        })
+
+    return out
+
