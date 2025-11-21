@@ -372,3 +372,16 @@ async def update_encounter(
     out.patient_public_id = encounter.patient.public_id
 
     return out
+
+@router.get("/doctors")
+async def get_all_doctors(
+    current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    if current_user.role not in ["doctor", "hospital"]:
+        raise HTTPException(403, "Not allowed")
+
+    result = await db.execute(select(Doctor))
+    doctors = result.scalars().all()
+
+    return doctors

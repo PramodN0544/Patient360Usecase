@@ -29,9 +29,7 @@ from .utils import create_access_token
 
 app = FastAPI(title="CareIQ Patient 360 API")
 app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
-
 apply_cors(app)
-
 app.include_router(medications.router)
 app.include_router(notifications.router)
 app.include_router(vitals.router)
