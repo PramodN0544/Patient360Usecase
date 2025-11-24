@@ -865,7 +865,7 @@ class HospitalPatientOut(BaseModel):
     dob: date | None = None
     gender: str | None = None
     phone: str | None = None
-
+    email: str | None
     admission_status: str | None = None
     assigned_doctor: str | None = None
     last_visit_date: datetime | None = None
