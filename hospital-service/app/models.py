@@ -153,6 +153,8 @@ class Patient(Base, TimestampMixin):
     height = Column(Numeric(5, 2), nullable=False)
 
     preferred_contact = Column(String(20), default="phone")
+    is_insured = Column(Boolean, default=False)
+    insurance_status = Column(String(20), default="Self-Pay")
 
     has_caregiver = Column(Boolean, default=False)
     caregiver_name = Column(String(100))

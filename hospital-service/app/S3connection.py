@@ -15,7 +15,6 @@ AWS_REGION = os.getenv("AWS_REGION")
 if not all([AWS_ACCESS_KEY, AWS_SECRET_KEY, AWS_BUCKET_NAME, AWS_REGION]):
     raise Exception("Missing AWS credentials or bucket info in .env")
 
-# Create a single S3 client (credentials are only on server, never exposed)
 s3_client = boto3.client(
     "s3",
     aws_access_key_id=AWS_ACCESS_KEY,
@@ -59,3 +58,4 @@ async def upload_lab_result_to_s3(file, patient_id: int, lab_order_id: int, hosp
     except ClientError as e:
         print("❌ Error uploading file to S3:", e)
         raise HTTPException(status_code=500, detail="Failed to upload file")
+    

@@ -129,6 +129,18 @@ async def create_patient(db: AsyncSession, data: schemas.PatientCreate):
     # -----------------------------
     patient_dict = data.dict(exclude={"allergies", "consents", "patient_insurances", "pharmacy_insurances"})
     patient_dict["user_id"] = user.id
+    
+     # ---------------------------------------------------------
+    # 🔥 ADD INSURANCE TOGGLE HANDLING HERE
+    # ---------------------------------------------------------
+    if data.is_insured:
+        patient_dict["insurance_status"] = "Insured"     # <-- ADDED
+    else:
+        patient_dict["insurance_status"] = "Self-Pay"    # <-- ADDED
+        data.patient_insurances = []                     # <-- ADDED
+        data.pharmacy_insurances = []                    # <-- ADDED
+    # --------------------------------------------------------
+    
     patient = models.Patient(**patient_dict)
     db.add(patient)
     await db.flush()  # to get patient.id before commit

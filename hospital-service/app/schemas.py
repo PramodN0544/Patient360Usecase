@@ -233,7 +233,8 @@ class PatientCreate(BaseModel):
     alcohol_use: Optional[str] = None
     diet: Optional[str] = None
     exercise_frequency: Optional[str] = None
-
+    
+    is_insured: bool = False
     # Related records
     allergies: Optional[List[AllergyCreate]] = []
     consents: Optional[PatientConsentCreate] = None
@@ -274,6 +275,7 @@ class PatientOut(BaseModel):
     alcohol_use: Optional[str] = None
     diet: Optional[str] = None
     exercise_frequency: Optional[str] = None
+    insurance_status: Optional[str] = "Self-Pay"
     created_at: Optional[datetime] = None
    
     # ✅ FIXED NESTED OUTPUT RELATIONS
