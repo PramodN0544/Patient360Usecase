@@ -58,7 +58,7 @@ async def get_hospital_patients(
 
     query = (
         select(
-            models.Patient.id.label("patient_id"),  # Keep as patient_id
+            models.Patient.id.label("patient_id"), 
             models.Patient.first_name,
             models.Patient.last_name,
             models.Patient.email,
@@ -68,7 +68,7 @@ async def get_hospital_patients(
             models.Patient.citizenship_status,
             models.Patient.created_at,
 
-            # ✅ Calculate age using DOB
+            # Calculate age using DOB
             func.date_part(
                 'year',
                 func.age(func.now(), models.Patient.dob)
