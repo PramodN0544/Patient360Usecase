@@ -1,7 +1,7 @@
 from pydantic import BaseModel, EmailStr, Field
 from typing import List, Optional,Dict
 from datetime import date, time, datetime
-
+from typing import Literal
 
 # HOSPITAL SCHEMAS
 class HospitalBase(BaseModel):
@@ -880,3 +880,33 @@ class HospitalPatientOut(BaseModel):
 
     class Config:
         orm_mode = True
+
+# ADMIN USER MANAGEMENT SCHEMAS
+AllowedRoles = Literal["admin", "doctor", "hospital", "patient"]
+
+class AdminUserCreate(BaseModel):
+    email: EmailStr
+    password: str = Field(..., max_length=72)
+    full_name: Optional[str] = None
+    role: AllowedRoles
+    hospital_id: Optional[int] = None
+
+
+class AdminUserUpdate(BaseModel):
+    full_name: Optional[str] = None
+    role: Optional[AllowedRoles] = None
+    hospital_id: Optional[int] = None
+    is_active: Optional[bool] = None
+
+
+class AdminUserOut(BaseModel):
+    id: int
+    email: EmailStr
+    full_name: Optional[str]
+    role: AllowedRoles
+    hospital_id: Optional[int]
+    is_active: bool
+
+    class Config:
+        orm_mode = True
+
