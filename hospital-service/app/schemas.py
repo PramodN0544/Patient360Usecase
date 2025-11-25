@@ -906,6 +906,7 @@ class AdminUserOut(BaseModel):
     role: AllowedRoles
     hospital_id: Optional[int]
     is_active: bool
+    created_at: Optional[datetime]
 
     class Config:
         orm_mode = True
