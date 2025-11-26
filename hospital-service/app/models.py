@@ -57,15 +57,17 @@ class Hospital(Base, TimestampMixin):
     consultation_fee = Column(Numeric(10,2))
     website = Column(String(200))
     status = Column(String(20), default="active")
+    deactivated_at = Column(DateTime(timezone=True), nullable=True)
 
     logo_url = Column(String(300), nullable=True)
     registration_certificate = Column(String(300), nullable=False)
 
     # Relationships
-    users = relationship("User", back_populates="hospital", cascade="all, delete-orphan")
-    doctors = relationship("Doctor", back_populates="hospital", cascade="all, delete-orphan")
-    appointments = relationship("Appointment", back_populates="hospital", cascade="all, delete-orphan")
-    encounters = relationship("Encounter", back_populates="hospital", cascade="all, delete-orphan")
+    users = relationship("User", back_populates="hospital")
+    doctors = relationship("Doctor", back_populates="hospital")
+    appointments = relationship("Appointment", back_populates="hospital")   
+    encounters = relationship("Encounter", back_populates="hospital")
+
 
 # Users 
 class User(Base, TimestampMixin):
@@ -78,12 +80,13 @@ class User(Base, TimestampMixin):
     role = Column(String(50), nullable=False)
     hospital_id = Column(Integer, ForeignKey("hospitals.id"))
     is_active = Column(Boolean, default=True)
+    deactivated_at = Column(DateTime(timezone=True), nullable=True)
 
     hospital = relationship("Hospital", back_populates="users")
-    patients = relationship("Patient", back_populates="user", cascade="all, delete-orphan")
-    doctors = relationship("Doctor", back_populates="user", cascade="all, delete-orphan")
-    notifications = relationship("Notification", back_populates="user", cascade="all, delete-orphan")
-    password_reset_tokens = relationship("PasswordResetToken", back_populates="user", cascade="all, delete-orphan")
+    patients = relationship("Patient", back_populates="user")
+    doctors = relationship("Doctor", back_populates="user")
+    notifications = relationship("Notification", back_populates="user")
+    password_reset_tokens = relationship("PasswordResetToken", back_populates="user")
 
 # Doctors 
 class Doctor(Base, TimestampMixin):
@@ -92,7 +95,7 @@ class Doctor(Base, TimestampMixin):
     id = Column(Integer, primary_key=True, autoincrement=True)
     # public_id = Column(String(150), unique=True, nullable=False, index=True, default=generate_doctor_public_id)
 
-    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     hospital_id = Column(Integer, ForeignKey("hospitals.id"))
     npi_number = Column(String(100), unique=True)
     first_name = Column(String(100))
@@ -113,12 +116,18 @@ class Doctor(Base, TimestampMixin):
     license_url  = Column(String(300), nullable=True)
     license_document = Column(String(300), nullable=False)
 
+    is_active = Column(Boolean, default=True)
+    deactivated_at = Column(DateTime(timezone=True), nullable=True)
+
     user = relationship("User", back_populates="doctors")
     hospital = relationship("Hospital", back_populates="doctors")
-    encounters = relationship("Encounter", back_populates="doctor", cascade="all, delete-orphan")
-    appointments = relationship("Appointment", back_populates="doctor", cascade="all, delete-orphan")
+    encounters = relationship("Encounter", back_populates="doctor")
+    appointments = relationship("Appointment", back_populates="doctor")
+    assignments = relationship("Assignment", back_populates="doctor")
+    # encounters = relationship("Encounter", back_populates="doctor", cascade="all, delete-orphan")
+    # appointments = relationship("Appointment", back_populates="doctor", cascade="all, delete-orphan")
     medications = relationship("Medication", back_populates="doctor")
-    assignments = relationship("Assignment", back_populates="doctor", cascade="all, delete-orphan")
+    # assignments = relationship("Assignment", back_populates="doctor", cascade="all, delete-orphan")
 
 
 # Patients 
@@ -127,12 +136,10 @@ class Patient(Base, TimestampMixin):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     public_id = Column(String(150), unique=True, nullable=False, index=True, default=generate_public_id)
-    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     first_name = Column(String(100))
     last_name = Column(String(100))
     dob = Column(Date)
-    weight = Column(Numeric(5,2), nullable=False)
-    height = Column(Numeric(5,2), nullable=False)
     gender = Column(String(20), index=True)
     ssn = Column(String(100), unique=True, index=True)
     phone = Column(String(20), unique=True, index=True)
@@ -147,6 +154,9 @@ class Patient(Base, TimestampMixin):
 
     photo_url  = Column(String(300), nullable=True)  
     id_proof_document = Column(String(300), nullable=False)  
+
+    is_active = Column(Boolean, default=True)
+    deactivated_at = Column(DateTime(timezone=True), nullable=True)
 
     marital_status = Column(String(50))
     weight = Column(Numeric(5, 2), nullable=False)

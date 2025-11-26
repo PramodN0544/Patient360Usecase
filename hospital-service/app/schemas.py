@@ -887,6 +887,7 @@ AllowedRoles = Literal["admin", "doctor", "hospital", "patient"]
 class AdminUserCreate(BaseModel):
     email: EmailStr
     password: str = Field(..., max_length=72)
+    phone: str = Field(..., min_length=10)
     full_name: Optional[str] = None
     role: AllowedRoles
     hospital_id: Optional[int] = None
