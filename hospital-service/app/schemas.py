@@ -441,7 +441,7 @@ class EncounterCreate(BaseModel):
     is_lab_test_required: Optional[bool] = False  
     vitals: Optional[VitalsCreate] = None
     medications: Optional[List[MedicationCreate]] = []
-
+    documents: Optional[List[str]] = None   # <-- Add this
     class Config:
         orm_mode = True
 
@@ -462,7 +462,7 @@ class EncounterOut(BaseModel):
     vitals: List[VitalsOut] = []
     medications: List[MedicationOut] = []
     is_lab_test_required: Optional[bool] = False  # <
-
+    documents: Optional[List[str]] = None  # <-- Add this
     class Config:
         orm_mode = True
         
@@ -525,7 +525,7 @@ class EncounterUpdate(BaseModel):
     is_lab_test_required: Optional[bool]
     vitals: Optional[VitalsUpdate]
     medications: Optional[List[MedicationUpdate]]
-
+    documents: Optional[List[str]] = None 
 # INSURANCE MASTER SCHEMAS
 class InsuranceMasterOut(BaseModel):
     id: int

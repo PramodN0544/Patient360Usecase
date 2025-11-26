@@ -8,7 +8,7 @@ from app.database import Base
 import uuid
 from sqlalchemy import Column, String, Integer, Float, Date, Text, DateTime
 from sqlalchemy.sql import func
-
+from sqlalchemy.dialects.postgresql import ARRAY
 
 # -------------------- Generate public_id --------------------
 def generate_public_id(context):
@@ -328,7 +328,7 @@ class Encounter(Base, TimestampMixin):
     follow_up_date = Column(Date)
     status = Column(String(20), default="open")
     is_lab_test_required = Column(Boolean, default=False)
-
+    documents = Column(ARRAY(String), nullable=True)  # <-- Add this
     patient = relationship("Patient", back_populates="encounters")
     doctor = relationship("Doctor", back_populates="encounters")
     hospital = relationship("Hospital", back_populates="encounters")

@@ -1,5 +1,5 @@
-# app/routers/encounters.py
-from fastapi import APIRouter, Depends, HTTPException
+
+from fastapi import APIRouter, Depends, HTTPException, File, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
@@ -10,11 +10,16 @@ from app.database import get_db
 from app.models import Encounter, Doctor, Patient, Vitals, Medication, Assignment
 from app.schemas import EncounterCreate, EncounterOut, EncounterUpdate
 from app.auth import get_current_user
+from fastapi import APIRouter, Depends, HTTPException, File, UploadFile, Form
+import json
+
+# ADD THIS
+from app.S3connection import upload_encounter_document_to_s3
 
 router = APIRouter(prefix="/encounters", tags=["Encounters"])
 
+
 def calculate_status(enc):
-    # If anything missing → Pending
     if (
         not enc.diagnosis
         or not enc.notes
@@ -22,20 +27,25 @@ def calculate_status(enc):
     ):
         return "Pending"
 
-    # If follow up OR lab test → In Progress
     if enc.follow_up_date or enc.is_lab_test_required:
         return "In Progress"
 
     return "Completed"
 
 
-# CREATE ENCOUNTER
+# ================================
+#        CREATE ENCOUNTER
+# ================================
 @router.post("/", response_model=EncounterOut)
 async def create_encounter(
-    encounter_in: EncounterCreate,
+    encounter_in: str = Form(...),
+    files: List[UploadFile] = File(None),   # ⬅️ NEW
     current_user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
+
+ # Parse JSON body manually
+    encounter_in = EncounterCreate(**json.loads(encounter_in))
 
     # ---------- DOCTOR / HOSPITAL VALIDATION ----------
     doctor_result = await db.execute(
@@ -58,11 +68,10 @@ async def create_encounter(
     elif not doctor:
         raise HTTPException(403, "Only doctors or hospitals can create encounters")
 
-    # ---------- PATIENT PUBLIC ID REQUIRED ----------
+    # ---------- PATIENT VALIDATION ----------
     if not encounter_in.patient_public_id:
         raise HTTPException(400, "patient_public_id is required")
 
-    # Fetch patient by PUBLIC ID (not PK)
     patient_result = await db.execute(
         select(Patient).where(Patient.public_id == encounter_in.patient_public_id)
     )
@@ -72,19 +81,19 @@ async def create_encounter(
         raise HTTPException(404, "Patient not found")
 
     # ---------- ASSIGNMENT CHECK ----------
-    assignment_result = await db.execute(
+    assign = await db.execute(
         select(Assignment).where(
             Assignment.patient_id == patient.id,
             Assignment.doctor_id == doctor.id
         )
     )
-    if not assignment_result.unique().scalar_one_or_none():
+    if not assign.unique().scalar_one_or_none():
         raise HTTPException(403, "Doctor is not assigned to this patient")
 
     # ---------- CREATE ENCOUNTER ----------
     new_encounter = Encounter(
         patient_id=patient.id,
-        patient_public_id=patient.public_id,  
+        patient_public_id=patient.public_id,
         doctor_id=doctor.id,
         hospital_id=doctor.hospital_id,
         encounter_date=encounter_in.encounter_date or date.today(),
@@ -94,7 +103,8 @@ async def create_encounter(
         notes=encounter_in.notes,
         follow_up_date=encounter_in.follow_up_date,
         is_lab_test_required=encounter_in.is_lab_test_required,
-        status=calculate_status(encounter_in)
+        status=calculate_status(encounter_in),
+        documents=[]   # <-- Correct field name
     )
 
     db.add(new_encounter)
@@ -107,7 +117,7 @@ async def create_encounter(
         if v.height and v.weight:
             bmi = round(v.weight / ((v.height / 100) ** 2), 2)
 
-        vitals_obj = Vitals(
+        db.add(Vitals(
             patient_id=patient.id,
             encounter_id=new_encounter.id,
             height=v.height,
@@ -118,13 +128,12 @@ async def create_encounter(
             temperature=v.temperature,
             respiration_rate=v.respiration_rate,
             oxygen_saturation=v.oxygen_saturation,
-        )
-        db.add(vitals_obj)
+        ))
 
     # ---------- SAVE MEDICATIONS ----------
     if encounter_in.medications:
         for m in encounter_in.medications:
-            med_obj = Medication(
+            db.add(Medication(
                 patient_id=patient.id,
                 doctor_id=doctor.id,
                 encounter_id=new_encounter.id,
@@ -138,8 +147,21 @@ async def create_encounter(
                 notes=m.notes,
                 icd_code=m.icd_code,
                 ndc_code=m.ndc_code,
+            ))
+
+    # ---------- FILE UPLOAD TO S3 (NEW) ----------
+    if files:
+        current_docs = new_encounter.documents or []  # <-- get existing or empty
+                 # <-- MUST INIT LIST
+        for file in files:
+            file_path = await upload_encounter_document_to_s3(
+                hospital_id=doctor.hospital_id,
+                patient_id=patient.id,
+                encounter_id=new_encounter.id,
+                file=file
             )
-            db.add(med_obj)
+            current_docs.append(file_path)
+            new_encounter.documents = current_docs  # <-- update field
 
     await db.commit()
     await db.refresh(new_encounter)
@@ -153,10 +175,11 @@ async def create_encounter(
             selectinload(Encounter.doctor),
             selectinload(Encounter.hospital),
             selectinload(Encounter.patient)
+           
+            
         )
         .where(Encounter.id == new_encounter.id)
     )
-
     e = final.unique().scalar_one()
 
     out = EncounterOut.from_orm(e)
@@ -166,133 +189,15 @@ async def create_encounter(
 
     return out
 
-# GET ENCOUNTERS BY PUBLIC PATIENT ID
-@router.get("/patient/{public_id}", response_model=List[EncounterOut])
-async def get_patient_encounters(
-    public_id: str,
-    current_user=Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
-):
 
-    patient_result = await db.execute(
-        select(Patient).where(Patient.public_id == public_id)
-    )
-    patient = patient_result.unique().scalar_one_or_none()
-
-    if not patient:
-        raise HTTPException(404, "Patient not found")
-
-    # If doctor → ensure assigned
-    if current_user.role == "doctor":
-        doctor_result = await db.execute(
-            select(Doctor).where(Doctor.user_id == current_user.id)
-        )
-        doctor = doctor_result.unique().scalar_one_or_none()
-
-        assign = await db.execute(
-            select(Assignment).where(
-                Assignment.patient_id == patient.id,
-                Assignment.doctor_id == doctor.id
-            )
-        )
-        if not assign.unique().scalar_one_or_none():
-            raise HTTPException(403, "Doctor not assigned to this patient")
-
-    # Fetch encounters
-    result = await db.execute(
-        select(Encounter)
-        .options(
-            selectinload(Encounter.vitals),
-            selectinload(Encounter.medications),
-            selectinload(Encounter.doctor),
-            selectinload(Encounter.hospital)
-        )
-        .where(Encounter.patient_id == patient.id)
-        .order_by(Encounter.encounter_date.desc())
-    )
-
-    encounters = result.unique().scalars().all()
-    return [EncounterOut.from_orm(e) for e in encounters]
-
-
-# GET MY OWN ENCOUNTERS (PATIENT)
-@router.get("/patient", response_model=List[EncounterOut])
-async def get_my_encounters(
-    current_user=Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
-):
-    patient_result = await db.execute(
-        select(Patient).where(Patient.user_id == current_user.id)
-    )
-    patient = patient_result.unique().scalar_one_or_none()
-
-    if not patient:
-        raise HTTPException(403, "Only patients can view encounters")
-
-    result = await db.execute(
-        select(Encounter)
-        .options(
-            selectinload(Encounter.vitals),
-            selectinload(Encounter.medications),
-            selectinload(Encounter.doctor),
-            selectinload(Encounter.hospital)
-        )
-        .where(Encounter.patient_id == patient.id)
-        .order_by(Encounter.encounter_date.desc())
-    )
-
-    encounters = result.unique().scalars().all()
-
-    response = []
-    for e in encounters:
-        data = EncounterOut.from_orm(e)
-        data.doctor_name = f"{e.doctor.first_name} {e.doctor.last_name}"
-        data.hospital_name = e.hospital.name
-        response.append(data)
-
-    return response
-
-# GET SINGLE ENCOUNTER
-@router.get("/{encounter_id}", response_model=EncounterOut)
-async def get_encounter(
-    encounter_id: int,
-    current_user=Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
-):
-
-    result = await db.execute(
-        select(Encounter)
-        .options(
-            selectinload(Encounter.vitals),
-            selectinload(Encounter.medications),
-            selectinload(Encounter.doctor),
-            selectinload(Encounter.hospital),
-            selectinload(Encounter.patient)
-        )
-        .where(Encounter.id == encounter_id)
-    )
-
-    encounter = result.unique().scalar_one_or_none()
-    if not encounter:
-        raise HTTPException(404, "Encounter not found")
-
-    # Patient cannot view others' encounters
-    if current_user.role == "patient":
-        if encounter.patient.user_id != current_user.id:
-            raise HTTPException(403, "You can only see your own encounters")
-
-    out = EncounterOut.from_orm(encounter)
-    out.doctor_name = f"{encounter.doctor.first_name} {encounter.doctor.last_name}"
-    out.hospital_name = encounter.hospital.name
-    out.patient_public_id = encounter.patient.public_id
-
-    return out
-
-# UPDATE ENCOUNTER
+# ================================
+#        UPDATE ENCOUNTER
+# ================================
 @router.put("/{encounter_id}", response_model=EncounterOut)
 async def update_encounter(
     encounter_id: int,
     encounter_in: EncounterUpdate,
+    files: List[UploadFile] = File(None),   # ⬅️ NEW
     current_user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
@@ -305,6 +210,7 @@ async def update_encounter(
             selectinload(Encounter.doctor),
             selectinload(Encounter.hospital),
             selectinload(Encounter.patient)
+            
         )
         .where(Encounter.id == encounter_id)
     )
@@ -363,6 +269,20 @@ async def update_encounter(
                 ndc_code=m.ndc_code,
             ))
 
+    # ---------- FILE UPLOAD (NEW) ----------
+    if files:
+        current_docs = encounter.documents or []
+    
+        for file in files:
+            file_path = await upload_encounter_document_to_s3(
+                hospital_id=encounter.hospital_id,
+                patient_id=encounter.patient_id,
+                encounter_id=encounter.id,
+                file=file
+            )
+            current_docs.append(file_path)
+            encounter.documents = current_docs  # <-- update field
+
     await db.commit()
     await db.refresh(encounter)
 
@@ -372,6 +292,7 @@ async def update_encounter(
     out.patient_public_id = encounter.patient.public_id
 
     return out
+
 
 @router.get("/doctors")
 async def get_all_doctors(
