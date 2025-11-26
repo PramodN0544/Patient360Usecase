@@ -31,10 +31,10 @@ def get_password_hash(password: str):
         raise ValueError("Password cannot be empty")
 
     # bcrypt/pbkdf2 safe handling
-    pw_bytes = password.encode("utf-8")
-    if len(pw_bytes) > 72:
-        pw_bytes = pw_bytes[:72]
-        password = pw_bytes.decode("utf-8", errors="ignore")
+    # pw_bytes = password.encode("utf-8")
+    # if len(pw_bytes) > 72:
+    #     pw_bytes = pw_bytes[:72]
+    #     password = pw_bytes.decode("utf-8", errors="ignore")
 
     return pwd_context.hash(password)
 

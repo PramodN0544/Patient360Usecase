@@ -24,7 +24,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 from app import models
 from app.auth import router as auth_router
-from app.routers import patient_message_with_doctor
+from app.routers import patient_message_with_doctor,admin_users
 from .utils import create_access_token
 
 app = FastAPI(title="CareIQ Patient 360 API")
@@ -48,6 +48,7 @@ app.include_router(hospitals.router)
 app.include_router(patient_message_with_doctor.router)
 app.include_router(hospitals.router)
 app.include_router(tasks.router)
+app.include_router(admin_users.router)
 
 @app.on_event("startup")
 async def startup():
