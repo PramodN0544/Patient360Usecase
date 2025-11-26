@@ -294,6 +294,130 @@ async def update_encounter(
     return out
 
 
+
+# GET ENCOUNTERS BY PUBLIC PATIENT ID
+@router.get("/patient/{public_id}", response_model=List[EncounterOut])
+async def get_patient_encounters(
+    public_id: str,
+    current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+
+    patient_result = await db.execute(
+        select(Patient).where(Patient.public_id == public_id)
+    )
+    patient = patient_result.unique().scalar_one_or_none()
+
+    if not patient:
+        raise HTTPException(404, "Patient not found")
+
+    # If doctor → ensure assigned
+    if current_user.role == "doctor":
+        doctor_result = await db.execute(
+            select(Doctor).where(Doctor.user_id == current_user.id)
+        )
+        doctor = doctor_result.unique().scalar_one_or_none()
+
+        assign = await db.execute(
+            select(Assignment).where(
+                Assignment.patient_id == patient.id,
+                Assignment.doctor_id == doctor.id
+            )
+        )
+        if not assign.unique().scalar_one_or_none():
+            raise HTTPException(403, "Doctor not assigned to this patient")
+
+    # Fetch encounters
+    result = await db.execute(
+        select(Encounter)
+        .options(
+            selectinload(Encounter.vitals),
+            selectinload(Encounter.medications),
+            selectinload(Encounter.doctor),
+            selectinload(Encounter.hospital)
+        )
+        .where(Encounter.patient_id == patient.id)
+        .order_by(Encounter.encounter_date.desc())
+    )
+
+    encounters = result.unique().scalars().all()
+    return [EncounterOut.from_orm(e) for e in encounters]
+
+
+# GET MY OWN ENCOUNTERS (PATIENT)
+@router.get("/patient", response_model=List[EncounterOut])
+async def get_my_encounters(
+    current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    patient_result = await db.execute(
+        select(Patient).where(Patient.user_id == current_user.id)
+    )
+    patient = patient_result.unique().scalar_one_or_none()
+
+    if not patient:
+        raise HTTPException(403, "Only patients can view encounters")
+
+    result = await db.execute(
+        select(Encounter)
+        .options(
+            selectinload(Encounter.vitals),
+            selectinload(Encounter.medications),
+            selectinload(Encounter.doctor),
+            selectinload(Encounter.hospital)
+        )
+        .where(Encounter.patient_id == patient.id)
+        .order_by(Encounter.encounter_date.desc())
+    )
+
+    encounters = result.unique().scalars().all()
+
+    response = []
+    for e in encounters:
+        data = EncounterOut.from_orm(e)
+        data.doctor_name = f"{e.doctor.first_name} {e.doctor.last_name}"
+        data.hospital_name = e.hospital.name
+        response.append(data)
+
+    return response
+
+# GET SINGLE ENCOUNTER
+@router.get("/{encounter_id}", response_model=EncounterOut)
+async def get_encounter(
+    encounter_id: int,
+    current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+
+    result = await db.execute(
+        select(Encounter)
+        .options(
+            selectinload(Encounter.vitals),
+            selectinload(Encounter.medications),
+            selectinload(Encounter.doctor),
+            selectinload(Encounter.hospital),
+            selectinload(Encounter.patient)
+        )
+        .where(Encounter.id == encounter_id)
+    )
+
+    encounter = result.unique().scalar_one_or_none()
+    if not encounter:
+        raise HTTPException(404, "Encounter not found")
+
+    # Patient cannot view others' encounters
+    if current_user.role == "patient":
+        if encounter.patient.user_id != current_user.id:
+            raise HTTPException(403, "You can only see your own encounters")
+
+    out = EncounterOut.from_orm(encounter)
+    out.doctor_name = f"{encounter.doctor.first_name} {encounter.doctor.last_name}"
+    out.hospital_name = encounter.hospital.name
+    out.patient_public_id = encounter.patient.public_id
+
+    return out
+
+
 @router.get("/doctors")
 async def get_all_doctors(
     current_user=Depends(get_current_user),
