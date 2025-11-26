@@ -34,7 +34,7 @@ def calculate_status(enc):
 @router.post("/", response_model=EncounterOut)
 async def create_encounter(
     encounter_in: str = Form(...),
-    files: List[UploadFile] = File(None),   # ⬅️ NEW
+    files: List[UploadFile] = File(None),   # NEW
     current_user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):

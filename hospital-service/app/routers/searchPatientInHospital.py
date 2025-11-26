@@ -45,12 +45,12 @@ async def search_patients(
         stmt = stmt.where(*filters)
 
     result = await db.execute(stmt)
-    patients = result.scalars().all()
+    patients = result.unique().scalars().all()
 
     if not patients:
         raise HTTPException(status_code=404, detail="No patients found")
 
-    # ✅ RETURN SAFE DICTIONARY (NOT ORM OBJECTS)
+    # RETURN SAFE DICTIONARY (NOT ORM OBJECTS)
     return [
         {
             "id": p.id,

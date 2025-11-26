@@ -441,7 +441,7 @@ class EncounterCreate(BaseModel):
     is_lab_test_required: Optional[bool] = False  
     vitals: Optional[VitalsCreate] = None
     medications: Optional[List[MedicationCreate]] = []
-    documents: Optional[List[str]] = None   # <-- Add this
+    documents: Optional[List[str]] = None  
     class Config:
         orm_mode = True
 
@@ -916,3 +916,31 @@ class AdminUserOut(BaseModel):
 class HospitalUpdate(BaseModel):
     website: Optional[str] = None
     consultation_fee: Optional[float] = None
+
+
+class PatientSearchRequest(BaseModel):
+    name: Optional[str] = None
+    phone: Optional[str] = None
+    ssn: Optional[str] = None
+
+
+class PatientSearchOut(BaseModel):
+    id: int
+    first_name: str
+    last_name: str
+    dob: Optional[date]
+    gender: Optional[str]
+    public_id: str
+    ssn: Optional[str]
+    phone: Optional[str]
+    email: Optional[str]
+    address: Optional[str]
+    city: Optional[str]
+    state: Optional[str]
+    zip_code: Optional[str]
+    country: Optional[str]
+    citizenship_status: Optional[str]
+    visa_type: Optional[str]
+
+    class Config:
+        orm_mode = True
