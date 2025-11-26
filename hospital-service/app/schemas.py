@@ -912,3 +912,7 @@ class AdminUserOut(BaseModel):
     class Config:
         orm_mode = True
 
+
+class HospitalUpdate(BaseModel):
+    website: Optional[str] = None
+    consultation_fee: Optional[float] = None

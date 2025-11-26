@@ -304,8 +304,6 @@ async def get_patients(db: AsyncSession = Depends(get_db)):
     patients = result.scalars().all()
     return patients
 
-
-
 @app.post("/auth/logout")
 async def logout(current_user=Depends(get_current_user)):
     """
