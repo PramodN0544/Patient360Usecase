@@ -7,9 +7,8 @@ import pytz
 
 IST = pytz.timezone("Asia/Kolkata")
 
-
 async def send_medication_reminders(db: AsyncSession):
-    print("🔔 Running medication reminder job...")
+    print("Running medication reminder job...")
     now = datetime.now(IST)
     today = now.date()
 
@@ -60,7 +59,7 @@ async def send_medication_reminders(db: AsyncSession):
                 scheduled_for=scheduled_for
             )
             db.add(notif)
-            print(f"✅ Reminder scheduled: {title} for patient {patient.id}, medication {med.medication_name}")
+            print(f"Reminder scheduled: {title} for patient {patient.id}, medication {med.medication_name}")
 
         # DAILY REMINDERS
         reminder_times = getattr(med, "reminder_times", None)
@@ -75,13 +74,11 @@ async def send_medication_reminders(db: AsyncSession):
                 else:
                     normalized_times.append(t)
         else:
-            normalized_times = [dt_time(9, 0)]  # default 09:00
-            #now_time = now.time()
-            #normalized_times = [now_time]  # test override: reminder triggers now
-
+            normalized_times = [dt_time(9, 0)]  
+        
         for rt in normalized_times:
             rem_dt = IST.localize(datetime.combine(today, rt))
-            if abs((rem_dt - now).total_seconds()) <= 1800:  # +/- 30 mins window
+            if abs((rem_dt - now).total_seconds()) <= 1800:  
                 title = "Medication Reminder"
                 desc = f"Please take your medication: {med.medication_name} ({med.dosage})."
                 await maybe_create(title, desc, "daily", rem_dt)
@@ -96,4 +93,4 @@ async def send_medication_reminders(db: AsyncSession):
                 await maybe_create(title, desc, "refill", scheduled_for)
 
     await db.commit()
-    print("🔔 Medication reminder job completed.\n")
+    print("Medication reminder job completed.\n")

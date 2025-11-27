@@ -8,9 +8,7 @@ from app.database import get_db
 
 router = APIRouter(tags=["auth"])
 
-# ------------------------
 # Schemas
-# ------------------------
 class ForgotPasswordRequest(BaseModel):
     email: EmailStr
 
@@ -19,9 +17,7 @@ class ResetPasswordRequest(BaseModel):
     otp: str
     new_password: str
 
-# ------------------------
 # Generate OTP for forgot password
-# ------------------------
 @router.post("/auth/forgot-password")
 async def forgot_password(payload: ForgotPasswordRequest, db: AsyncSession = Depends(get_db)):
     user = await crud.get_user_by_email(db, payload.email)
@@ -29,27 +25,22 @@ async def forgot_password(payload: ForgotPasswordRequest, db: AsyncSession = Dep
         # return generic response to avoid exposing email existence
         return {"detail": "If the email exists, an OTP has been sent."}
 
-    # 1️⃣ Generate 6-digit OTP
+    # Generate 6-digit OTP
     otp = f"{random.randint(100000, 999999)}"
     expires_at = datetime.utcnow() + timedelta(minutes=5)  # OTP valid for 5 min
 
-    # 2️⃣ Store OTP in DB
+    # Store OTP in DB
     await crud.create_password_reset_otp(db, user.id, otp, expires_at)
 
-    # 3️⃣ Send OTP via email (for dev, print it)
+    # Send OTP via email (for dev, print it)
     try:
         await utils.send_otp_email(user.email, otp, fullname=user.full_name)
     except Exception as e:
         print("Failed to send OTP:", e)
 
-    # print(f"OTP for {user.email}: {otp}")  # For dev/testing
-
     return {"detail": "If the email exists, an OTP has been sent."}
 
-
-# ------------------------
 # Reset password using OTP
-# ------------------------
 @router.post("/auth/reset-password")
 async def reset_password(payload: ResetPasswordRequest, db: AsyncSession = Depends(get_db)):
     # Get OTP record from DB

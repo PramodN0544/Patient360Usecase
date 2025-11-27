@@ -68,7 +68,6 @@ async def create_medication(
 
     return new_med
 
-
 # GET ALL MEDICATIONS
 @router.get("/", response_model=List[MedicationOut])
 async def get_all_medications(
@@ -101,7 +100,6 @@ async def get_current_medications(
 
     return result.scalars().all()
 
-
 # GET PAST MEDICATIONS (Date-based)
 @router.get("/history", response_model=List[MedicationOut])
 async def get_past_medications(
@@ -120,7 +118,6 @@ async def get_past_medications(
     )
 
     return result.scalars().all()
-
 
 # DASHBOARD VIEW (Date-based)
 @router.get("/dashboard")

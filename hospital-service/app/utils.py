@@ -7,20 +7,15 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 import random
 import string
-
+from jose import jwt, JWTError
 from app.models import Notification
 from sqlalchemy.ext.asyncio import AsyncSession
 
-# =========================================================
-# ✅ JWT CONFIG
-# =========================================================
 JWT_SECRET = os.getenv("JWT_SECRET", "SUPER_SECRET_KEY")
 JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
 ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "60"))
 
-# =========================================================
-# ✅ Password Hashing (PBKDF2)
-# =========================================================
+# Password Hashing 
 pwd_context = CryptContext(
     schemes=["pbkdf2_sha256"],
     deprecated="auto"
@@ -30,20 +25,12 @@ def get_password_hash(password: str):
     if not password:
         raise ValueError("Password cannot be empty")
 
-    # bcrypt/pbkdf2 safe handling
-    # pw_bytes = password.encode("utf-8")
-    # if len(pw_bytes) > 72:
-    #     pw_bytes = pw_bytes[:72]
-    #     password = pw_bytes.decode("utf-8", errors="ignore")
-
     return pwd_context.hash(password)
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     return pwd_context.verify(plain_password, hashed_password)
 
-# =========================================================
-# ✅ JWT Token Generator
-# =========================================================
+# JWT Token Generator
 def create_access_token(data: dict, expires_delta: timedelta | None = None):
     to_encode = data.copy()
     if expires_delta:
@@ -53,16 +40,12 @@ def create_access_token(data: dict, expires_delta: timedelta | None = None):
     to_encode.update({"exp": expire})
     return jwt.encode(to_encode, JWT_SECRET, algorithm=JWT_ALGORITHM)
 
-
-# =========================================================
-# ✅ Email Sending Utility
-# =========================================================
+# Email Sending Utility
 SMTP_HOST = os.getenv("SMTP_HOST", "smtp.gmail.com")
 SMTP_PORT = int(os.getenv("SMTP_PORT", 587))
 SMTP_USERNAME = os.getenv("SMTP_USERNAME")
 SMTP_PASSWORD = os.getenv("SMTP_PASSWORD")
 FROM_EMAIL = os.getenv("FROM_EMAIL", SMTP_USERNAME)
-
 
 def send_email(to_email: str, subject: str, message: str):
     """
@@ -73,7 +56,6 @@ def send_email(to_email: str, subject: str, message: str):
     - SMTP_USERNAME
     - SMTP_PASSWORD
     """
-
     print("✨ Email Sent ✨")
     print("To:", to_email)
     print("Subject:", subject)
@@ -96,24 +78,12 @@ def send_email(to_email: str, subject: str, message: str):
         server.send_message(msg)
         server.quit()
 
-        print(f"✅ Email sent to {to_email}")
+        print(f"Email sent to {to_email}")
         return True
 
     except Exception as e:
-        print("❌ Email sending failed:", str(e))
+        print("Email sending failed:", str(e))
         return False
-
-
-
-
-# # app/utils.py  (append)
-
-# from datetime import datetime, timedelta
-from jose import jwt, JWTError
-# import os
-# import smtplib
-# from email.mime.text import MIMEText
-# from email.mime.multipart import MIMEMultipart
 
 RESET_TOKEN_EXPIRE_MINUTES = int(os.getenv("RESET_TOKEN_EXPIRE_MINUTES", "60"))
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
@@ -191,11 +161,9 @@ def send_reset_email(to_email: str, token: str, fullname: str | None = None):
         smtp.login(SMTP_USER, SMTP_PASS)
         smtp.sendmail(EMAIL_FROM, [to_email], msg.as_string())
 
-
 def generate_default_password(length: int = 10):
     chars = string.ascii_letters + string.digits + "!@#$%^&*"
     return ''.join(random.choice(chars) for _ in range(length))
-
 
 async def send_otp_email(to_email: str, otp: str, fullname: str):
     """
@@ -205,8 +173,6 @@ async def send_otp_email(to_email: str, otp: str, fullname: str):
     body = f"Hello {fullname},\n\nYour OTP code is: {otp}\nIt will expire in 5 minutes.\n\nIf you did not request this, please ignore this email."
     
     send_email(to_email, subject, body)
-
-
 
 async def send_notification(db: AsyncSession, user_id: int, title: str, desc: str, type: str, data_id: str = None):
     notif = Notification(

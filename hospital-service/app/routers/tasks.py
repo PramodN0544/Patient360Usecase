@@ -1,17 +1,15 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-
 from app.database import get_db
 from app.auth import get_current_user
 from app import models
 from app.schemas import TaskCreate, TaskUpdate, TaskOut
+from sqlalchemy.orm import selectinload
 
 router = APIRouter(prefix="/tasks", tags=["Patient Tasks"])
 
-# ---------------------------
 # CREATE TASK
-# ---------------------------
 @router.post("/", response_model=TaskOut)
 async def create_task(
     task_in: TaskCreate,
@@ -69,7 +67,6 @@ async def get_my_tasks(
     tasks = result.scalars().all()
     return tasks
 
-
 # UPDATE TASK
 @router.put("/{task_id}", response_model=TaskOut)
 async def update_task(
@@ -103,7 +100,6 @@ async def update_task(
 
     return task
 
-
 # DELETE TASK
 @router.delete("/{task_id}")
 async def delete_task(
@@ -134,8 +130,6 @@ async def delete_task(
 
     return {"message": "Task deleted successfully"}
 
-
-from sqlalchemy.orm import selectinload
 
 # GET DOCTOR NOTES FOR LOGGED IN PATIENT
 @router.get("/notes", tags=["Doctor Notes"])

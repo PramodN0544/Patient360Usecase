@@ -4,7 +4,6 @@ from sqlalchemy.future import select
 from sqlalchemy import or_
 from datetime import datetime, timedelta
 import pytz
-
 from app.models import Notification, User, Medication, Appointment, Patient
 from app.auth import get_current_user
 from app.database import get_db
@@ -13,7 +12,6 @@ IST = pytz.timezone("Asia/Kolkata")
 
 router = APIRouter(prefix="/notifications", tags=["Notifications"])
 
-
 @router.get("/")
 async def get_my_notifications(
     current_user=Depends(get_current_user),
@@ -21,7 +19,7 @@ async def get_my_notifications(
 ):
     """Fetch all notifications of the logged-in user, including recent medication and appointment reminders"""
 
-    # 1️⃣ Existing notifications
+    # Existing notifications
     result = await db.execute(
         select(Notification)
         .filter(Notification.user_id == current_user.id)
@@ -29,7 +27,7 @@ async def get_my_notifications(
     )
     notifications = result.scalars().all()
 
-    # 2️⃣ Include recent medication reminders (last 1 day)
+    # Include recent medication reminders (last 1 day)
     now = datetime.now(IST)
     today = now.date()
     one_day_ago = now - timedelta(days=1)
@@ -59,7 +57,7 @@ async def get_my_notifications(
             user_id=current_user.id
         ))
 
-    # 3️⃣ Include upcoming appointment reminders (last 1 day or today)
+    # Include upcoming appointment reminders (last 1 day or today)
     app_result = await db.execute(
         select(Appointment, Patient)
         .join(Patient, Patient.id == Appointment.patient_id)
@@ -80,7 +78,7 @@ async def get_my_notifications(
             user_id=current_user.id
         ))
 
-    # 4️⃣ Return all notifications sorted by created_at descending
+    # Return all notifications sorted by created_at descending
     return [
         {
             "id": str(n.id),

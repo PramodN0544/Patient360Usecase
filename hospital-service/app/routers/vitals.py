@@ -16,7 +16,6 @@ async def get_patient_id(current_user, db: AsyncSession):
         raise HTTPException(status_code=404, detail="Patient profile not found")
     return patient.id
 
-
 # CREATE VITAL RECORD
 @router.post("/")
 async def create_vitals(payload: dict, current_user=Depends(get_current_user), db: AsyncSession = Depends(get_db)):
@@ -46,7 +45,6 @@ async def create_vitals(payload: dict, current_user=Depends(get_current_user), d
 
     return {"message": "Vitals recorded successfully", "vitals_id": vitals.id, "bmi": bmi}
 
-
 # UPDATE VITAL RECORD
 @router.put("/{vitals_id}")
 async def update_vitals(vitals_id: int, payload: dict, db: AsyncSession = Depends(get_db)):
@@ -69,7 +67,6 @@ async def update_vitals(vitals_id: int, payload: dict, db: AsyncSession = Depend
     await db.commit()
     await db.refresh(vitals)
     return {"message": "Vitals updated successfully", "vitals_id": vitals.id, "bmi": bmi}
-
 
 # GET LATEST BMI CATEGORY
 @router.get("/bmi/category")
@@ -107,7 +104,6 @@ async def get_bmi_category(current_user=Depends(get_current_user), db: AsyncSess
         "category": category,
         "recorded_at": latest.recorded_at.strftime("%Y-%m-%d %H:%M:%S"),
     }
-
 
 # GET FULL VITALS HISTORY (NEW)
 @router.get("/history")

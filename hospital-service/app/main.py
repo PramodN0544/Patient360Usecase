@@ -98,7 +98,6 @@ async def hospital_signup(
     data: schemas.HospitalSignupRequest,
     db: AsyncSession = Depends(get_db)
 ):
-    # Step 1 – create user (role = hospital)
     user = await crud.create_user(
         db=db,
         email=data.email,
@@ -107,14 +106,11 @@ async def hospital_signup(
         role="hospital"
     )
 
-    # Step 2 – create hospital (NO user_id)
     hospital = await crud.create_hospital_record(
         db=db,
         hospital_data=data.hospital.dict(),
-        # user_id=user.id
     )
 
-    # Step 3 – link user to hospital
     user.hospital_id = hospital.id
     db.add(user)
     await db.commit()
@@ -141,7 +137,6 @@ async def hospital_signup(
         }
     }
 
-# CREATE DOCTOR (User + Doctor)
 @app.post("/doctors")
 async def create_doctor(
     doctor_in: schemas.DoctorCreate,
@@ -156,7 +151,6 @@ async def create_doctor(
         hospital_id=current_user.hospital_id
     )
 
-    # Email send (pseudo function — integrate your email library)
     utils.send_email(
         email,
         subject="Your Doctor Account Credentials",
@@ -185,8 +179,7 @@ async def create_patient(
 ):
     if current_user.role not in ("hospital", "admin", "doctor"):
         raise HTTPException(status_code=403, detail="Not permitted")
-
-    # Unpack all 4 values returned from crud
+    
     patient, password, email, public_id = await crud.create_patient(db, patient_in)
 
     utils.send_email(
@@ -250,8 +243,7 @@ async def add_allergy(
         "allergy_id": allergy.id,
     }
 
-
-# ---------- NEW: ADD MEDICAL INSURANCE (append-only) ----------
+# ---------- ADD MEDICAL INSURANCE (append-only) ----------
 @app.post("/{public_id}/insurance")
 async def add_medical_insurance(
     public_id: str,
@@ -277,7 +269,7 @@ async def add_medical_insurance(
     }
 
 
-# ---------- NEW: ADD PHARMACY INSURANCE (append-only) ----------
+# ---------- ADD PHARMACY INSURANCE (append-only) ----------
 @app.post("/{public_id}/pharmacy-insurance")
 async def add_pharmacy_insurance(
     public_id: str,
@@ -312,8 +304,6 @@ async def read_users_me(current_user=Depends(get_current_user)):
         "hospital_id": str(current_user.hospital_id) if current_user.hospital_id else None
     }
 
-
-# Health Check
 @app.get("/health")
 async def health():
     return {"status": "ok"}
@@ -405,12 +395,7 @@ async def logout(current_user=Depends(get_current_user)):
     """
     return {"message": "Logged out successfully"}
 
-
-
-# ----------------------------------------
 # Create scheduler (global)
-# ----------------------------------------
-
 scheduler = AsyncIOScheduler()
 
 @scheduler.scheduled_job("interval", minutes=30)
@@ -423,31 +408,21 @@ def start_scheduler():
     scheduler.start()
     
 
-
-
-# ----------------------------------------
 # REGISTER REMINDER JOB (runs every 30 min)
-# ----------------------------------------
 @scheduler.scheduled_job("interval", minutes=1)
 async def reminder_job():
     async with async_session() as db:
         await send_appointment_reminders(db)
         await send_medication_reminders(db)
 
-
-# ----------------------------------------
-# START SCHEDULER WHEN FASTAPI STARTS
-# ----------------------------------------
+# START SCHEDULER WHEN FASTAPI START
 @app.on_event("startup")
 async def start_scheduler():
     scheduler.start()
-    print("⏰ Reminder scheduler started.")
+    print("Reminder scheduler started.")
 
-
-# ----------------------------------------
-# (Optional) STOP SCHEDULER ON SHUTDOWN
-# ----------------------------------------
+# STOP SCHEDULER ON SHUTDOWN
 @app.on_event("shutdown")
 async def shutdown_scheduler():
     scheduler.shutdown()
-    print("⏹ Scheduler stopped.")
+    print("Scheduler stopped.")

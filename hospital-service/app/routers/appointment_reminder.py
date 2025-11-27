@@ -9,7 +9,7 @@ IST = pytz.timezone("Asia/Kolkata")
 
 
 async def send_appointment_reminders(db: AsyncSession):
-    print("🔔 Running appointment reminder job...")
+    print("Running appointment reminder job...")
     now = datetime.now(IST)
 
     # Fetch upcoming appointments
@@ -61,7 +61,7 @@ async def send_appointment_reminders(db: AsyncSession):
                 scheduled_for=scheduled_for
             )
             db.add(notif)
-            print(f"✅ Reminder scheduled: {title} for patient {patient.id}, appointment {appt.id}")
+            print(f"Reminder scheduled: {title} for patient {patient.id}, appointment {appt.id}")
 
         # 1 day before
         if one_day_before.date() == now.date() and abs((one_day_before - now).total_seconds()) <= 1800:
@@ -76,4 +76,4 @@ async def send_appointment_reminders(db: AsyncSession):
             await maybe_create(title, desc, "2_hours_before", two_hours_before)
 
     await db.commit()
-    print("🔔 Appointment reminder job completed.\n")
+    print("Appointment reminder job completed.\n")

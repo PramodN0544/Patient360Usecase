@@ -5,7 +5,6 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 from typing import List
 from datetime import date
-
 from app.database import get_db
 from app.models import Encounter, Doctor, Patient, Vitals, Medication, Assignment
 from app.schemas import EncounterCreate, EncounterOut, EncounterUpdate
@@ -34,18 +33,14 @@ def calculate_status(enc):
 
 def safe_parse(data: str):
     try:
-        # Try valid JSON first
         return json.loads(data)
     except:
         try:
-            # Try JS-object style dict (your frontend format)
             return ast.literal_eval(data)
         except:
             raise HTTPException(422, "Invalid encounter_in format")
 
-# ================================
 #        CREATE ENCOUNTER
-# ================================
 @router.post("/", response_model=EncounterOut)
 async def create_encounter(
     encounter_in: str = Form(...),
@@ -54,13 +49,9 @@ async def create_encounter(
     db: AsyncSession = Depends(get_db)
 ):
 
- # Parse JSON body manually
-   # encounter_in = EncounterCreate(**json.loads(encounter_in))
-    
-    # FIX: Accept JSON + JS-style object
+
     parsed_data = safe_parse(encounter_in)
 
-# Convert dict → Pydantic model
     encounter_in = EncounterCreate(**parsed_data)
 
     # ---------- DOCTOR / HOSPITAL VALIDATION ----------

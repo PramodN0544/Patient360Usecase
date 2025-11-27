@@ -3,7 +3,6 @@ from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from jose import JWTError, jwt
-
 from .database import get_db
 from . import models
 from .utils import JWT_SECRET, JWT_ALGORITHM
@@ -11,7 +10,6 @@ from .utils import JWT_SECRET, JWT_ALGORITHM
 router = APIRouter()
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
-
 
 async def get_current_user(
     token: str = Depends(oauth2_scheme),
@@ -57,12 +55,7 @@ async def get_current_user(
 
     return user
 
-
-
-
-# ---------------------------------------------------------
-# ✅ NEW LOGIC — validate-token API (FastAPI version of Flask code)
-# ---------------------------------------------------------
+# validate-token API (FastAPI version of Flask code)
 @router.get("/api/auth/validate-token")
 async def validate_token(request: Request, db: AsyncSession = Depends(get_db)):
 

@@ -42,8 +42,6 @@ async def get_all_doctors(
     return doctors
 
 # GET ALL PATIENTS ASSIGNED TO THIS HOSPITAL
-
-
 @router.get("/patients", response_model=list[HospitalPatientOut])
 async def get_hospital_patients(
     current_user=Depends(get_current_user),

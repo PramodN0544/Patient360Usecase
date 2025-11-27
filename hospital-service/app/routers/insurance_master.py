@@ -1,17 +1,14 @@
 # app/routers/insurance_master.py
 from typing import List
-
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
-
 from app.database import get_db
 from app.models import InsuranceMaster
-from app.schemas import InsuranceMasterOut   # <-- ensure your schema is here
-from app.auth import get_current_user  # <-- your existing JWT auth dependency
+from app.schemas import InsuranceMasterOut  
+from app.auth import get_current_user 
 
 router = APIRouter(prefix="/insurance", tags=["Insurance"])
-
 
 @router.get("/", response_model=List[InsuranceMasterOut], summary="Get all insurance plans (only for doctors/hospitals)")
 async def get_all_insurance_plans(

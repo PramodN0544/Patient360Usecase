@@ -14,7 +14,7 @@ async def get_recent_doctor_visits(
     current_user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    # 1️⃣ Fetch patient record using USER ID
+    # Fetch patient record using USER ID
     patient_result = await db.execute(
         select(Patient).where(Patient.user_id == current_user.id)
     )
@@ -23,10 +23,10 @@ async def get_recent_doctor_visits(
     if not patient:
         return []   # User logged in but no patient profile found
 
-    # 2️⃣ Use REAL patient_id from Patient table
+    # Use REAL patient_id from Patient table
     patient_id = patient.id
 
-    # 3️⃣ Now fetch encounters correctly
+    # Now fetch encounters correctly
     result = await db.execute(
         select(Encounter, Doctor)
         .join(Doctor, Doctor.id == Encounter.doctor_id)
@@ -50,8 +50,6 @@ async def get_recent_doctor_visits(
 
     return visits
 
-
-
 # Send message (patient ↔ doctor)
 @router.post("/send", response_model=ChatOut)
 async def send_message(
@@ -74,10 +72,7 @@ async def send_message(
 
     return new_msg
 
-
-# ----------------------------------------------------
 # Get chat history between patient and doctor
-# ----------------------------------------------------
 @router.get("/history/{doctor_id}", response_model=list[ChatOut])
 async def get_chat_history(
     doctor_id: int,

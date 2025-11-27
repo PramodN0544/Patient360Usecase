@@ -1,7 +1,6 @@
 import os
 from typing import List
 
-
 def get_frontend_origins() -> List[str]:
     """Return a list of allowed frontend origins.
 
