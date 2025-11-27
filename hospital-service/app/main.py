@@ -26,6 +26,11 @@ from app import models
 from app.auth import router as auth_router
 from app.routers import patient_message_with_doctor,admin_users
 from .utils import create_access_token
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from app.routers.appointment_reminder import send_appointment_reminders
+from app.routers.medication_reminder import send_medication_reminders
+from app.database import AsyncSessionLocal as async_session
+
 
 app = FastAPI(title="CareIQ Patient 360 API")
 app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
@@ -310,3 +315,50 @@ async def logout(current_user=Depends(get_current_user)):
     Stateless logout – the frontend must delete the token.
     """
     return {"message": "Logged out successfully"}
+
+
+
+# ----------------------------------------
+# Create scheduler (global)
+# ----------------------------------------
+
+scheduler = AsyncIOScheduler()
+
+@scheduler.scheduled_job("interval", minutes=30)
+async def reminder_job():
+    async with async_session() as db:
+        await send_appointment_reminders(db)
+        await send_medication_reminders(db)
+
+def start_scheduler():
+    scheduler.start()
+    
+
+
+
+# ----------------------------------------
+# REGISTER REMINDER JOB (runs every 30 min)
+# ----------------------------------------
+@scheduler.scheduled_job("interval", minutes=1)
+async def reminder_job():
+    async with async_session() as db:
+        await send_appointment_reminders(db)
+        await send_medication_reminders(db)
+
+
+# ----------------------------------------
+# START SCHEDULER WHEN FASTAPI STARTS
+# ----------------------------------------
+@app.on_event("startup")
+async def start_scheduler():
+    scheduler.start()
+    print("⏰ Reminder scheduler started.")
+
+
+# ----------------------------------------
+# (Optional) STOP SCHEDULER ON SHUTDOWN
+# ----------------------------------------
+@app.on_event("shutdown")
+async def shutdown_scheduler():
+    scheduler.shutdown()
+    print("⏹ Scheduler stopped.")

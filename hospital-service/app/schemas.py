@@ -3,6 +3,9 @@ from typing import List, Optional,Dict
 from datetime import date, time, datetime
 from typing import Literal
 
+
+
+
 # HOSPITAL SCHEMAS
 class HospitalBase(BaseModel):
     name: str
@@ -426,6 +429,18 @@ class MedicationOut(BaseModel):
 
     class Config:
         orm_mode = True
+        
+        
+class LabOrderCreate(BaseModel):
+    test_name: str
+    priority: Optional[str] = None
+    notes: Optional[str] = None
+
+    class Config:
+        orm_mode = True
+
+
+
 
 class EncounterCreate(BaseModel):
     patient_public_id: Optional[str]  
@@ -439,6 +454,7 @@ class EncounterCreate(BaseModel):
     follow_up_date: Optional[date] = None
     status: Optional[str] = "open"
     is_lab_test_required: Optional[bool] = False  
+    lab_orders: Optional[List[LabOrderCreate]] = None   # FIXED HERE
     vitals: Optional[VitalsCreate] = None
     medications: Optional[List[MedicationCreate]] = []
     documents: Optional[List[str]] = None  
@@ -526,6 +542,7 @@ class EncounterUpdate(BaseModel):
     vitals: Optional[VitalsUpdate]
     medications: Optional[List[MedicationUpdate]]
     documents: Optional[List[str]] = None 
+    lab_orders: Optional[List[LabOrderCreate]] = None   # FIXED HERE
 # INSURANCE MASTER SCHEMAS
 class InsuranceMasterOut(BaseModel):
     id: int
@@ -913,34 +930,53 @@ class AdminUserOut(BaseModel):
         orm_mode = True
 
 
-class HospitalUpdate(BaseModel):
-    website: Optional[str] = None
-    consultation_fee: Optional[float] = None
 
-
-class PatientSearchRequest(BaseModel):
-    name: Optional[str] = None
-    phone: Optional[str] = None
-    ssn: Optional[str] = None
-
-
-class PatientSearchOut(BaseModel):
+class AppointmentReminder(BaseModel):
     id: int
-    first_name: str
-    last_name: str
-    dob: Optional[date]
-    gender: Optional[str]
-    public_id: str
-    ssn: Optional[str]
-    phone: Optional[str]
-    email: Optional[str]
-    address: Optional[str]
-    city: Optional[str]
-    state: Optional[str]
-    zip_code: Optional[str]
-    country: Optional[str]
-    citizenship_status: Optional[str]
-    visa_type: Optional[str]
+    user_id: Optional[int] = None
+    patient_id: int
+    appointment_id: int
+    reminder_type: str  # "1_day_before" or "2_hours_before"
+    scheduled_for: Optional[datetime] = None
+    status: str  # "pending", "sent"
+    title: Optional[str] = None
+    desc: Optional[str] = None
 
     class Config:
         orm_mode = True
+
+
+class MedicationReminder(BaseModel):
+    id: int
+    user_id: Optional[int] = None
+    patient_id: int
+    medication_id: int
+    reminder_type: str  # "daily", "refill"
+    scheduled_for: Optional[datetime] = None
+    status: str  # "pending", "sent"
+    title: Optional[str] = None
+    desc: Optional[str] = None
+
+    class Config:
+        orm_mode = True
+
+
+class NotificationOut(BaseModel):
+    id: int
+    user_id: Optional[int] = None
+    patient_id: int
+    type: Literal["appointment", "medication"]  # differentiate reminder type
+    related_id: int  # appointment_id or medication_id
+    reminder_type: str  # "1_day_before", "2_hours_left", "daily", "refill"
+    scheduled_for: Optional[datetime] = None
+    status: str  # "pending", "sent"
+    title: Optional[str] = None
+    desc: Optional[str] = None
+
+    class Config:
+        orm_mode = True
+        
+
+class HospitalUpdate(BaseModel):
+    website: Optional[str] = None
+    consultation_fee: Optional[float] = None
