@@ -800,28 +800,20 @@ class TreatmentPlanResponse(TreatmentPlanBase):
     class Config:
         orm_mode = True
 
-
-
-class ChatBase(BaseModel):
+# Chat Schemas
+class ChatMessageBase(BaseModel):
     message: str
 
+class ChatMessageCreate(ChatMessageBase):
+    pass
 
-class ChatCreate(ChatBase):
-    receiver_id: int
-    doctor_id: int | None = None
-    patient_id: int | None = None
-
-
-class ChatOut(BaseModel):
+class ChatMessageOut(ChatMessageBase):
     id: int
+    chat_id: int
     sender_id: int
-    receiver_id: int
-    doctor_id: int | None
-    patient_id: int | None
-    message: str
-    timestamp: datetime
-    doctor_name: str | None = None
-    patient_name: str | None = None
+    sender_type: str
+    is_read: bool
+    sent_at: datetime
 
     class Config:
         orm_mode = True
@@ -850,7 +842,87 @@ class TaskOut(BaseModel):
 
     class Config:
         orm_mode = True
+class SendToRecipientRequest(BaseModel):
+    recipient_id: int
+    message: str
+class ChatUserStatusBase(BaseModel):
+    is_typing: Optional[bool] = False
+    online: Optional[bool] = False
 
+class ChatUserStatusUpdate(ChatUserStatusBase):
+    pass
+
+class ChatUserStatusOut(ChatUserStatusBase):
+    id: int
+    chat_id: int
+    user_id: int
+    last_seen: datetime
+    updated_at: datetime
+
+    class Config:
+        orm_mode = True
+
+class ChatBase(BaseModel):
+    patient_id: Optional[int] = None
+    doctor_id: Optional[int] = None
+    encounter_id: Optional[int] = None
+
+class ChatCreate(ChatBase):
+    pass
+
+class ChatOut(ChatBase):
+    id: int
+    created_at: datetime
+    updated_at: datetime
+    messages: List[ChatMessageOut] = []
+    
+    class Config:
+        orm_mode = True
+
+class ChatParticipantInfo(BaseModel):
+    id: int
+    public_id: str
+    name: str
+    role: str
+    photo_url: Optional[str] = None
+
+class ChatSummary(BaseModel):
+    id: int
+    patient: ChatParticipantInfo
+    doctor: ChatParticipantInfo
+    last_message: Optional[ChatMessageOut] = None
+    unread_count: int = 0
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        orm_mode = True
+
+class DoctorBasicInfo(BaseModel):
+    id: int
+    public_id: Optional[str] = ""
+    name: str
+    email: Optional[str] = None
+    specialty: Optional[str] = None
+    role: str = "doctor"
+    encounter_id: Optional[int] = None
+    photo_url: Optional[str] = None
+    
+    class Config:
+        orm_mode = True
+
+class PatientBasicInfo(BaseModel):
+    id: int
+    public_id: str
+    name: str
+    email: Optional[str] = None
+    role: str = "patient"
+    encounter_id: Optional[int] = None
+    photo_url: Optional[str] = None
+    
+    class Config:
+        orm_mode = True
+           
 # Resolve forward references for Pydantic models defined out-of-order
 PatientOut.update_forward_refs()
 PatientsWithCount.update_forward_refs() 
