@@ -1,4 +1,4 @@
-
+import ast
 from fastapi import APIRouter, Depends, HTTPException, File, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -17,7 +17,6 @@ import json
 from app.S3connection import upload_encounter_document_to_s3
 
 router = APIRouter(prefix="/encounters", tags=["Encounters"])
-
 
 def calculate_status(enc):
     if (
@@ -50,7 +49,7 @@ def safe_parse(data: str):
 @router.post("/", response_model=EncounterOut)
 async def create_encounter(
     encounter_in: str = Form(...),
-    files: List[UploadFile] = File(None),   # ⬅️ NEW
+    files: List[UploadFile] = File(None),   # NEW
     current_user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
@@ -206,10 +205,7 @@ async def create_encounter(
 
     return out
 
-
-# ================================
-#        UPDATE ENCOUNTER
-# ================================
+# UPDATE ENCOUNTER
 @router.put("/{encounter_id}", response_model=EncounterOut)
 async def update_encounter(
     encounter_id: int,
@@ -310,8 +306,6 @@ async def update_encounter(
 
     return out
 
-
-
 # GET ENCOUNTERS BY PUBLIC PATIENT ID
 @router.get("/patient/{public_id}", response_model=List[EncounterOut])
 async def get_patient_encounters(
@@ -359,7 +353,6 @@ async def get_patient_encounters(
 
     encounters = result.unique().scalars().all()
     return [EncounterOut.from_orm(e) for e in encounters]
-
 
 # GET MY OWN ENCOUNTERS (PATIENT)
 @router.get("/patient", response_model=List[EncounterOut])
@@ -433,7 +426,6 @@ async def get_encounter(
     out.patient_public_id = encounter.patient.public_id
 
     return out
-
 
 @router.get("/doctors")
 async def get_all_doctors(

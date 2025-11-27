@@ -1,17 +1,15 @@
-
-
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import case, literal_column, select, func, String
 from sqlalchemy.orm import selectinload
 from datetime import date
-
 from app.database import get_db
 from app.auth import get_current_user
 from app import models, schemas
 from app import crud
-from app.schemas import HospitalPatientOut
+from app.schemas import HospitalPatientOut, HospitalUpdate
 from sqlalchemy import func
+from app.models import Hospital
 # ROUTER
 router = APIRouter(prefix="/hospitals", tags=["Hospital"])
 
@@ -262,3 +260,30 @@ async def search_doctors(
 
     result = await db.execute(stmt)
     return result.scalars().all()
+
+@router.put("/profile")
+async def update_hospital_profile(
+    data: HospitalUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user = Depends(get_current_user)
+):
+    # Ensure logged in user is hospital
+    if current_user.role != "hospital":
+        raise HTTPException(status_code=403, detail="Not authorized")
+
+    hospital = await db.get(Hospital, current_user.id)
+
+    if not hospital:
+        raise HTTPException(status_code=404, detail="Hospital not found")
+
+    # Update only allowed fields
+    if data.website is not None:
+        hospital.website = data.website
+
+    if data.consultation_fee is not None:
+        hospital.consultation_fee = data.consultation_fee
+
+    await db.commit()
+    await db.refresh(hospital)
+
+    return hospital

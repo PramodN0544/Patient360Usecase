@@ -457,7 +457,7 @@ class EncounterCreate(BaseModel):
     lab_orders: Optional[List[LabOrderCreate]] = None   # FIXED HERE
     vitals: Optional[VitalsCreate] = None
     medications: Optional[List[MedicationCreate]] = []
-    documents: Optional[List[str]] = None   # <-- Add this
+    documents: Optional[List[str]] = None  
     class Config:
         orm_mode = True
 
@@ -975,3 +975,8 @@ class NotificationOut(BaseModel):
 
     class Config:
         orm_mode = True
+        
+
+class HospitalUpdate(BaseModel):
+    website: Optional[str] = None
+    consultation_fee: Optional[float] = None
