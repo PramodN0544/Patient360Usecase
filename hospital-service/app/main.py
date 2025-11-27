@@ -203,7 +203,7 @@ async def create_patient(
         "public_id": public_id  # <-- include public patient ID here
     }
 
-@app.put("/{public_id}")
+@app.put("/patient/{public_id}")
 async def update_patient(
     public_id: str,
     patient_in: schemas.PatientUpdate,
