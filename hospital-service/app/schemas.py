@@ -2,9 +2,7 @@ from pydantic import BaseModel, EmailStr, Field
 from typing import List, Optional,Dict
 from datetime import date, time, datetime
 from typing import Literal
-
-
-
+from decimal import Decimal
 
 # HOSPITAL SCHEMAS
 class HospitalBase(BaseModel):
@@ -980,3 +978,30 @@ class NotificationOut(BaseModel):
 class HospitalUpdate(BaseModel):
     website: Optional[str] = None
     consultation_fee: Optional[float] = None
+
+class PatientUpdate(BaseModel):
+    phone: Optional[str]
+    email: Optional[EmailStr]
+
+    address: Optional[str]
+    city: Optional[str]
+    state: Optional[str]
+    zip_code: Optional[str]
+    photo_url: Optional[str]
+
+    marital_status: Optional[str]
+    preferred_contact: Optional[str]
+
+    weight: Optional[Decimal]
+    height: Optional[Decimal]
+
+    smoking_status: Optional[str]
+    alcohol_use: Optional[str]
+    diet: Optional[str]
+    exercise_frequency: Optional[str]
+
+    has_caregiver: Optional[bool]
+    caregiver_name: Optional[str]
+    caregiver_relationship: Optional[str]
+    caregiver_phone: Optional[str]
+    caregiver_email: Optional[str]

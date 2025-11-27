@@ -131,7 +131,7 @@ async def create_patient(db: AsyncSession, data: schemas.PatientCreate):
     patient_dict["user_id"] = user.id
     
      # ---------------------------------------------------------
-    # 🔥 ADD INSURANCE TOGGLE HANDLING HERE
+    # ADD INSURANCE TOGGLE HANDLING HERE
     # ---------------------------------------------------------
     if data.is_insured:
         patient_dict["insurance_status"] = "Insured"     # <-- ADDED
@@ -238,6 +238,66 @@ async def create_patient(db: AsyncSession, data: schemas.PatientCreate):
 
     return patient, default_password, user.email, patient.public_id
 
+async def get_patient_by_public_id(db: AsyncSession, public_id: str):
+    result = await db.execute(
+        select(models.Patient).where(models.Patient.public_id == public_id)
+    )
+    return result.scalars().first()
+
+
+async def update_patient_by_public_id(
+    db: AsyncSession,
+    public_id: str,
+    patient_in
+):
+    patient = await get_patient_by_public_id(db, public_id)
+    
+    if not patient:
+        return None
+
+    data = patient_in.dict(exclude_unset=True)
+
+    ALLOWED_UPDATE_FIELDS = {
+        "phone",
+        "email",
+        "address",
+        "city",
+        "state",
+        "zip_code",
+        "photo_url",
+        "marital_status",
+        "preferred_contact",
+
+        "weight",
+        "height",
+
+        "smoking_status",
+        "alcohol_use",
+        "diet",
+        "exercise_frequency",
+
+        "has_caregiver",
+        "caregiver_name",
+        "caregiver_relationship",
+        "caregiver_phone",
+        "caregiver_email",
+    }
+
+    # Only update allowed fields
+    for field in ALLOWED_UPDATE_FIELDS:
+        if field in data:
+            setattr(patient, field, data[field])
+
+    # Sync email with User table
+    if "email" in data and patient.user_id:
+        user = await db.get(models.User, patient.user_id)
+        if user:
+            user.email = data["email"]
+
+    await db.commit()
+    await db.refresh(patient)
+
+    return patient
 
 async def create_password_reset_token(db: AsyncSession, user_id: UUID, token: str, expires_at: datetime) -> PasswordResetToken:
     new_token = PasswordResetToken(user_id=user_id, token=token, expires_at=expires_at)
