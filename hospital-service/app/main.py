@@ -11,7 +11,7 @@ from app.routers import reset_password
 from app.routers import notifications
 from app.routers import medications
 from app.routers import encounters
-from app.routers import assignments,patients
+from app.routers import assignments
 from app.routers import insurance_master 
 from app.routers import pharmacy_insurance_master
 from app.routers import file_upload
@@ -49,9 +49,6 @@ app.include_router(patient_message_with_doctor.router)
 app.include_router(hospitals.router)
 app.include_router(tasks.router)
 app.include_router(admin_users.router)
-
-app.include_router(patients.router)
-
 
 @app.on_event("startup")
 async def startup():
