@@ -33,6 +33,17 @@ def calculate_status(enc):
     return "Completed"
 
 
+def safe_parse(data: str):
+    try:
+        # Try valid JSON first
+        return json.loads(data)
+    except:
+        try:
+            # Try JS-object style dict (your frontend format)
+            return ast.literal_eval(data)
+        except:
+            raise HTTPException(422, "Invalid encounter_in format")
+
 # ================================
 #        CREATE ENCOUNTER
 # ================================
@@ -45,7 +56,13 @@ async def create_encounter(
 ):
 
  # Parse JSON body manually
-    encounter_in = EncounterCreate(**json.loads(encounter_in))
+   # encounter_in = EncounterCreate(**json.loads(encounter_in))
+    
+    # FIX: Accept JSON + JS-style object
+    parsed_data = safe_parse(encounter_in)
+
+# Convert dict → Pydantic model
+    encounter_in = EncounterCreate(**parsed_data)
 
     # ---------- DOCTOR / HOSPITAL VALIDATION ----------
     doctor_result = await db.execute(

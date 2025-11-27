@@ -250,6 +250,7 @@ class Appointment(Base, TimestampMixin):
     reason = Column(String(300))
     mode = Column(String(50), default="In-person")
     status = Column(String(50), default="Scheduled")
+    reminders_sent = Column(ARRAY(String), default=[])  # e.g., ["1_day_before", "2_hours_before"]
 
     patient = relationship("Patient", back_populates="appointments")
     hospital = relationship("Hospital", back_populates="appointments")
@@ -278,6 +279,7 @@ class Medication(Base, TimestampMixin):
     notes = Column(Text, nullable=True)
     icd_code = Column(String(20), nullable=True)
     ndc_code = Column(String(50), nullable=True)
+    reminder_times = Column(ARRAY(Time), nullable=True)  # e.g., ["09:00", "21:00"]
 
     assignment_id = Column(Integer, ForeignKey("assignments.id"))
     # assignment = relationship("PatientDoctorAssignment", back_populates="medications")
@@ -347,6 +349,9 @@ class Notification(Base, TimestampMixin):
     type = Column(String(50), nullable=False)
     status = Column(String(50), default="unread")
     data_id = Column(String(200), nullable=True)
+    scheduled_for = Column(DateTime(timezone=True), nullable=True)
+    reminder_type = Column(String(50), nullable=True)  # e.g., "1_day_before", "2_hours_left", "daily", "refill"
+    patient_id = Column(Integer, ForeignKey("patients.id", ondelete="CASCADE"), nullable=True)
 
     user = relationship("User", back_populates="notifications")
 
