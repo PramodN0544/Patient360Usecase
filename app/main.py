@@ -11,7 +11,7 @@ from app.routers import reset_password
 from app.routers import notifications
 from app.routers import medications
 from app.routers import encounters
-from app.routers import assignments,patients
+from app.routers import assignments
 from app.routers import insurance_master 
 from app.routers import pharmacy_insurance_master
 from app.routers import file_upload
@@ -25,7 +25,8 @@ from app.web_socket import socket_app, sio
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
-
+from app.routers import tasks
+from app.routers import admin_users
 
 # SQLAlchemy utilities and models used in route handlers
 from sqlalchemy import select
@@ -58,7 +59,7 @@ app.include_router(hospitals.router)
 app.include_router(chat_api.router)
 app.include_router(tasks.router)
 app.include_router(admin_users.router)
-app.include_router(patients.router)
+
 # Auto-create tables
 
 @app.on_event("startup")
