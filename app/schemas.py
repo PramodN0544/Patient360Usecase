@@ -2,6 +2,7 @@ from pydantic import BaseModel, EmailStr, Field
 from typing import List, Optional,Dict
 from datetime import date, time, datetime
 from typing import Literal
+from decimal import Decimal
 
 # HOSPITAL SCHEMAS
 class HospitalBase(BaseModel):
@@ -427,6 +428,13 @@ class MedicationOut(BaseModel):
     class Config:
         orm_mode = True
 
+class LabOrderCreate(BaseModel):
+    test_name: str
+    priority: Optional[str] = None
+    notes: Optional[str] = None
+
+    class Config:
+        orm_mode = True
 class EncounterCreate(BaseModel):
     patient_public_id: Optional[str]  
     doctor_id: Optional[int] = None  
@@ -444,6 +452,7 @@ class EncounterCreate(BaseModel):
     documents: Optional[List[str]] = None  
     class Config:
         orm_mode = True
+
 
 class EncounterOut(BaseModel):
     id: int
@@ -984,12 +993,78 @@ class AdminUserOut(BaseModel):
     class Config:
         orm_mode = True
 
+class AppointmentReminder(BaseModel):
+    id: int
+    user_id: Optional[int] = None
+    patient_id: int
+    appointment_id: int
+    reminder_type: str  
+    scheduled_for: Optional[datetime] = None
+    status: str  
+    title: Optional[str] = None
+    desc: Optional[str] = None
 
+    class Config:
+        orm_mode = True
+
+class MedicationReminder(BaseModel):
+    id: int
+    user_id: Optional[int] = None
+    patient_id: int
+    medication_id: int
+    reminder_type: str 
+    scheduled_for: Optional[datetime] = None
+    status: str 
+    title: Optional[str] = None
+    desc: Optional[str] = None
+
+    class Config:
+        orm_mode = True
+
+class NotificationOut(BaseModel):
+    id: int
+    user_id: Optional[int] = None
+    patient_id: int
+    type: Literal["appointment", "medication"]  
+    related_id: int  
+    reminder_type: str  
+    scheduled_for: Optional[datetime] = None
+    status: str 
+    title: Optional[str] = None
+    desc: Optional[str] = None
+
+    class Config:
+        orm_mode = True
 class HospitalUpdate(BaseModel):
     website: Optional[str] = None
     consultation_fee: Optional[float] = None
 
+class PatientUpdate(BaseModel):
+    phone: Optional[str]
+    email: Optional[EmailStr]
 
+    address: Optional[str]
+    city: Optional[str]
+    state: Optional[str]
+    zip_code: Optional[str]
+    photo_url: Optional[str]
+
+    marital_status: Optional[str]
+    preferred_contact: Optional[str]
+
+    weight: Optional[Decimal]
+    height: Optional[Decimal]
+
+    smoking_status: Optional[str]
+    alcohol_use: Optional[str]
+    diet: Optional[str]
+    exercise_frequency: Optional[str]
+
+    has_caregiver: Optional[bool]
+    caregiver_name: Optional[str]
+    caregiver_relationship: Optional[str]
+    caregiver_phone: Optional[str]
+    caregiver_email: Optional[str]
 class PatientSearchRequest(BaseModel):
     name: Optional[str] = None
     phone: Optional[str] = None
