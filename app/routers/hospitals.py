@@ -42,8 +42,6 @@ async def get_all_doctors(
     return doctors
 
 # GET ALL PATIENTS ASSIGNED TO THIS HOSPITAL
-
-
 @router.get("/patients", response_model=list[HospitalPatientOut])
 async def get_hospital_patients(
     current_user=Depends(get_current_user),
@@ -287,3 +285,48 @@ async def update_hospital_profile(
     await db.refresh(hospital)
 
     return hospital
+
+
+# MONTHLY PATIENT ADMISSIONS API (Dashboard Chart)
+@router.get("/admissions/monthly")
+async def get_monthly_patient_admissions(
+    current_user = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    year: int = date.today().year
+):
+    if current_user.role != "hospital":
+        raise HTTPException(403, "Only hospitals can access this")
+
+    hospital_id = current_user.hospital_id
+
+    stmt = (
+        select(
+            func.date_part('month', models.Patient.created_at).label("month"),
+            func.count(models.Patient.id).label("admissions")
+        )
+        .join(models.Assignment, models.Assignment.patient_id == models.Patient.id)
+        .where(models.Assignment.hospital_id == hospital_id)
+        .where(func.date_part('year', models.Patient.created_at) == year)
+        .group_by("month")
+        .order_by("month")
+    )
+
+    result = await db.execute(stmt)
+    rows = result.mappings().all()
+
+    # Convert month number → month name for frontend
+    month_map = {
+        1: "Jan", 2: "Feb", 3: "Mar", 4: "Apr",
+        5: "May", 6: "Jun", 7: "Jul", 8: "Aug",
+        9: "Sep", 10: "Oct", 11: "Nov", 12: "Dec",
+    }
+
+    formatted = []
+    for row in rows:
+        formatted.append({
+            "name": month_map[int(row["month"])],
+            "admissions": row["admissions"],
+            "year": year
+        })
+
+    return formatted

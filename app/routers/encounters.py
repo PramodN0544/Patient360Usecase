@@ -1,3 +1,4 @@
+import ast
 from fastapi import APIRouter, Depends, HTTPException, File, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -37,16 +38,28 @@ def calculate_status(enc):
 
     return "Completed"
 
-# CREATE ENCOUNTER
+
+def safe_parse(data: str):
+    try:
+        return json.loads(data)
+    except:
+        try:
+            return ast.literal_eval(data)
+        except:
+            raise HTTPException(422, "Invalid encounter_in format")
+
+#        CREATE ENCOUNTER
 @router.post("/", response_model=EncounterOut)
 async def create_encounter(
-    encounter_in: str = Form(...),
-    files: List[UploadFile] = File(None),   # NEW
+    encounter_in: str = Form(...), 
+    files: List[UploadFile] | None = File(None),   # NEW
     current_user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
 
- # Parse JSON body manually
+
+    parsed_data = json.loads(encounter_in) 
+
     encounter_in = EncounterCreate(**json.loads(encounter_in))
 
     # ---------- DOCTOR / HOSPITAL VALIDATION ----------
@@ -195,11 +208,12 @@ async def create_encounter(
 @router.put("/{encounter_id}", response_model=EncounterOut)
 async def update_encounter(
     encounter_id: int,
-    encounter_in: EncounterUpdate,
-    files: List[UploadFile] = File(None),   # ⬅️ NEW
+    encounter_in: str = Form(...),
+    files: List[UploadFile] | None = File(None),   # ⬅️ NEW
     current_user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
+    encounter_in = EncounterCreate(**json.loads(encounter_in))
 
     result = await db.execute(
         select(Encounter)

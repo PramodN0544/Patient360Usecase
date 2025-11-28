@@ -14,17 +14,13 @@ from app.auth import get_current_user
 
 router = APIRouter(prefix="/appointments", tags=["Appointments"])
 
-# ---------------------------
 # Dependency: Database session
-# ---------------------------
 async def get_db():
     from app.database import get_db
     async for session in get_db():
         yield session
 
-# ---------------------------
 # Helpers
-# ---------------------------
 def _time_to_str(t):
     if not t:
         return None
@@ -33,10 +29,8 @@ def _time_to_str(t):
     except Exception:
         return str(t)
 
-# ============================================================
 # GET /appointments/doctors
 # Filter doctors by hospital_id or specialty
-# ============================================================
 @router.get("/doctors")
 async def get_doctors(
     hospital_id: Optional[int] = Query(None, description="Filter by hospital id"),
@@ -85,9 +79,8 @@ async def get_doctors(
         })
 
     return response
-# ============================================================
+
 # GET /appointments/doctors/specialty/{specialty}
-# ============================================================
 @router.get("/doctors/specialty/{specialty}")
 async def get_doctors_by_specialty(
     specialty: str,
@@ -124,9 +117,7 @@ async def get_doctors_by_specialty(
 
     return doctors_list
 
-# ============================================================
 # GET /appointments/hospitals
-# ============================================================
 @router.get("/hospitals")
 async def get_all_hospitals(db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(Hospital).filter(func.lower(Hospital.status) == "active"))
@@ -146,9 +137,7 @@ async def get_all_hospitals(db: AsyncSession = Depends(get_db)):
         for h in hospitals
     ]
 
-# ============================================================
 # GET /appointments/hospitals/{hospital_id}
-# ============================================================
 @router.get("/hospitals/{hospital_id}")
 async def get_hospital_details(hospital_id: int, db: AsyncSession = Depends(get_db)):
     result = await db.execute(
@@ -182,9 +171,7 @@ async def get_hospital_details(hospital_id: int, db: AsyncSession = Depends(get_
         "full_address": f"{hospital.address}, {hospital.city}, {hospital.state} {hospital.zip_code}, {hospital.country}"
     }
 
-# ============================================================
 # GET /appointments/hospitals/doctors
-# ============================================================
 @router.get("/hospitals/doctors")
 async def get_hospitals_doctors(
     hospital_id: int = Query(..., description="Hospital ID"),
@@ -221,18 +208,14 @@ async def get_hospitals_doctors(
 
     return doctors_list
 
-# ============================================================
 # GET /appointments/specialties
-# ============================================================
 @router.get("/specialties")
 async def get_all_specialties(db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(Doctor.specialty).distinct().filter(func.lower(Doctor.status) == "active"))
     specialties = result.scalars().all()
     return {"specialties": [spec for spec in specialties if spec]}
 
-# ============================================================
 # GET /appointments/slots
-# ============================================================
 @router.get("/slots")
 async def get_available_slots(
     doctor_id: int = Query(..., description="Doctor ID"),
@@ -445,10 +428,8 @@ Patient360 Team
         print("ℹ️ Email credentials not configured, skipping email sending")
 
 
-# ============================================================
 # GET /appointments/patient
 # Get current patient's appointments (latest first)
-# ============================================================
 @router.get("/patient")
 async def get_my_appointments(current_user=Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     # Fetch patient by user_id
@@ -492,10 +473,8 @@ async def get_my_appointments(current_user=Depends(get_current_user), db: AsyncS
 
     return enriched
 
-# ============================================================
 # GET /appointments/doctor/{doctor_id}
 # Get appointments for a doctor (latest first)
-# ============================================================
 @router.get("/doctor/{doctor_id}")
 async def get_appointments_by_doctor(doctor_id: int, db: AsyncSession = Depends(get_db)):
     # Fetch appointments sorted from latest to oldest
@@ -532,9 +511,7 @@ async def get_appointments_by_doctor(doctor_id: int, db: AsyncSession = Depends(
 
     return enriched
 
-# ============================================================
 # PUT /appointments/{appointment_id}/cancel
-# ============================================================
 @router.put("/{appointment_id}/cancel")
 async def cancel_appointment(appointment_id: int, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(Appointment).filter(Appointment.id == appointment_id))

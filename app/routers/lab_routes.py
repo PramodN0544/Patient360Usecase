@@ -1,10 +1,8 @@
 # app/routers/labs.py
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
-from fastapi.responses import RedirectResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from typing import List, Optional
-
 from app.database import get_db
 from app.models import LabMaster, LabOrder, LabResult, Patient, Doctor
 from app.schemas import (
@@ -17,8 +15,6 @@ import aiohttp
 from io import BytesIO
 router = APIRouter(prefix="/labs", tags=["Labs"])
 
-
-# 1 - testcodes
 @router.get("/testcodes", response_model=List[LabTestCode])
 async def get_all_test_codes(current_user=Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     if current_user.role not in ["doctor", "hospital", "labassistant"]:
@@ -231,7 +227,6 @@ async def get_doctor_lab_results(current_user=Depends(get_current_user), db: Asy
 
     rows = q.unique().all()
 
-
     out = []
     for order, result, patient in rows:
         if result and result.file_key:
@@ -325,7 +320,6 @@ async def view_lab_result(lab_result_id: int, current_user=Depends(get_current_u
         "Content-Disposition": f'inline; filename="{result.file_key.split("/")[-1]}"'
     })
 
-
 # Download PDF securely (attachment)
 @router.get("/download/{lab_result_id}")
 async def download_lab_result(lab_result_id: int, current_user=Depends(get_current_user), db: AsyncSession = Depends(get_db)):
@@ -359,7 +353,6 @@ async def download_lab_result(lab_result_id: int, current_user=Depends(get_curre
     return StreamingResponse(file_data, media_type="application/pdf", headers={
         "Content-Disposition": f'attachment; filename="{result.file_key.split("/")[-1]}"'
     })
-
 
 @router.get("/hospital-results/search", response_model=List[LabResultResponse])
 async def search_hospital_lab_results(

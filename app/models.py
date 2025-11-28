@@ -38,7 +38,6 @@ class Hospital(Base, TimestampMixin):
     __tablename__ = "hospitals"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    # public_id = Column(String(150), unique=True, nullable=False, index=True, default=generate_hospital_public_id)
     name = Column(String(200), nullable=False)
     registration_no = Column(String(100))
     email = Column(String(100), unique=True, nullable=False)
@@ -124,12 +123,8 @@ class Doctor(Base, TimestampMixin):
     encounters = relationship("Encounter", back_populates="doctor")
     appointments = relationship("Appointment", back_populates="doctor")
     assignments = relationship("Assignment", back_populates="doctor")
-    # encounters = relationship("Encounter", back_populates="doctor", cascade="all, delete-orphan")
-    # appointments = relationship("Appointment", back_populates="doctor", cascade="all, delete-orphan")
     medications = relationship("Medication", back_populates="doctor")
-    # assignments = relationship("Assignment", back_populates="doctor", cascade="all, delete-orphan")
-
-
+   
 # Patients 
 class Patient(Base, TimestampMixin):
     __tablename__ = "patients"
@@ -172,10 +167,10 @@ class Patient(Base, TimestampMixin):
     caregiver_phone = Column(String(20))
     caregiver_email = Column(String(100))
 
-    smoking_status = Column(String(100), nullable=True)       # e.g., "Current Smoker", "Former Smoker", "Never Smoked"
-    alcohol_use = Column(String(100), nullable=True)          # e.g., "Occasional", "Regular", "None"
-    diet = Column(String(200), nullable=True)                 # e.g., "Vegetarian", "Vegan", "Non-Vegetarian", "Low Carb"
-    exercise_frequency = Column(String(100), nullable=True)   # e.g., "Daily", "Weekly", "Rarely", "Never"
+    smoking_status = Column(String(100), nullable=True)       
+    alcohol_use = Column(String(100), nullable=True)          
+    diet = Column(String(200), nullable=True)                 
+    exercise_frequency = Column(String(100), nullable=True)   
 
     user = relationship("User", back_populates="patients")
     appointments = relationship("Appointment", back_populates="patient", cascade="all, delete-orphan")
@@ -250,7 +245,7 @@ class Appointment(Base, TimestampMixin):
     reason = Column(String(300))
     mode = Column(String(50), default="In-person")
     status = Column(String(50), default="Scheduled")
-
+    reminders_sent = Column(ARRAY(String), default=[])  
     patient = relationship("Patient", back_populates="appointments")
     hospital = relationship("Hospital", back_populates="appointments")
     doctor = relationship("Doctor", back_populates="appointments")
@@ -278,15 +273,13 @@ class Medication(Base, TimestampMixin):
     notes = Column(Text, nullable=True)
     icd_code = Column(String(20), nullable=True)
     ndc_code = Column(String(50), nullable=True)
+    reminder_times = Column(ARRAY(Time), nullable=True)  
 
     assignment_id = Column(Integer, ForeignKey("assignments.id"))
-    # assignment = relationship("PatientDoctorAssignment", back_populates="medications")
-
     patient = relationship("Patient", back_populates="medications")
     doctor = relationship("Doctor", back_populates="medications")
     appointment = relationship("Appointment", back_populates="medications")
     encounter = relationship("Encounter", back_populates="medications")
-    
     
 # Vitals
 class Vitals(Base, TimestampMixin):
@@ -309,7 +302,6 @@ class Vitals(Base, TimestampMixin):
     patient = relationship("Patient", back_populates="vitals")
     appointment = relationship("Appointment", back_populates="vitals")
     encounter = relationship("Encounter", back_populates="vitals")
-
 
 # Encounters
 class Encounter(Base, TimestampMixin):
@@ -335,7 +327,6 @@ class Encounter(Base, TimestampMixin):
     vitals = relationship("Vitals", back_populates="encounter", cascade="all, delete-orphan")
     medications = relationship("Medication", back_populates="encounter", cascade="all, delete-orphan")
  
-
 # Notifications
 class Notification(Base, TimestampMixin):
     __tablename__ = "notifications"
@@ -347,6 +338,9 @@ class Notification(Base, TimestampMixin):
     type = Column(String(50), nullable=False)
     status = Column(String(50), default="unread")
     data_id = Column(String(200), nullable=True)
+    scheduled_for = Column(DateTime(timezone=True), nullable=True)
+    reminder_type = Column(String(50), nullable=True)  # e.g., "1_day_before", "2_hours_left", "daily", "refill"
+    patient_id = Column(Integer, ForeignKey("patients.id", ondelete="CASCADE"), nullable=True)
 
     user = relationship("User", back_populates="notifications")
 
@@ -418,16 +412,14 @@ class PatientInsurance(Base):
     effective_date = Column(Date, nullable=False)
     expiry_date = Column(Date, nullable=False)
     status = Column(String(20), default="Active")
-    priority = Column(String(20), default="primary")  # "primary" or "secondary"
+    priority = Column(String(20), default="primary") 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     # Relationships
     insurance_master = relationship("InsuranceMaster")
     patient = relationship("Patient", back_populates="patient_insurances")
 
-# -----------------------
 # Pharmacy Insurance Master Table
-# -----------------------
 class PharmacyInsuranceMaster(Base):
     __tablename__ = "pharmacy_insurance_master"
 
@@ -468,9 +460,7 @@ class PatientPharmacyInsurance(Base):
     patient = relationship("Patient", back_populates="pharmacy_insurances")
     pharmacy_master = relationship("PharmacyInsuranceMaster")
 
-## -----------------------
-## Lab Master Table
-
+# Lab Master Table
 class LabMaster(Base):
     __tablename__ = "lab_master"
 
@@ -489,9 +479,7 @@ class LabMaster(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
     
-# -----------------------
 # Lab Orders and Results Tables
-
 class LabOrder(Base):
     __tablename__ = "lab_orders"
     id = Column(Integer, primary_key=True, autoincrement=True)

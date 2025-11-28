@@ -2,7 +2,6 @@ import os
 from typing import List
 from fastapi.middleware.cors import CORSMiddleware
 
-
 def get_frontend_origins() -> List[str]:
     """Return a list of allowed frontend origins.
 

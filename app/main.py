@@ -17,7 +17,6 @@ from app.routers import pharmacy_insurance_master
 from app.routers import file_upload
 from app.routers import lab_routes
 from app.routers import hospitals
-from app.routers import appointment,vitals,file_upload,assignments,insurance_master,pharmacy_insurance_master,doctors
 from app.routers import chat_api
 from fastapi import WebSocket, WebSocketDisconnect, Query
 from app.web_socket import chat_manager, get_user_from_token, check_chat_access, process_websocket_message
@@ -29,11 +28,18 @@ from app.routers import tasks
 from app.routers import admin_users
 
 # SQLAlchemy utilities and models used in route handlers
+from app.routers import appointment,vitals,file_upload,assignments,insurance_master,pharmacy_insurance_master,doctors, tasks
+from app.schemas import PatientUpdate
+from app import crud as patient_crud
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 from app import models
 from app.auth import router as auth_router
 from .utils import create_access_token
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from app.routers.appointment_reminder import send_appointment_reminders
+from app.routers.medication_reminder import send_medication_reminders
+from app.database import AsyncSessionLocal as async_session
 
 app = FastAPI(title="CareIQ Patient 360 API")
 app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
@@ -156,7 +162,6 @@ async def hospital_signup(
     data: schemas.HospitalSignupRequest,
     db: AsyncSession = Depends(get_db)
 ):
-    # Step 1 – create user (role = hospital)
     user = await crud.create_user(
         db=db,
         email=data.email,
@@ -165,14 +170,11 @@ async def hospital_signup(
         role="hospital"
     )
 
-    # Step 2 – create hospital (NO user_id)
     hospital = await crud.create_hospital_record(
         db=db,
         hospital_data=data.hospital.dict(),
-        # user_id=user.id
     )
 
-    # Step 3 – link user to hospital
     user.hospital_id = hospital.id
     db.add(user)
     await db.commit()
@@ -199,7 +201,6 @@ async def hospital_signup(
         }
     }
 
-# CREATE DOCTOR (User + Doctor)
 @app.post("/doctors")
 async def create_doctor(
     doctor_in: schemas.DoctorCreate,
@@ -214,7 +215,6 @@ async def create_doctor(
         hospital_id=current_user.hospital_id
     )
 
-    # Email send (pseudo function — integrate your email library)
     utils.send_email(
         email,
         subject="Your Doctor Account Credentials",
@@ -243,8 +243,7 @@ async def create_patient(
 ):
     if current_user.role not in ("hospital", "admin", "doctor"):
         raise HTTPException(status_code=403, detail="Not permitted")
-
-    # Unpack all 4 values returned from crud
+    
     patient, password, email, public_id = await crud.create_patient(db, patient_in)
 
     utils.send_email(
@@ -268,6 +267,97 @@ async def create_patient(
         "public_id": public_id  # <-- include public patient ID here
     }
 
+@app.put("/patient/{public_id}")
+async def update_patient(
+    public_id: str,
+    patient_in: schemas.PatientUpdate,
+    current_user = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    if current_user.role not in ("hospital", "admin", "doctor"):
+        raise HTTPException(status_code=403, detail="Not permitted")
+
+    patient = await patient_crud.update_patient_by_public_id(db, public_id, patient_in)
+    if not patient:
+        raise HTTPException(status_code=404, detail="Patient not found")
+
+    return {
+      "message": "Patient updated successfully",
+      "public_id": patient.public_id
+    }
+
+@app.post("/{public_id}/allergies")
+async def add_allergy(
+    public_id: str,
+    allergy_in: schemas.AllergyCreate,
+    current_user = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    if current_user.role not in ("patient", "hospital", "admin", "doctor"):
+        raise HTTPException(status_code=403, detail="Not permitted")
+
+    patient = await patient_crud.get_patient_by_public_id(db, public_id)
+    if not patient:
+        raise HTTPException(status_code=404, detail="Patient not found")
+
+    allergy = await patient_crud.add_allergy_for_patient(db, patient, allergy_in)
+
+    return {
+        "message": "Allergy added successfully",
+        "allergy_id": allergy.id,
+    }
+
+# ---------- ADD MEDICAL INSURANCE (append-only) ----------
+@app.post("/{public_id}/insurance")
+async def add_medical_insurance(
+    public_id: str,
+    ins_in: schemas.PatientInsuranceCreate,
+    current_user = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    if current_user.role not in ("patient", "hospital", "admin"):
+        raise HTTPException(status_code=403, detail="Not permitted")
+
+    patient = await patient_crud.get_patient_by_public_id(db, public_id)
+    if not patient:
+        raise HTTPException(status_code=404, detail="Patient not found")
+
+    new_ins = await patient_crud.add_patient_insurance(db, patient, ins_in)
+    if not new_ins:
+        raise HTTPException(status_code=404, detail="Insurance master not found")
+
+    return {
+        "message": "Patient medical insurance added",
+        "patient_id": patient.public_id,
+        "patient_insurance_id": new_ins.id
+    }
+
+
+# ---------- ADD PHARMACY INSURANCE (append-only) ----------
+@app.post("/{public_id}/pharmacy-insurance")
+async def add_pharmacy_insurance(
+    public_id: str,
+    ins_in: schemas.PatientPharmacyInsuranceCreate,
+    current_user = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    if current_user.role not in ("patient", "hospital", "admin"):
+        raise HTTPException(status_code=403, detail="Not permitted")
+
+    patient = await patient_crud.get_patient_by_public_id(db, public_id)
+    if not patient:
+        raise HTTPException(status_code=404, detail="Patient not found")
+
+    new_ins = await patient_crud.add_patient_pharmacy_insurance(db, patient, ins_in)
+    if not new_ins:
+        raise HTTPException(status_code=404, detail="Pharmacy insurance master not found")
+
+    return {
+        "message": "Patient pharmacy insurance added",
+        "patient_id": patient.public_id,
+        "patient_pharmacy_insurance_id": new_ins.id
+    }
+
 @app.get("/users/me")
 async def read_users_me(current_user=Depends(get_current_user)):
     return {
@@ -278,19 +368,15 @@ async def read_users_me(current_user=Depends(get_current_user)):
         "hospital_id": str(current_user.hospital_id) if current_user.hospital_id else None
     }
 
-
-# Health Check
 @app.get("/health")
 async def health():
     return {"status": "ok"}
-
 
 @app.get("/config")
 async def get_config():
     """Return runtime configuration useful for frontend diagnostics."""
     origins = get_frontend_origins()
     return {"cors_origins": origins}
-
 
 @app.get("/")
 def root():
@@ -399,3 +485,34 @@ async def http_exception_handler(request, exc):
         status_code=exc.status_code,
         content={"detail": exc.detail},
     )
+# Create scheduler (global)
+scheduler = AsyncIOScheduler()
+
+@scheduler.scheduled_job("interval", minutes=30)
+async def reminder_job():
+    async with async_session() as db:
+        await send_appointment_reminders(db)
+        await send_medication_reminders(db)
+
+def start_scheduler():
+    scheduler.start()
+    
+
+# REGISTER REMINDER JOB (runs every 30 min)
+@scheduler.scheduled_job("interval", minutes=1)
+async def reminder_job():
+    async with async_session() as db:
+        await send_appointment_reminders(db)
+        await send_medication_reminders(db)
+
+# START SCHEDULER WHEN FASTAPI START
+@app.on_event("startup")
+async def start_scheduler():
+    scheduler.start()
+    print("Reminder scheduler started.")
+
+# STOP SCHEDULER ON SHUTDOWN
+@app.on_event("shutdown")
+async def shutdown_scheduler():
+    scheduler.shutdown()
+    print("Scheduler stopped.")

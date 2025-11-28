@@ -1,6 +1,5 @@
 from datetime import datetime
 from uuid import UUID
-
 from sqlalchemy import select, insert, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import IntegrityError
@@ -8,9 +7,7 @@ from fastapi import HTTPException, status
 from sqlalchemy.orm import aliased
 from app import utils, models
 from app.models import User, Patient, password_reset_otps_table, PasswordResetToken
-
 from app import models, schemas, utils
-
 from app.models import password_reset_otps_table  
 from app.schemas import PatientCreate
 
@@ -18,7 +15,6 @@ async def get_user_by_email(db: AsyncSession, email: str) -> User | None:
     """Fetch a user by email."""
     result = await db.execute(select(User).where(User.email == email))
     return result.scalars().first()
-
 
 async def create_user(
     db: AsyncSession,
@@ -90,11 +86,8 @@ async def create_doctor(db: AsyncSession, data: dict, hospital_id: UUID):
     await db.refresh(doctor)
     return doctor, default_password, user.email
 
-
 async def create_patient(db: AsyncSession, data: schemas.PatientCreate):
-    # -----------------------------
     # Unique validations
-    # -----------------------------
     if data.email:
         result = await db.execute(select(models.Patient).where(models.Patient.email == data.email))
         if result.scalars().first():
@@ -110,9 +103,7 @@ async def create_patient(db: AsyncSession, data: schemas.PatientCreate):
         if result.scalars().first():
             raise HTTPException(status_code=400, detail="SSN already exists")
 
-    # -----------------------------
     # Create associated User
-    # -----------------------------
     default_password = utils.generate_default_password()
     full_name = f"{data.first_name} {data.last_name}"
 
@@ -124,38 +115,29 @@ async def create_patient(db: AsyncSession, data: schemas.PatientCreate):
         role="patient"
     )
 
-    # -----------------------------
     # Create Patient
-    # -----------------------------
     patient_dict = data.dict(exclude={"allergies", "consents", "patient_insurances", "pharmacy_insurances"})
     patient_dict["user_id"] = user.id
     
-     # ---------------------------------------------------------
-    # 🔥 ADD INSURANCE TOGGLE HANDLING HERE
-    # ---------------------------------------------------------
+    # ADD INSURANCE TOGGLE HANDLING HERE
     if data.is_insured:
-        patient_dict["insurance_status"] = "Insured"     # <-- ADDED
+        patient_dict["insurance_status"] = "Insured"     
     else:
-        patient_dict["insurance_status"] = "Self-Pay"    # <-- ADDED
-        data.patient_insurances = []                     # <-- ADDED
-        data.pharmacy_insurances = []                    # <-- ADDED
-    # --------------------------------------------------------
-    
+        patient_dict["insurance_status"] = "Self-Pay"    
+        data.patient_insurances = []                     
+        data.pharmacy_insurances = []                    
+   
     patient = models.Patient(**patient_dict)
     db.add(patient)
-    await db.flush()  # to get patient.id before commit
+    await db.flush()  
 
-    # -----------------------------
     # Add Allergies
-    # -----------------------------
     if data.allergies:
         for allergy_data in data.allergies:
             allergy = models.Allergy(**allergy_data.dict(), patient_id=patient.id)
             db.add(allergy)
 
-    # -----------------------------
-    # Add PatientConsent (Mandatory fields enforced)
-    # -----------------------------
+    # Add PatientConsent 
     if not data.consents:
         raise HTTPException(status_code=400, detail="Consent is required")
     
@@ -168,9 +150,7 @@ async def create_patient(db: AsyncSession, data: schemas.PatientCreate):
     consent = models.PatientConsent(**consent_data, patient_id=patient.id)
     db.add(consent)
 
-    # -----------------------------
     # Add Patient Insurances
-    # -----------------------------
     if getattr(data, "patient_insurances", None):
         for insurance_data in data.patient_insurances:
             # Fetch master insurance details
@@ -199,9 +179,7 @@ async def create_patient(db: AsyncSession, data: schemas.PatientCreate):
             )
             db.add(insurance)
 
-    # -----------------------------
     # Add Pharmacy Insurances
-    # -----------------------------
     if getattr(data, "pharmacy_insurances", None):
         for pharm_data in data.pharmacy_insurances:
             # Fetch master pharmacy insurance details
@@ -230,14 +208,71 @@ async def create_patient(db: AsyncSession, data: schemas.PatientCreate):
             )
             db.add(pharmacy_ins)
 
-    # -----------------------------
-    # Commit all changes
-    # -----------------------------
     await db.commit()
     await db.refresh(patient)
 
     return patient, default_password, user.email, patient.public_id
 
+async def get_patient_by_public_id(db: AsyncSession, public_id: str):
+    result = await db.execute(
+        select(models.Patient).where(models.Patient.public_id == public_id)
+    )
+    return result.scalars().first()
+
+
+async def update_patient_by_public_id(
+    db: AsyncSession,
+    public_id: str,
+    patient_in
+):
+    patient = await get_patient_by_public_id(db, public_id)
+    
+    if not patient:
+        return None
+
+    data = patient_in.dict(exclude_unset=True)
+
+    ALLOWED_UPDATE_FIELDS = {
+        "phone",
+        "email",
+        "address",
+        "city",
+        "state",
+        "zip_code",
+        "photo_url",
+        "marital_status",
+        "preferred_contact",
+
+        "weight",
+        "height",
+
+        "smoking_status",
+        "alcohol_use",
+        "diet",
+        "exercise_frequency",
+
+        "has_caregiver",
+        "caregiver_name",
+        "caregiver_relationship",
+        "caregiver_phone",
+        "caregiver_email",
+    }
+
+    # Only update allowed fields
+    for field in ALLOWED_UPDATE_FIELDS:
+        if field in data:
+            setattr(patient, field, data[field])
+
+    # Sync email with User table
+    if "email" in data and patient.user_id:
+        user = await db.get(models.User, patient.user_id)
+        if user:
+            user.email = data["email"]
+
+    await db.commit()
+    await db.refresh(patient)
+
+    return patient
 
 async def create_password_reset_token(db: AsyncSession, user_id: UUID, token: str, expires_at: datetime) -> PasswordResetToken:
     new_token = PasswordResetToken(user_id=user_id, token=token, expires_at=expires_at)
@@ -277,11 +312,10 @@ async def get_password_reset_otp(db: AsyncSession, email: str, otp: str):
         .where(password_reset_otps_table.c.otp == otp)
     )
     result = await db.execute(query)
-    record = result.mappings().first()  # <-- This makes it a dict-like object
+    record = result.mappings().first() 
     return record
 
 async def mark_otp_used(db: AsyncSession, email: str, otp: str):
-    # Get user ID by email
     user_alias = aliased(User)
     result = await db.execute(
         select(user_alias.id).where(user_alias.email == email)
@@ -290,7 +324,6 @@ async def mark_otp_used(db: AsyncSession, email: str, otp: str):
     if not user_id:
         return  
 
-    # Update OTP record for that user
     stmt = (
         update(password_reset_otps_table)
         .where(password_reset_otps_table.c.user_id == user_id)
@@ -326,7 +359,6 @@ async def get_hospital_by_id(db: AsyncSession, hospital_id: UUID):
 async def get_patients_by_hospital(db: AsyncSession, hospital_id: str):
     """Get all patients for a specific hospital"""
     try:
-        # Join User table to access hospital_id
         result = await db.execute(
             select(Patient)
             .join(User, Patient.user_id == User.id)

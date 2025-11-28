@@ -60,8 +60,6 @@ async def upload_lab_result_to_s3(file, patient_id: int, lab_order_id: int, hosp
         print("❌ Error uploading file to S3:", e)
         raise HTTPException(status_code=500, detail="Failed to upload file")
     
-
-
 async def upload_encounter_document_to_s3(
     file,
     hospital_id: int,

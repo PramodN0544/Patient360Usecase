@@ -61,7 +61,7 @@ async def create_user(
     # CREATE ROLE-SPECIFIC RECORDS
     # ---------------------------------------------------
 
-    # ✅ HOSPITAL
+    # HOSPITAL
     if user_in.role == "hospital":
         hospital = Hospital(
             name=user_in.full_name,
@@ -73,7 +73,7 @@ async def create_user(
         )
         db.add(hospital)
 
-    # ✅ DOCTOR
+    # DOCTOR
     elif user_in.role == "doctor":
         doctor = Doctor(
             user_id=user.id,
@@ -88,7 +88,7 @@ async def create_user(
         )
         db.add(doctor)
 
-    # ✅ PATIENT
+    # PATIENT
     elif user_in.role == "patient":
         patient = Patient(
             user_id=user.id,
@@ -158,10 +158,7 @@ async def update_user(
 
     return user
 
-
-# ---------------------------
 # ACTIVATE / DEACTIVATE USER
-# ---------------------------
 @router.put("/{user_id}/status")
 async def toggle_user_status(
     user_id: int,
