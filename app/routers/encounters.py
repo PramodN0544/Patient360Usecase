@@ -3,7 +3,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 from typing import List
-from datetime import date
+from datetime import date, datetime
+from reportlab.lib.pagesizes import letter
+from reportlab.pdfgen import canvas
+from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image
+from reportlab.lib import colors
+from io import BytesIO
+import os
 
 from app.database import get_db
 from app.models import Encounter, Doctor, Patient, Vitals, Medication, Assignment
@@ -405,6 +412,191 @@ async def get_encounter(
     out.patient_public_id = encounter.patient.public_id
 
     return out
+
+@router.post("/{encounter_id}/generate-pdf", response_model=EncounterOut)
+async def generate_encounter_pdf(
+    encounter_id: int,
+    current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    # Get the encounter with all related data
+    result = await db.execute(
+        select(Encounter)
+        .options(
+            selectinload(Encounter.vitals),
+            selectinload(Encounter.medications),
+            selectinload(Encounter.doctor),
+            selectinload(Encounter.hospital),
+            selectinload(Encounter.patient)
+        )
+        .where(Encounter.id == encounter_id)
+    )
+    
+    encounter = result.unique().scalar_one_or_none()
+    if not encounter:
+        raise HTTPException(404, "Encounter not found")
+    
+    # Verify permissions
+    if current_user.role == "doctor" and encounter.doctor.user_id != current_user.id:
+        raise HTTPException(403, "Not authorized to access this encounter")
+    
+    # Create PDF in memory
+    buffer = BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=letter)
+    styles = getSampleStyleSheet()
+    elements = []
+    
+    # Add CareIQ logo from mylogo.jpg
+    # Try different paths to find the logo
+    possible_paths = [
+        os.path.join("static", "mylogo.jpg"),
+        os.path.join("Patient360-Backend", "static", "mylogo.jpg"),
+        os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "static", "mylogo.jpg"))
+    ]
+    
+    logo_found = False
+    for logo_path in possible_paths:
+        if os.path.exists(logo_path):
+            elements.append(Image(logo_path, width=150, height=70))
+            logo_found = True
+            print(f"Logo found at: {logo_path}")
+            break
+    
+    if not logo_found:
+        # Fallback to text if image not found
+        elements.append(Paragraph("CareIQ", styles['Heading1']))
+        elements.append(Paragraph("Patient 360° Healthcare Platform", styles['Italic']))
+    
+    elements.append(Spacer(1, 12))
+    
+    # Add title
+    elements.append(Paragraph("Patient Encounter Report", styles['Heading1']))
+    elements.append(Spacer(1, 12))
+    
+    # Add encounter details
+    elements.append(Paragraph(f"Encounter ID: {encounter.id}", styles['Heading3']))
+    elements.append(Paragraph(f"Date: {encounter.encounter_date.strftime('%B %d, %Y')}", styles['Normal']))
+    elements.append(Paragraph(f"Type: {encounter.encounter_type}", styles['Normal']))
+    elements.append(Spacer(1, 12))
+    
+    # Add patient information
+    elements.append(Paragraph("Patient Information", styles['Heading2']))
+    elements.append(Paragraph(f"Name: {encounter.patient.first_name} {encounter.patient.last_name}", styles['Normal']))
+    elements.append(Paragraph(f"ID: {encounter.patient.public_id}", styles['Normal']))
+    elements.append(Paragraph(f"DOB: {encounter.patient.dob.strftime('%B %d, %Y')}", styles['Normal']))
+    elements.append(Paragraph(f"Gender: {encounter.patient.gender}", styles['Normal']))
+    elements.append(Spacer(1, 12))
+    
+    # Add doctor information
+    elements.append(Paragraph("Doctor Information", styles['Heading2']))
+    elements.append(Paragraph(f"Name: Dr. {encounter.doctor.first_name} {encounter.doctor.last_name}", styles['Normal']))
+    elements.append(Paragraph(f"Specialty: {encounter.doctor.specialty}", styles['Normal']))
+    elements.append(Spacer(1, 12))
+    
+    # Add reason for visit and diagnosis
+    elements.append(Paragraph("Clinical Information", styles['Heading2']))
+    elements.append(Paragraph(f"Reason for Visit: {encounter.reason_for_visit}", styles['Normal']))
+    elements.append(Paragraph(f"Diagnosis: {encounter.diagnosis or 'None provided'}", styles['Normal']))
+    elements.append(Paragraph(f"Notes: {encounter.notes or 'None provided'}", styles['Normal']))
+    elements.append(Spacer(1, 12))
+    
+    # Add vitals if available
+    if encounter.vitals:
+        elements.append(Paragraph("Vitals", styles['Heading2']))
+        vitals_data = [
+            ["Measurement", "Value"],
+            ["Height", f"{encounter.vitals[0].height} cm" if encounter.vitals[0].height else "Not recorded"],
+            ["Weight", f"{encounter.vitals[0].weight} kg" if encounter.vitals[0].weight else "Not recorded"],
+            ["BMI", f"{encounter.vitals[0].bmi}" if encounter.vitals[0].bmi else "Not calculated"],
+            ["Blood Pressure", encounter.vitals[0].blood_pressure or "Not recorded"],
+            ["Heart Rate", f"{encounter.vitals[0].heart_rate} bpm" if encounter.vitals[0].heart_rate else "Not recorded"],
+            ["Temperature", f"{encounter.vitals[0].temperature} °F" if encounter.vitals[0].temperature else "Not recorded"],
+            ["Respiration Rate", f"{encounter.vitals[0].respiration_rate} /min" if encounter.vitals[0].respiration_rate else "Not recorded"],
+            ["Oxygen Saturation", f"{encounter.vitals[0].oxygen_saturation}%" if encounter.vitals[0].oxygen_saturation else "Not recorded"]
+        ]
+        
+        vitals_table = Table(vitals_data, colWidths=[200, 300])
+        vitals_table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (1, 0), colors.lightblue),
+            ('TEXTCOLOR', (0, 0), (1, 0), colors.whitesmoke),
+            ('ALIGN', (0, 0), (1, 0), 'CENTER'),
+            ('FONTNAME', (0, 0), (1, 0), 'Helvetica-Bold'),
+            ('BOTTOMPADDING', (0, 0), (1, 0), 12),
+            ('BACKGROUND', (0, 1), (1, -1), colors.beige),
+            ('GRID', (0, 0), (-1, -1), 1, colors.black)
+        ]))
+        
+        elements.append(vitals_table)
+        elements.append(Spacer(1, 12))
+    
+    # Add medications if available
+    if encounter.medications:
+        elements.append(Paragraph("Medications", styles['Heading2']))
+        
+        med_data = [["Medication", "Dosage", "Frequency", "Route", "Start Date", "End Date"]]
+        for med in encounter.medications:
+            med_data.append([
+                med.medication_name,
+                med.dosage,
+                med.frequency,
+                med.route,
+                med.start_date.strftime('%m/%d/%Y') if med.start_date else "N/A",
+                med.end_date.strftime('%m/%d/%Y') if med.end_date else "Ongoing"
+            ])
+        
+        med_table = Table(med_data, colWidths=[100, 80, 80, 80, 80, 80])
+        med_table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.lightblue),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+            ('ALIGN', (0, 0), (-1, 0), 'CENTER'),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+            ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
+            ('GRID', (0, 0), (-1, -1), 1, colors.black)
+        ]))
+        
+        elements.append(med_table)
+        elements.append(Spacer(1, 12))
+    
+    # Add lab tests if required
+    if encounter.is_lab_test_required:
+        elements.append(Paragraph("Lab Tests Ordered", styles['Heading2']))
+        elements.append(Paragraph("Lab tests have been ordered for this patient.", styles['Normal']))
+        elements.append(Spacer(1, 12))
+    
+    # Add footer with timestamp
+    elements.append(Paragraph(f"Generated on: {datetime.now().strftime('%B %d, %Y %H:%M:%S')}", styles['Normal']))
+    elements.append(Paragraph("CareIQ Patient 360 - Confidential Medical Record", styles['Normal']))
+    
+    # Build PDF
+    doc.build(elements)
+    
+    # Get PDF data
+    pdf_data = buffer.getvalue()
+    buffer.close()
+    
+    # Create a temporary file-like object for S3 upload
+    pdf_file = BytesIO(pdf_data)
+    pdf_file.name = f"encounter_{encounter_id}_summary.pdf"
+    
+    # Upload to S3
+    file_path = await upload_encounter_document_to_s3(
+        hospital_id=encounter.hospital_id,
+        patient_id=encounter.patient_id,
+        encounter_id=encounter.id,
+        file=pdf_file
+    )
+    
+    # Update encounter documents array
+    current_docs = encounter.documents or []
+    current_docs.append(file_path)
+    encounter.documents = current_docs
+    
+    await db.commit()
+    await db.refresh(encounter)
+    
+    # Return updated encounter
+    return encounter
 
 @router.get("/doctors")
 async def get_all_doctors(
