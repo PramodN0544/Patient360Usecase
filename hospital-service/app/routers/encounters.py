@@ -43,16 +43,16 @@ def safe_parse(data: str):
 #        CREATE ENCOUNTER
 @router.post("/", response_model=EncounterOut)
 async def create_encounter(
-    encounter_in: str = Form(...),
-    files: List[UploadFile] = File(None),   # NEW
+    encounter_in: str = Form(...), 
+    files: List[UploadFile] | None = File(None),   # NEW
     current_user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
 
 
-    parsed_data = safe_parse(encounter_in)
+    parsed_data = json.loads(encounter_in) 
 
-    encounter_in = EncounterCreate(**parsed_data)
+    encounter_in = EncounterCreate(**json.loads(encounter_in))
 
     # ---------- DOCTOR / HOSPITAL VALIDATION ----------
     doctor_result = await db.execute(
@@ -200,11 +200,12 @@ async def create_encounter(
 @router.put("/{encounter_id}", response_model=EncounterOut)
 async def update_encounter(
     encounter_id: int,
-    encounter_in: EncounterUpdate,
-    files: List[UploadFile] = File(None),   # ⬅️ NEW
+    encounter_in: str = Form(...),
+    files: List[UploadFile] | None = File(None),   # ⬅️ NEW
     current_user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
+    encounter_in = EncounterCreate(**json.loads(encounter_in))
 
     result = await db.execute(
         select(Encounter)
