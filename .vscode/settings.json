@@ -1,6 +1,0 @@
-{
-    "python.analysis.extraPaths": [
-        "./hospital-service/app",
-        "./hospital-service/app/routers"
-    ]
-}
