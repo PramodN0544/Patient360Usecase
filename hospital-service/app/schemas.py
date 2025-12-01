@@ -51,7 +51,9 @@ class HospitalOut(BaseModel):
     class Config:
         orm_mode = True
 
+# ================================
 # DOCTOR SCHEMAS
+# ================================
 class DoctorCreate(BaseModel):
     npi_number: str
     first_name: str
@@ -67,6 +69,7 @@ class DoctorCreate(BaseModel):
     start_time: Optional[time] = None
     end_time: Optional[time] = None
     mode_of_consultation: Optional[str] = None
+
 
 class DoctorOut(DoctorCreate):
     id: int
@@ -138,11 +141,11 @@ class PharmacyInsuranceMasterOut(BaseModel):
         
 # Input schema for POST request
 class PatientPharmacyInsuranceCreate(BaseModel):
-    pharmacy_insurance_id: int 
-    policy_number: str         
+    pharmacy_insurance_id: int  # Reference to master plan
+    policy_number: str          # Patient-specific, manual input
     effective_date: date
     expiry_date: date
-    priority: Optional[str] = "primary" 
+    priority: Optional[str] = "primary"  # primary / secondary
 
 # Output schema for GET response
 class PatientPharmacyInsuranceOut(BaseModel):
@@ -164,7 +167,7 @@ class PatientPharmacyInsuranceOut(BaseModel):
     created_at: datetime
 
     class Config:
-        orm_mode = True  
+        orm_mode = True  # allows SQLAlchemy models to be returned directly
 
 # Response schema 
 class PatientInsuranceOut(BaseModel):
@@ -199,6 +202,7 @@ class PatientInsuranceCreate(BaseModel):
         orm_mode = True
 
 # PATIENT SCHEMAS
+# ================================
 class PatientCreate(BaseModel):
     first_name: str
     last_name: str
@@ -218,7 +222,7 @@ class PatientCreate(BaseModel):
     visa_type: Optional[str] = None
     photo_url: Optional[str]        
     id_proof_document: Optional[str] 
-
+    # New fields
     marital_status: Optional[str] = None
     preferred_contact: Optional[str] = "phone"
     has_caregiver: Optional[bool] = False
@@ -232,11 +236,13 @@ class PatientCreate(BaseModel):
     exercise_frequency: Optional[str] = None
     
     is_insured: bool = False
-   
+    # Related records
     allergies: Optional[List[AllergyCreate]] = []
     consents: Optional[PatientConsentCreate] = None
     patient_insurances: Optional[List[PatientInsuranceCreate]] = []
     pharmacy_insurances: Optional[List[PatientPharmacyInsuranceCreate]] = []
+    
+    
     
 class PatientOut(BaseModel):
     id: int
@@ -273,33 +279,42 @@ class PatientOut(BaseModel):
     insurance_status: Optional[str] = "Self-Pay"
     created_at: Optional[datetime] = None
    
-    # FIXED NESTED OUTPUT RELATIONS
+    # ✅ FIXED NESTED OUTPUT RELATIONS
     allergies: List[AllergyOut] = []
     consents: Optional[PatientConsentOut] = None
     patient_insurances: List[PatientInsuranceOut] = []
     pharmacy_insurances: List[PatientPharmacyInsuranceOut] = []
     encounters: List["EncounterOut"] = []
     
+    
+
     class Config:
         orm_mode = True
 
+
+# ================================
 # AUTH SCHEMAS
+# ================================
 class Token(BaseModel):
     access_token: str
     token_type: str = "bearer"
 
+
 class TokenData(BaseModel):
     email: Optional[str] = None
+
 
 class LoginRequest(BaseModel):
     username: EmailStr
     password: str
+
 
 class UserCreate(BaseModel):
     email: EmailStr
     password: str = Field(..., max_length=72)
     full_name: Optional[str]
     role: Optional[str] = "hospital"
+
 
 class UserOut(BaseModel):
     id: int
@@ -311,14 +326,18 @@ class UserOut(BaseModel):
     class Config:
         orm_mode = True
 
+
 class SignupResponse(BaseModel):
     user: UserOut
     hospital: HospitalOut
 
+# ================================
 # APPOINTMENT SCHEMAS
+# ================================
 class AppointmentCreate(BaseModel):
     hospital_id: int
     doctor_id: int
+    # patient_id: int (will be derived from auth)
     appointment_date: date
     appointment_time: time
     reason: Optional[str] = None
@@ -326,6 +345,7 @@ class AppointmentCreate(BaseModel):
 
     class Config:
         orm_mode = True
+
 
 class AppointmentResponse(BaseModel):
     id: int
@@ -341,7 +361,10 @@ class AppointmentResponse(BaseModel):
     class Config:
         orm_mode = True
 
+
+# ================================
 # VITALS SCHEMAS
+# ================================
 class VitalsCreate(BaseModel):
     height: Optional[float] = None
     weight: Optional[float] = None
@@ -354,6 +377,7 @@ class VitalsCreate(BaseModel):
     class Config:
         orm_mode = True
 
+
 class VitalsOut(VitalsCreate):
     id: int
     encounter_id: Optional[int] = None
@@ -363,7 +387,9 @@ class VitalsOut(VitalsCreate):
     class Config:
         orm_mode = True
 
+# ================================
 # MEDICATION SCHEMAS
+# ================================
 class MedicationCreate(BaseModel):
     doctor_id: Optional[int] = None
     appointment_id: Optional[int] = None
@@ -383,6 +409,7 @@ class MedicationCreate(BaseModel):
     class Config:
         orm_mode = True
 
+
 class MedicationOut(BaseModel):
     id: int
     patient_id: int
@@ -400,8 +427,7 @@ class MedicationOut(BaseModel):
 
     class Config:
         orm_mode = True
-      
-        
+
 class LabOrderCreate(BaseModel):
     test_name: str
     priority: Optional[str] = None
@@ -409,7 +435,6 @@ class LabOrderCreate(BaseModel):
 
     class Config:
         orm_mode = True
-
 class EncounterCreate(BaseModel):
     patient_public_id: Optional[str]  
     doctor_id: Optional[int] = None  
@@ -422,12 +447,12 @@ class EncounterCreate(BaseModel):
     follow_up_date: Optional[date] = None
     status: Optional[str] = "open"
     is_lab_test_required: Optional[bool] = False  
-    lab_orders: Optional[List[LabOrderCreate]] = None  
     vitals: Optional[VitalsCreate] = None
     medications: Optional[List[MedicationCreate]] = []
     documents: Optional[List[str]] = None  
     class Config:
         orm_mode = True
+
 
 class EncounterOut(BaseModel):
     id: int
@@ -445,9 +470,8 @@ class EncounterOut(BaseModel):
     hospital_name: Optional[str] 
     vitals: List[VitalsOut] = []
     medications: List[MedicationOut] = []
-    is_lab_test_required: Optional[bool] = False  
-    documents: Optional[List[str]] = None  
-
+    is_lab_test_required: Optional[bool] = False  # <
+    documents: Optional[List[str]] = None  # <-- Add this
     class Config:
         orm_mode = True
         
@@ -462,6 +486,7 @@ class EncounterBase(BaseModel):
     class Config:
         orm_mode = True
 
+
 class EncounterResponse(BaseModel):
     id: int
     encounter_id: str
@@ -473,6 +498,7 @@ class EncounterResponse(BaseModel):
 
     class Config:
         orm_mode = True
+
 
 class PatientEncounterResponse(EncounterBase):
     id: int
@@ -509,8 +535,7 @@ class EncounterUpdate(BaseModel):
     vitals: Optional[VitalsUpdate]
     medications: Optional[List[MedicationUpdate]]
     documents: Optional[List[str]] = None 
-    lab_orders: Optional[List[LabOrderCreate]] = None   
-
+# INSURANCE MASTER SCHEMAS
 class InsuranceMasterOut(BaseModel):
     id: int
     provider_name: str
@@ -529,6 +554,7 @@ class InsuranceMasterOut(BaseModel):
     class Config:
         orm_mode = True
 
+
 class PharmacyInsuranceMasterOut(BaseModel):
     id: int
     provider_name: str
@@ -545,15 +571,18 @@ class PharmacyInsuranceMasterOut(BaseModel):
         orm_mode = True
         
 # Input schema for POST request
+# ------------------------------
 class PatientPharmacyInsuranceCreate(BaseModel):
     patient_id: int
-    pharmacy_insurance_id: int  
-    policy_number: str          
+    pharmacy_insurance_id: int  # Reference to master plan
+    policy_number: str          # Patient-specific, manual input
     effective_date: date
     expiry_date: date
-    priority: Optional[str] = "primary"  \
-    
+    priority: Optional[str] = "primary"  # primary / secondary
+
+# ------------------------------
 # Output schema for GET response
+# ------------------------------
 class PatientPharmacyInsuranceOut(BaseModel):
     id: int
     patient_id: int
@@ -573,9 +602,10 @@ class PatientPharmacyInsuranceOut(BaseModel):
     created_at: datetime
 
     class Config:
-        orm_mode = True  
-
-# Response schema
+        orm_mode = True  # allows SQLAlchemy models to be returned directly
+# -----------------------------
+# Response schema (Out)
+# -----------------------------
 class PatientInsuranceOut(BaseModel):
     id: int
     patient_id: int
@@ -597,7 +627,10 @@ class PatientInsuranceOut(BaseModel):
     class Config:
         orm_mode = True
 
+
+# -----------------------------
 # Create schema (input)
+# -----------------------------
 class PatientInsuranceCreate(BaseModel):
     insurance_id: int                     
     effective_date: date
@@ -615,14 +648,22 @@ class PatientsWithCount(BaseModel):
     class Config:
         orm_mode = True
 
-# Schema for test list
+
+
+
+# ============================================================
+# Schema for test list (dropdown)
+# ============================================================
 class LabTestCode(BaseModel):
     test_code: str
 
     class Config:
         orm_mode = True
 
+
+# ============================================================
 # Schema for full test details
+# ============================================================
 class LabTestDetail(BaseModel):
     test_code: str
     test_name: str
@@ -634,6 +675,7 @@ class LabTestDetail(BaseModel):
     class Config:
         orm_mode = True
         
+
 class LabOrderCreate(BaseModel):
     test_code: str
 
@@ -667,6 +709,7 @@ class LabResultResponse(BaseModel):
     class Config:
         orm_mode = True
 
+
 class LabTestCode(BaseModel):
     test_code: str
 
@@ -681,7 +724,10 @@ class LabTestDetail(BaseModel):
     class Config:
         orm_mode = True
 
+
+# -----------------------------
 # Base Lab Result Schema
+# -----------------------------
 class LabResultBase(BaseModel):
     id: int
     test_name: str
@@ -690,12 +736,18 @@ class LabResultBase(BaseModel):
     file_url: Optional[str] = None
     notes: Optional[str] = None
 
+
+# -----------------------------
 # Patient Dashboard Schema
+# -----------------------------
 class LabResultPatientResponse(LabResultBase):
     class Config:
         orm_mode = True
 
+
+# -----------------------------
 # Doctor Dashboard Schema
+# -----------------------------
 class LabResultDoctorResponse(LabResultBase):
     patient_id: int
     encounter_id: int
@@ -703,7 +755,10 @@ class LabResultDoctorResponse(LabResultBase):
     class Config:
         orm_mode = True
 
+
+# -----------------------------
 # Hospital Dashboard Schema
+# -----------------------------
 class LabResultHospitalResponse(LabResultBase):
     patient_id: int
     doctor_id: int
@@ -712,6 +767,9 @@ class LabResultHospitalResponse(LabResultBase):
 
     class Config:
         orm_mode = True
+
+        
+
 
 class SpecialtyResponse(BaseModel):
     specialty: List[str]
@@ -729,6 +787,7 @@ class AssignmentBase(BaseModel):
     reason: Optional[str] = None
     old_medications: Optional[List[Dict[str, str]]] = []
 
+
 class DoctorBase(BaseModel):
     first_name: str
     last_name: str
@@ -739,6 +798,7 @@ class DoctorBase(BaseModel):
 class DoctorResponse(DoctorBase):
     id: int
     
+
 class TreatmentPlanBase(BaseModel):
     name: str
     description: Optional[str] = None
@@ -749,24 +809,20 @@ class TreatmentPlanResponse(TreatmentPlanBase):
     class Config:
         orm_mode = True
 
-class ChatBase(BaseModel):
+# Chat Schemas
+class ChatMessageBase(BaseModel):
     message: str
 
-class ChatCreate(ChatBase):
-    receiver_id: int
-    doctor_id: int | None = None
-    patient_id: int | None = None
+class ChatMessageCreate(ChatMessageBase):
+    pass
 
-class ChatOut(BaseModel):
+class ChatMessageOut(ChatMessageBase):
     id: int
+    chat_id: int
     sender_id: int
-    receiver_id: int
-    doctor_id: int | None
-    patient_id: int | None
-    message: str
-    timestamp: datetime
-    doctor_name: str | None = None
-    patient_name: str | None = None
+    sender_type: str
+    is_read: bool
+    sent_at: datetime
 
     class Config:
         orm_mode = True
@@ -795,11 +851,94 @@ class TaskOut(BaseModel):
 
     class Config:
         orm_mode = True
+class SendToRecipientRequest(BaseModel):
+    recipient_id: int
+    message: str
+class ChatUserStatusBase(BaseModel):
+    is_typing: Optional[bool] = False
+    online: Optional[bool] = False
 
+class ChatUserStatusUpdate(ChatUserStatusBase):
+    pass
+
+class ChatUserStatusOut(ChatUserStatusBase):
+    id: int
+    chat_id: int
+    user_id: int
+    last_seen: datetime
+    updated_at: datetime
+
+    class Config:
+        orm_mode = True
+
+class ChatBase(BaseModel):
+    patient_id: Optional[int] = None
+    doctor_id: Optional[int] = None
+    encounter_id: Optional[int] = None
+
+class ChatCreate(ChatBase):
+    pass
+
+class ChatOut(ChatBase):
+    id: int
+    created_at: datetime
+    updated_at: datetime
+    messages: List[ChatMessageOut] = []
+    
+    class Config:
+        orm_mode = True
+
+class ChatParticipantInfo(BaseModel):
+    id: int
+    public_id: str
+    name: str
+    role: str
+    photo_url: Optional[str] = None
+
+class ChatSummary(BaseModel):
+    id: int
+    patient: ChatParticipantInfo
+    doctor: ChatParticipantInfo
+    last_message: Optional[ChatMessageOut] = None
+    unread_count: int = 0
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        orm_mode = True
+
+class DoctorBasicInfo(BaseModel):
+    id: int
+    public_id: Optional[str] = ""
+    name: str
+    email: Optional[str] = None
+    specialty: Optional[str] = None
+    role: str = "doctor"
+    encounter_id: Optional[int] = None
+    photo_url: Optional[str] = None
+    
+    class Config:
+        orm_mode = True
+
+class PatientBasicInfo(BaseModel):
+    id: int
+    public_id: str
+    name: str
+    email: Optional[str] = None
+    role: str = "patient"
+    encounter_id: Optional[int] = None
+    photo_url: Optional[str] = None
+    
+    class Config:
+        orm_mode = True
+           
+# Resolve forward references for Pydantic models defined out-of-order
 PatientOut.update_forward_refs()
 PatientsWithCount.update_forward_refs() 
         
+# ================================
 # Hospital Patient Overview Schema
+
 class HospitalPatientOut(BaseModel):
     patient_id: int
     patient_name: str | None
@@ -834,11 +973,13 @@ class AdminUserCreate(BaseModel):
     role: AllowedRoles
     hospital_id: Optional[int] = None
 
+
 class AdminUserUpdate(BaseModel):
     full_name: Optional[str] = None
     role: Optional[AllowedRoles] = None
     hospital_id: Optional[int] = None
     is_active: Optional[bool] = None
+
 
 class AdminUserOut(BaseModel):
     id: int
@@ -894,7 +1035,6 @@ class NotificationOut(BaseModel):
 
     class Config:
         orm_mode = True
-        
 class HospitalUpdate(BaseModel):
     website: Optional[str] = None
     consultation_fee: Optional[float] = None
@@ -925,3 +1065,29 @@ class PatientUpdate(BaseModel):
     caregiver_relationship: Optional[str]
     caregiver_phone: Optional[str]
     caregiver_email: Optional[str]
+class PatientSearchRequest(BaseModel):
+    name: Optional[str] = None
+    phone: Optional[str] = None
+    ssn: Optional[str] = None
+
+
+class PatientSearchOut(BaseModel):
+    id: int
+    first_name: str
+    last_name: str
+    dob: Optional[date]
+    gender: Optional[str]
+    public_id: str
+    ssn: Optional[str]
+    phone: Optional[str]
+    email: Optional[str]
+    address: Optional[str]
+    city: Optional[str]
+    state: Optional[str]
+    zip_code: Optional[str]
+    country: Optional[str]
+    citizenship_status: Optional[str]
+    visa_type: Optional[str]
+
+    class Config:
+        orm_mode = True

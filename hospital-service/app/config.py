@@ -12,8 +12,3 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 APP_HOST = os.getenv("APP_HOST", "0.0.0.0")
 APP_PORT = int(os.getenv("APP_PORT", 8000))
 
-class Settings(BaseSettings):
-    SECRET_KEY: str = os.getenv("CHAT_JWT_SECRET")
-    ALGORITHM: str = "HS256"
-
-settings = Settings()

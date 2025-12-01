@@ -17,6 +17,17 @@ from app.routers import pharmacy_insurance_master
 from app.routers import file_upload
 from app.routers import lab_routes
 from app.routers import hospitals
+from app.routers import chat_api
+from fastapi import WebSocket, WebSocketDisconnect, Query
+from app.web_socket import chat_manager, get_user_from_token, check_chat_access, process_websocket_message
+from app.web_socket import socket_app, sio
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
+from app.routers import tasks
+from app.routers import admin_users
+
+# SQLAlchemy utilities and models used in route handlers
 from app.routers import appointment,vitals,file_upload,assignments,insurance_master,pharmacy_insurance_master,doctors, tasks
 from app.schemas import PatientUpdate
 from app import crud as patient_crud
@@ -24,7 +35,6 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 from app import models
 from app.auth import router as auth_router
-from app.routers import patient_message_with_doctor,admin_users
 from .utils import create_access_token
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from app.routers.appointment_reminder import send_appointment_reminders
@@ -33,6 +43,8 @@ from app.database import AsyncSessionLocal as async_session
 
 app = FastAPI(title="CareIQ Patient 360 API")
 app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
+app.mount("/socket.io", socket_app, name="socketio")
+
 apply_cors(app)
 app.include_router(medications.router)
 app.include_router(notifications.router)
@@ -49,10 +61,12 @@ app.include_router(searchPatientInHospital.router)
 app.include_router(encounters.router)
 app.include_router(auth_router)
 app.include_router(hospitals.router)
-app.include_router(patient_message_with_doctor.router)
 app.include_router(hospitals.router)
+app.include_router(chat_api.router)
 app.include_router(tasks.router)
 app.include_router(admin_users.router)
+
+# Auto-create tables
 
 @app.on_event("startup")
 async def startup():
@@ -60,7 +74,57 @@ async def startup():
         await conn.run_sync(Base.metadata.create_all)
     print("Database schema synchronized successfully")
 
-
+# Add the WebSocket endpoint
+@app.websocket("/api/ws/chat/{chat_id}")  # Changed path to avoid conflict
+async def websocket_endpoint(
+    websocket: WebSocket,
+    chat_id: int,
+    token: str = Query(None)
+):
+    if not token:
+        await websocket.close(code=1008)  # Policy violation
+        return
+    
+    try:
+        # Validate the token
+        user = await get_user_from_token(token)
+        if not user:
+            await websocket.close(code=1008)
+            return
+        
+        # Check if user has access to this chat
+        has_access = await check_chat_access(chat_id, user.id)
+        if not has_access:
+            await websocket.close(code=1008)
+            return
+        
+        # Accept the connection - this was missing proper error handling
+        try:
+            await websocket.accept()  # Ensure this happens before any other WebSocket operations
+            await chat_manager.connect(websocket, chat_id, user.id)
+        except Exception as e:
+            print(f"Error accepting WebSocket connection: {e}")
+            await websocket.close(code=1011)
+            return
+        
+        try:
+            # Keep the connection open and handle messages
+            while True:
+                data = await websocket.receive_json()
+                await process_websocket_message(data, chat_id, user.id)
+        except WebSocketDisconnect:
+            # Handle disconnection
+            await chat_manager.disconnect(chat_id, user.id)
+        except Exception as e:
+            print(f"Error in WebSocket message handling: {e}")
+            await chat_manager.disconnect(chat_id, user.id)
+    except Exception as e:
+        print(f"WebSocket error: {e}")
+        try:
+            await websocket.close(code=1011)  # Internal error
+        except:
+            pass  # Already closed
+        
 ACCESS_TOKEN_EXPIRE_MINUTES = 60
 
 @app.post("/auth/login")
@@ -395,6 +459,32 @@ async def logout(current_user=Depends(get_current_user)):
     """
     return {"message": "Logged out successfully"}
 
+# Add custom exception handlers
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request, exc):
+    """
+    Handle validation errors with more detailed information
+    """
+    print(f"Validation error: {exc}")
+    return JSONResponse(
+        status_code=422,
+        content={
+            "detail": "Request validation error",
+            "errors": exc.errors(),
+            "body": exc.body
+        },
+    )
+
+@app.exception_handler(StarletteHTTPException)
+async def http_exception_handler(request, exc):
+    """
+    Handle HTTP exceptions with more information
+    """
+    print(f"HTTP exception: {exc.detail} (status_code={exc.status_code})")
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"detail": exc.detail},
+    )
 # Create scheduler (global)
 scheduler = AsyncIOScheduler()
 

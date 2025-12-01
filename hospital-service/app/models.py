@@ -92,6 +92,8 @@ class Doctor(Base, TimestampMixin):
     __tablename__ = "doctors"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
+    public_id = Column(String(150), unique=True, nullable=False, index=True, default=generate_doctor_public_id)
+
     user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     hospital_id = Column(Integer, ForeignKey("hospitals.id"))
     npi_number = Column(String(100), unique=True)
@@ -510,27 +512,92 @@ class TreatmentPlanMaster(Base):
     status = Column(String(20), default="Active")
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
+
+class Chat(Base, TimestampMixin):
+    __tablename__ = "chats"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    patient_id = Column(Integer, ForeignKey("patients.id"), nullable=False)
+    doctor_id = Column(Integer, ForeignKey("doctors.id"), nullable=False)
+    encounter_id = Column(Integer, ForeignKey("encounters.id"), nullable=True)
+
+    # Relationships
+    patient = relationship("Patient", backref="chats_as_patient")
+    doctor = relationship("Doctor", backref="chats_as_doctor")
+    encounter = relationship("Encounter", backref="chats")
+
+    messages = relationship(
+        "ChatMessage",
+        back_populates="chat",
+        cascade="all, delete-orphan"
+    )
+
+    user_statuses = relationship(
+        "ChatUserStatus",
+        back_populates="chat",
+        cascade="all, delete-orphan"
+    )
+    
 class ChatMessage(Base):
     __tablename__ = "chat_messages"
 
-    id = Column(Integer, primary_key=True, index=True)
-    
-    sender_id = Column(Integer, ForeignKey("users.id"), nullable=False)
-    receiver_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    id = Column(Integer, primary_key=True, autoincrement=True)
 
-    doctor_id = Column(Integer, ForeignKey("doctors.id"), nullable=True)
-    patient_id = Column(Integer, ForeignKey("patients.id"), nullable=True)
+    chat_id = Column(Integer, ForeignKey("chats.id", ondelete="CASCADE"), nullable=False)
+
+    sender_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    doctor_id = Column(Integer, ForeignKey("doctors.id"), nullable=False)
+    patient_id = Column(Integer, ForeignKey("patients.id"), nullable=False)
 
     message = Column(Text, nullable=False)
-
     timestamp = Column(DateTime, default=datetime.utcnow)
+    _is_read = Column("is_read", Boolean, default=False)  # Actual database column
+    _sender_type = Column("sender_type", String(20), nullable=True)  # Actual database column
 
-    # Optional relationships
+    # Relationships
+    chat = relationship("Chat", back_populates="messages")
     sender = relationship("User", foreign_keys=[sender_id])
-    receiver = relationship("User", foreign_keys=[receiver_id])
-
     doctor = relationship("Doctor", foreign_keys=[doctor_id])
     patient = relationship("Patient", foreign_keys=[patient_id])
+
+    @property
+    def sent_at(self):
+        return self.timestamp
+
+    @property
+    def sender_type(self):
+        # If _sender_type is set, use it, otherwise compute it
+        if self._sender_type:
+            return self._sender_type
+        return "patient" if self.sender_id == self.patient_id else "doctor"
+    
+    @sender_type.setter
+    def sender_type(self, value):
+        # Store the value in the _sender_type column
+        self._sender_type = value
+
+    @property
+    def is_read(self):
+        return self._is_read
+    
+    @is_read.setter
+    def is_read(self, value):
+        self._is_read = value
+
+class ChatUserStatus(Base):
+    __tablename__ = "chat_user_status"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    chat_id = Column(Integer, ForeignKey("chats.id", ondelete="CASCADE"), nullable=False)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+
+    is_typing = Column(Boolean, default=False)
+    last_seen = Column(DateTime, default=datetime.utcnow)
+    online = Column(Boolean, default=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    chat = relationship("Chat", back_populates="user_statuses")
+    user = relationship("User")
 
 class PatientTask(Base, TimestampMixin):
     __tablename__ = "patient_tasks"
