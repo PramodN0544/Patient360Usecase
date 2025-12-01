@@ -22,7 +22,7 @@ ssl_ctx.verify_mode = ssl.CERT_NONE
 
 engine = create_async_engine(
     DATABASE_URL,
-    echo=True,
+    echo=False,
     connect_args={"ssl": ssl_ctx},  
 )
 
