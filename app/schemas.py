@@ -1091,3 +1091,81 @@ class PatientSearchOut(BaseModel):
 
     class Config:
         orm_mode = True
+
+
+class AppointmentListResponse(BaseModel):
+    appointments: List[AppointmentResponse]
+    total_count: int
+    status_counts: Optional[Dict[str, int]] = None
+    today_count: Optional[int] = None
+    upcoming_count: Optional[int] = None
+
+
+class RescheduleAppointment(BaseModel):
+    new_date: date
+    new_time: time
+    reason: Optional[str] = None
+
+
+class AppointmentStats(BaseModel):
+    status_counts: Dict[str, int]
+    today_count: int
+    upcoming_count: int
+    total_appointments: int
+
+
+class AppointmentFilter(BaseModel):
+    status: Optional[str] = None
+    date_filter: Optional[str] = None
+    search: Optional[str] = None
+    doctor_id: Optional[int] = None
+    patient_id: Optional[int] = None
+
+class AppointmentStatusUpdate(BaseModel):
+    status: str
+    notes: Optional[str] = None
+
+class UpcomingAppointmentResponse(BaseModel):
+    appointment_id: int
+    patient_public_id: str
+    patient_name: str
+    date: date
+    time: time
+    reason: str
+    status: str
+
+    class Config:
+        orm_mode = True
+
+class UpcomingAppointmentsResponse(BaseModel):
+    upcoming_appointments: List[UpcomingAppointmentResponse]
+
+class TodayAppointmentsResponse(BaseModel):
+    today_appointments: int
+
+class MonthlyVisitResponse(BaseModel):
+    month: str
+    patient_visits: int
+
+    class Config:
+        orm_mode = True
+
+
+
+# Add to your schemas.py
+
+class AppointmentPatientResponse(BaseModel):
+    appointment_id: int
+    hospital_id: int
+    hospital_name: str
+    doctor_id: int
+    doctor_name: str
+    doctor_specialty: str
+    appointment_date: str
+    appointment_time: Optional[str]
+    reason: Optional[str]
+    mode: str
+    status: str
+
+    class Config:
+        orm_mode = True

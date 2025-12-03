@@ -3,14 +3,19 @@ import os
 import smtplib
 import uuid
 from email.mime.text import MIMEText
+from sqlalchemy.orm import selectinload
+from sqlalchemy import func,or_
 from typing import Optional, List
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy import func
 from app.models import Notification, Appointment, Hospital, Doctor, Patient
-from app.schemas import AppointmentCreate
+from app import schemas, models
+from app.schemas import AppointmentCreate, AppointmentPatientResponse
 from app.auth import get_current_user
+from datetime import date
+
 
 router = APIRouter(prefix="/appointments", tags=["Appointments"])
 
@@ -427,34 +432,103 @@ Patient360 Team
     else:
         print("ℹ️ Email credentials not configured, skipping email sending")
 
+# In your appointment.py router, add this endpoint
+@router.get("/patient", response_model=List[schemas.AppointmentPatientResponse])
+async def get_my_appointments(
+    status: Optional[str] = Query(None),
+    date_filter: Optional[str] = Query(None),
+    search: Optional[str] = Query(None),
+    current_user=Depends(get_current_user), 
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Get appointments for the current patient.
+    This is the endpoint that React is calling.
+    """
+    # Validate role - only patients can access this endpoint
+    if current_user.role != "patient":
+        raise HTTPException(status_code=403, detail="Only patients can access this endpoint")
 
-# GET /appointments/patient
-# Get current patient's appointments (latest first)
-@router.get("/patient")
-async def get_my_appointments(current_user=Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     # Fetch patient by user_id
-    patient_result = await db.execute(select(Patient).filter(Patient.user_id == current_user.id))
+    patient_result = await db.execute(select(models.Patient).filter(models.Patient.user_id == current_user.id))
     patient = patient_result.unique().scalar_one_or_none()
+    
     if not patient:
         raise HTTPException(status_code=404, detail="Patient profile not found")
 
-    # Fetch appointments sorted from latest to oldest
-    result = await db.execute(
-        select(Appointment)
-        .filter(Appointment.patient_id == patient.id)
-        .order_by(
-            Appointment.appointment_date.desc(),
-            Appointment.appointment_time.desc().nullslast()
+    # Base query for patient's appointments
+    stmt = (
+        select(models.Appointment)
+        .filter(models.Appointment.patient_id == patient.id)
+        .options(
+            selectinload(models.Appointment.patient),
+            selectinload(models.Appointment.doctor),
+            selectinload(models.Appointment.hospital)
         )
     )
+
+    # Apply status filter
+    if status and status != "all":
+        stmt = stmt.where(models.Appointment.status == status)
+
+    # Apply date filter
+    today = date.today()
+    if date_filter:
+        if date_filter == "today":
+            stmt = stmt.where(models.Appointment.appointment_date == today)
+        elif date_filter == "week":
+            week_end = today + timedelta(days=7)
+            stmt = stmt.where(
+                models.Appointment.appointment_date >= today,
+                models.Appointment.appointment_date <= week_end
+            )
+        elif date_filter == "month":
+            month_end = today + timedelta(days=30)
+            stmt = stmt.where(
+                models.Appointment.appointment_date >= today,
+                models.Appointment.appointment_date <= month_end
+            )
+        elif date_filter == "past":
+            stmt = stmt.where(models.Appointment.appointment_date < today)
+
+    # Apply search filter
+    if search:
+        search_term = f"%{search}%"
+        stmt = stmt.where(
+            or_(
+                models.Appointment.doctor.has(
+                    or_(
+                        models.Doctor.first_name.ilike(search_term),
+                        models.Doctor.last_name.ilike(search_term)
+                    )
+                ),
+                models.Appointment.reason.ilike(search_term)
+            )
+        )
+
+    # Order by date and time (newest first)
+    stmt = stmt.order_by(
+        models.Appointment.appointment_date.desc(),
+        models.Appointment.appointment_time.desc().nullslast()
+    )
+
+    # Execute query
+    result = await db.execute(stmt)
     appointments = result.unique().scalars().all()
 
+    # Format response to match your existing format
     enriched = []
     for appt in appointments:
-        doctor_result = await db.execute(select(Doctor).filter(Doctor.id == appt.doctor_id))
+        # Get doctor details
+        doctor_result = await db.execute(
+            select(models.Doctor).filter(models.Doctor.id == appt.doctor_id)
+        )
         doctor = doctor_result.unique().scalar_one_or_none()
 
-        hosp_result = await db.execute(select(Hospital).filter(Hospital.id == appt.hospital_id))
+        # Get hospital details
+        hosp_result = await db.execute(
+            select(models.Hospital).filter(models.Hospital.id == appt.hospital_id)
+        )
         hosp = hosp_result.unique().scalar_one_or_none()
 
         enriched.append({
@@ -472,54 +546,3 @@ async def get_my_appointments(current_user=Depends(get_current_user), db: AsyncS
         })
 
     return enriched
-
-# GET /appointments/doctor/{doctor_id}
-# Get appointments for a doctor (latest first)
-@router.get("/doctor/{doctor_id}")
-async def get_appointments_by_doctor(doctor_id: int, db: AsyncSession = Depends(get_db)):
-    # Fetch appointments sorted from latest to oldest
-    result = await db.execute(
-        select(Appointment)
-        .filter(Appointment.doctor_id == doctor_id)
-        .order_by(
-            Appointment.appointment_date.desc(),
-            Appointment.appointment_time.desc().nullslast()
-        )
-    )
-    appointments = result.scalars().all()
-
-    enriched = []
-    for appt in appointments:
-        patient_result = await db.execute(select(Patient).filter(Patient.id == appt.patient_id))
-        patient = patient_result.scalar_one_or_none()
-
-        hosp_result = await db.execute(select(Hospital).filter(Hospital.id == appt.hospital_id))
-        hosp = hosp_result.scalar_one_or_none()
-
-        enriched.append({
-            "appointment_id": appt.id,
-            "hospital_id": appt.hospital_id,
-            "hospital_name": hosp.name if hosp else "Unknown Hospital",
-            "patient_id": patient.id if patient else None,
-            "patient_name": f"{patient.first_name} {patient.last_name}" if patient else "Unknown Patient",
-            "appointment_date": str(appt.appointment_date),
-            "appointment_time": appt.appointment_time.strftime("%H:%M") if appt.appointment_time else None,
-            "reason": appt.reason,
-            "mode": appt.mode,
-            "status": appt.status
-        })
-
-    return enriched
-
-# PUT /appointments/{appointment_id}/cancel
-@router.put("/{appointment_id}/cancel")
-async def cancel_appointment(appointment_id: int, db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(Appointment).filter(Appointment.id == appointment_id))
-    appt = result.scalar_one_or_none()
-    if not appt:
-        raise HTTPException(status_code=404, detail="Appointment not found")
-
-    appt.status = "Cancelled"
-    db.add(appt)
-    await db.commit()
-    return {"message": "Appointment cancelled successfully", "appointment_id": appt.id}
