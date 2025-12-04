@@ -3,7 +3,7 @@ from sqlalchemy import (
     Column, DateTime, String, Date, Integer, Boolean,
     ForeignKey, Text, Numeric, Time, Table,JSON
 )
-from sqlalchemy.orm import relationship
+from sqlalchemy.orm import relationship, backref
 from app.database import Base
 import uuid
 from sqlalchemy import Column, String, Integer, Float, Date, Text, DateTime
@@ -310,6 +310,7 @@ class Encounter(Base, TimestampMixin):
     id = Column(Integer, primary_key=True, autoincrement=True)
     patient_id = Column(Integer, ForeignKey("patients.id", ondelete="CASCADE"), nullable=False)
     patient_public_id = Column(String(150), nullable=False)
+    previous_encounter_id = Column(Integer, ForeignKey("encounters.id"), nullable=True)
     doctor_id = Column(Integer, ForeignKey("doctors.id", ondelete="SET NULL"), nullable=True)
     hospital_id = Column(Integer, ForeignKey("hospitals.id", ondelete="SET NULL"), nullable=True)
     encounter_date = Column(Date, nullable=False)
@@ -326,7 +327,34 @@ class Encounter(Base, TimestampMixin):
     hospital = relationship("Hospital", back_populates="encounters")
     vitals = relationship("Vitals", back_populates="encounter", cascade="all, delete-orphan")
     medications = relationship("Medication", back_populates="encounter", cascade="all, delete-orphan")
- 
+    previous_encounter = relationship(
+        "Encounter", 
+        remote_side=[id],
+        backref=backref("continuations", lazy="selectin"), 
+        foreign_keys=[previous_encounter_id]
+    )
+    lab_orders = relationship(
+        "LabOrder",
+        backref="encounter",
+        cascade="all, delete-orphan",
+        lazy="joined"
+    )
+
+ # In your models.py, add:
+class EncounterHistory(Base):
+    __tablename__ = "encounter_history"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    encounter_id = Column(Integer, ForeignKey("encounters.id"), nullable=False)
+    status = Column(String(50), nullable=False)
+    updated_by = Column(Integer, ForeignKey("users.id"))
+    notes = Column(Text)  # Optional: track what changed
+    created_at = Column(DateTime, default=datetime.utcnow)
+    
+    # Relationships
+    encounter = relationship("Encounter", backref="history")
+    updater = relationship("User")
+    
 # Notifications
 class Notification(Base, TimestampMixin):
     __tablename__ = "notifications"

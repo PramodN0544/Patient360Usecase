@@ -15,19 +15,13 @@ router = APIRouter(
     tags=["Doctor"]
 )
 
-# =========================================================================================
-# GET ALL PATIENTS FOR DOCTOR
-# =========================================================================================
 @router.get("/patients", response_model=schemas.PatientsWithCount)
 async def get_patients_for_doctor(
     current_user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-
     if current_user.role not in ("doctor", "hospital"):
         raise HTTPException(403, "Not permitted")
-
-    patients = []
 
     if current_user.role == "doctor":
         doctor_result = await db.execute(
@@ -50,6 +44,7 @@ async def get_patients_for_doctor(
                 selectinload(models.Patient.encounters).selectinload(models.Encounter.medications),
                 selectinload(models.Patient.encounters).selectinload(models.Encounter.doctor),
                 selectinload(models.Patient.encounters).selectinload(models.Encounter.hospital),
+                selectinload(models.Patient.encounters).selectinload(models.Encounter.previous_encounter),
             )
             .order_by(models.Patient.first_name.asc())
         )
@@ -57,7 +52,7 @@ async def get_patients_for_doctor(
         result = await db.execute(stmt)
         patients = result.scalars().unique().all()
 
-    elif current_user.role == "hospital":
+    else:  # hospital
         stmt = (
             select(models.Patient)
             .join(models.Assignment, models.Patient.id == models.Assignment.patient_id)
@@ -71,16 +66,42 @@ async def get_patients_for_doctor(
                 selectinload(models.Patient.encounters).selectinload(models.Encounter.medications),
                 selectinload(models.Patient.encounters).selectinload(models.Encounter.doctor),
                 selectinload(models.Patient.encounters).selectinload(models.Encounter.hospital),
+                selectinload(models.Patient.encounters).selectinload(models.Encounter.previous_encounter),
             )
         )
         result = await db.execute(stmt)
         patients = result.scalars().unique().all()
 
-    return {"total_patients": len(patients), "patients": patients}
+    # ---------------------- FIXED SERIALIZER ----------------------
+    def serialize_patient(p: models.Patient):
+        return {
+            "id": p.id,
+            "public_id": p.public_id,
+            "first_name": p.first_name,
+            "last_name": p.last_name,
+            "full_name": f"{p.first_name} {p.last_name}".strip(),
+            "gender": p.gender,
+            "dob": p.dob.isoformat() if p.dob else None,
+            "email": p.email,
+            "phone": p.phone,
+            "photo_url": p.photo_url,
+            "address": p.address,
+            "city": p.city,
+            "state": p.state,
+            "zip_code": p.zip_code,
+            "country": p.country,
+            "allergies": [{"id": a.id, "name": a.name} for a in p.allergies] if p.allergies else [],
+            "insurance_count": len(p.patient_insurances) if p.patient_insurances else 0,
+            "pharmacy_insurance_count": len(p.pharmacy_insurances) if p.pharmacy_insurances else 0,
+            "total_encounters": len(p.encounters) if p.encounters else 0
+        }
 
-# =========================================================================================
-# SEARCH PATIENTS
-# =========================================================================================
+    return {
+        "total_patients": len(patients),
+        "patients": [serialize_patient(p) for p in patients]
+    }
+
+
 @router.get("/patients/search", response_model=schemas.PatientsWithCount)
 async def search_patients_for_doctor(
     status: str = "all",
@@ -121,9 +142,7 @@ async def search_patients_for_doctor(
 
     return {"total_patients": len(patients), "patients": patients}
 
-# =========================================================================================
-# FIXED — GET TODAY'S APPOINTMENTS (FULL LIST)
-# =========================================================================================
+
 @router.get("/appointments/today")
 async def get_today_appointments(
     current_user=Depends(get_current_user),
@@ -186,9 +205,7 @@ async def get_today_appointments(
         ]
     }
 
-# =========================================================================================
-# UPCOMING APPOINTMENTS
-# =========================================================================================
+
 @router.get("/appointments/upcoming")
 async def get_upcoming_appointments(
     current_user=Depends(get_current_user),

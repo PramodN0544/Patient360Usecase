@@ -180,26 +180,16 @@ async def hospital_signup(
     await db.commit()
     await db.refresh(user)
     await db.refresh(hospital)
-    return {
-        "user": {
-            "id": str(user.id),
-            "email": user.email,
-            "full_name": user.full_name,
-            "role": user.role,
-            "hospital_id": str(user.hospital_id),
-        },
-        "hospital": {
-            "id": str(hospital.id),
-            "name": hospital.name,
-            "email": hospital.email,
-            "phone": hospital.phone,
-            "specialty": hospital.specialty,
-            "city": hospital.city,
-            "state": hospital.state,
-            "license_number": hospital.license_number,
-            "consultation_fee": float(hospital.consultation_fee),
-        }
-    }
+    return schemas.SignupResponse(
+    user={
+        "id": str(user.id),
+        "email": user.email,
+        "full_name": user.full_name,
+        "role": user.role,
+        "hospital_id": str(user.hospital_id),
+    },
+    hospital=hospital 
+)
 
 @app.post("/doctors")
 async def create_doctor(

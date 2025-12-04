@@ -4,6 +4,19 @@ from datetime import date, time, datetime
 from typing import Literal
 from decimal import Decimal
 
+class LabOrderResponse(BaseModel):
+    id: int
+    encounter_id: int
+    patient_id: int
+    doctor_id: int
+    test_code: str
+    test_name: Optional[str]
+    sample_type: Optional[str]
+    status: str
+
+    class Config:
+        orm_mode = True
+
 # HOSPITAL SCHEMAS
 class HospitalBase(BaseModel):
     name: str
@@ -437,6 +450,8 @@ class LabOrderCreate(BaseModel):
         orm_mode = True
 class EncounterCreate(BaseModel):
     patient_public_id: Optional[str]  
+    previous_encounter_id: Optional[int] = None
+    is_continuation: bool = False
     doctor_id: Optional[int] = None  
     hospital_id: Optional[int] = None  
     encounter_date: Optional[date]
@@ -470,8 +485,12 @@ class EncounterOut(BaseModel):
     hospital_name: Optional[str] 
     vitals: List[VitalsOut] = []
     medications: List[MedicationOut] = []
-    is_lab_test_required: Optional[bool] = False  # <
-    documents: Optional[List[str]] = None  # <-- Add this
+    is_lab_test_required: Optional[bool] = False  
+    documents: Optional[List[str]] = None 
+    previous_encounter_id: Optional[int]
+    is_continuation: bool = False
+    lab_orders: Optional[List[LabOrderResponse]] = []
+    continuations: List["EncounterOut"] = []
     class Config:
         orm_mode = True
         
@@ -525,6 +544,14 @@ class MedicationUpdate(BaseModel):
     icd_code: Optional[str]
     ndc_code: Optional[str]
 
+class LabOrderUpdate(BaseModel):
+    test_code: str
+    priority: Optional[str] = "Normal"
+    notes: Optional[str] = None
+
+    class Config:
+        orm_mode = True
+
 class EncounterUpdate(BaseModel):
     encounter_type: Optional[str]
     reason_for_visit: Optional[str]
@@ -535,6 +562,11 @@ class EncounterUpdate(BaseModel):
     vitals: Optional[VitalsUpdate]
     medications: Optional[List[MedicationUpdate]]
     documents: Optional[List[str]] = None 
+    previous_encounter_id: Optional[int] = None
+    is_continuation: Optional[bool] = None
+    lab_orders: Optional[List[LabOrderUpdate]] = None
+
+
 # INSURANCE MASTER SCHEMAS
 class InsuranceMasterOut(BaseModel):
     id: int
@@ -679,18 +711,6 @@ class LabTestDetail(BaseModel):
 class LabOrderCreate(BaseModel):
     test_code: str
 
-class LabOrderResponse(BaseModel):
-    id: int
-    encounter_id: int
-    patient_id: int
-    doctor_id: int
-    test_code: str
-    test_name: Optional[str]
-    sample_type: Optional[str]
-    status: str
-
-    class Config:
-        orm_mode = True
 
 class LabResultCreate(BaseModel):
     lab_order_id: int

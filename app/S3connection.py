@@ -60,35 +60,22 @@ async def upload_lab_result_to_s3(file, patient_id: int, lab_order_id: int, hosp
         print("❌ Error uploading file to S3:", e)
         raise HTTPException(status_code=500, detail="Failed to upload file")
     
-async def upload_encounter_document_to_s3(
-    file,
-    hospital_id: int,
-    patient_id: int,
-    encounter_id: int
-) -> str:
-    """
-    Uploads encounter document to S3 under:
-    hospital_{hospital_id}/patient_{patient_id}/encounter_{encounter_id}/documents/<unique-file-name>
-    
-    Returns: file_key
-    """
-
-    original_name = file.filename
-    ext = original_name.split(".")[-1]
-    unique_name = f"{uuid.uuid4()}.{ext}"
-
-    file_key = (
-        f"hospital_{hospital_id}/"
-        f"patient_{patient_id}/"
-        f"encounter_{encounter_id}/"
-        f"documents/{unique_name}"
-    )
-
+async def upload_encounter_document_to_s3(hospital_id, patient_id, encounter_id, file):
     try:
-        s3_client.upload_fileobj(file.file, AWS_BUCKET_NAME, file_key)
+        # Detect if request is from FastAPI UploadFile or BytesIO PDF
+        if hasattr(file, "file"):  
+            file_stream = file.file
+            filename = file.filename
+        else:
+            file_stream = file
+            filename = getattr(file, "filename", f"document_{encounter_id}.pdf")
 
-        return file_key
+        file_key = f"encounters/{hospital_id}/{patient_id}/{encounter_id}/{filename}"
 
-    except ClientError as e:
-        print("❌ Error uploading encounter document:", e)
-        raise HTTPException(status_code=500, detail="Failed to upload encounter document")
+        s3_client.upload_fileobj(file_stream, AWS_BUCKET_NAME, file_key)
+
+        return f"s3://{AWS_BUCKET_NAME}/{file_key}"
+
+    except Exception as e:
+        print(f"❌ S3 upload failed: {e}")
+        raise HTTPException(500, "Error uploading document to S3")
