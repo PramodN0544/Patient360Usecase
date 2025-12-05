@@ -16,8 +16,8 @@ import os
 import json
 
 from app.database import get_db
-from app.models import Encounter, Doctor, Patient, Vitals, Medication, Assignment
-from app.schemas import EncounterCreate, EncounterOut, EncounterUpdate
+from app.models import Encounter, Doctor, Patient, Vitals, Medication, Assignment, LabOrder
+from app.schemas import EncounterCreate, EncounterOut, EncounterUpdate,LabTestDetail
 from app.auth import get_current_user
 from app.S3connection import upload_encounter_document_to_s3
 
@@ -233,12 +233,12 @@ async def update_encounter(
     current_user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    # Parse incoming JSON safely
     parsed_data = json.loads(encounter_in)
     print(f"📥 Incoming update payload: {parsed_data}")
 
     encounter_update = EncounterUpdate(**parsed_data)
-    
+
+    # ---- Fetch Encounter ----
     result = await db.execute(
         select(Encounter)
         .options(
@@ -250,45 +250,44 @@ async def update_encounter(
         )
         .where(Encounter.id == encounter_id)
     )
-
     encounter = result.unique().scalar_one_or_none()
+
     if not encounter:
         raise HTTPException(404, "❌ No encounter found. Please start encounter first.")
 
-    # Permission Check
+    # ---- Permission Check ----
     doctor_result = await db.execute(select(Doctor).where(Doctor.user_id == current_user.id))
     doctor = doctor_result.unique().scalar_one_or_none()
 
     if not doctor and current_user.role != "hospital":
         raise HTTPException(403, "Not allowed")
 
-    # ---------------- MAIN FIELD UPDATE ----------------
+    # ---- Update Main Fields ----
     for field, value in encounter_update.dict(exclude_unset=True).items():
         if field not in ["vitals", "medications", "lab_orders", "previous_encounter_id", "is_continuation"]:
             if value is not None:
                 setattr(encounter, field, value)
 
-    # ---------------- FOLLOW-UP LOGIC ----------------
+    # ---- Follow-up Logic ----
     if encounter_update.follow_up_date:
         encounter.is_continuation = True
         encounter.status = "in_progress"
 
-        # Auto-link to previous encounter if none supplied
         if not encounter_update.previous_encounter_id:
-            prev = await db.execute(
+            prev_result = await db.execute(
                 select(Encounter)
                 .where(Encounter.patient_id == encounter.patient_id)
                 .where(Encounter.id != encounter.id)
                 .order_by(Encounter.encounter_date.desc())
             )
-            encounter.previous_encounter_id = prev.scalars().first().id if prev else None
-
+            previous_encounter = prev_result.scalars().first()
+            encounter.previous_encounter_id = previous_encounter.id if previous_encounter else None
     else:
         encounter.is_continuation = False
         encounter.previous_encounter_id = None
         encounter.status = "completed"
 
-    # ---------------- UPDATE VITALS IF SENT ----------------
+    # ---- Update Vitals ----
     if encounter_update.vitals is not None:
         vitals_result = await db.execute(select(Vitals).where(Vitals.encounter_id == encounter.id))
         vitals = vitals_result.unique().scalar_one_or_none()
@@ -299,20 +298,21 @@ async def update_encounter(
         else:
             db.add(Vitals(encounter_id=encounter.id, **encounter_update.vitals.dict()))
 
-    # ---------------- UPDATE MEDICATIONS ----------------
+    # ---- Update Medications ----
     if encounter_update.medications is not None:
         await db.execute(Medication.__table__.delete().where(Medication.encounter_id == encounter.id))
-
-        for m in encounter_update.medications:
+        for med in encounter_update.medications:
             db.add(Medication(
                 encounter_id=encounter.id,
                 patient_id=encounter.patient_id,
                 doctor_id=encounter.doctor_id,
-                **m.dict()
+                **med.dict(exclude_unset=True)
             ))
 
-    # ---------------- LAB ORDERS (Only if required) ----------------
+    # ---- Update LAB ORDERS ----
     if encounter_update.lab_orders is not None and encounter_update.is_lab_test_required:
+
+        # Remove old lab orders
         await db.execute(LabOrder.__table__.delete().where(LabOrder.encounter_id == encounter.id))
 
         for lab in encounter_update.lab_orders:
@@ -320,26 +320,26 @@ async def update_encounter(
                 encounter_id=encounter.id,
                 patient_id=encounter.patient_id,
                 doctor_id=encounter.doctor_id,
-                test_code=lab["test_code"],
-                test_name=lab["test_name"],
-                status="ordered"
+                test_code=lab.test_code,
+                test_name=getattr(lab, "test_name", None),
+                sample_type= None,
+                status="Ordered"
             ))
 
-    # ---------------- FILE UPLOAD ----------------
+    # ---- File Upload ----
     if files:
         docs = encounter.documents or []
         for file in files:
-            s3_url = await upload_encounter_document_to_s3(
+            url = await upload_encounter_document_to_s3(
                 hospital_id=encounter.hospital_id,
                 patient_id=encounter.patient_id,
                 encounter_id=encounter.id,
                 file=file
             )
-            docs.append(s3_url)
-
+            docs.append(url)
         encounter.documents = docs
 
-    # ---------------- HISTORY LOG ----------------
+    # ---- Save History ----
     db.add(EncounterHistory(
         encounter_id=encounter.id,
         status=encounter.status,
@@ -350,7 +350,7 @@ async def update_encounter(
     await db.commit()
     await db.refresh(encounter)
 
-    # ---------------- RESPONSE ----------------
+    # ---- Build Response ----
     response = EncounterOut.from_orm(encounter)
     response.doctor_name = f"{encounter.doctor.first_name} {encounter.doctor.last_name}"
     response.hospital_name = encounter.hospital.name

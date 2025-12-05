@@ -681,17 +681,11 @@ class PatientsWithCount(BaseModel):
         orm_mode = True
 
 
-
-
-# ============================================================
-# Schema for test list (dropdown)
-# ============================================================
 class LabTestCode(BaseModel):
     test_code: str
 
     class Config:
         orm_mode = True
-
 
 # ============================================================
 # Schema for full test details
