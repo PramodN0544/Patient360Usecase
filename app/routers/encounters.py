@@ -24,30 +24,16 @@ from app.S3connection import upload_encounter_document_to_s3
 router = APIRouter(prefix="/encounters", tags=["Encounters"])
 
 def calculate_status(enc):
-    """
-    Calculate encounter status based on completion criteria
-    Rules:
-    1. If diagnosis, notes, and vitals are complete → Completed
-    2. If lab tests required or follow-up date set → In Progress
-    3. Otherwise → Pending
-    """
-    # Check if essential fields are filled
-    has_essential_data = (
-        enc.diagnosis and 
-        enc.notes and 
-        enc.vitals and
-        enc.vitals.height and
-        enc.vitals.weight
-    )
-    
-    if not has_essential_data:
-        return "Pending"
+    # If nothing filled yet → pending (doctor just opened encounter)
+    if not (enc.diagnosis or enc.notes or enc.vitals):
+        return "pending"
 
-    if enc.follow_up_date or enc.is_lab_test_required:
-        return "In Progress"
-    
-    return "Completed"
+    # If follow-up given → encounter is still active
+    if enc.follow_up_date:
+        return "in-progress"
 
+    # If details filled but no follow-up → completed
+    return "completed"
 
 def safe_parse(data: str):
     try:
@@ -126,7 +112,7 @@ async def create_encounter(
         notes=encounter_in.notes,
         follow_up_date=encounter_in.follow_up_date,
         is_lab_test_required=encounter_in.is_lab_test_required,
-        status=calculate_status(encounter_in),
+        status="pending",
         documents=[]
     )
 
@@ -194,12 +180,21 @@ async def create_encounter(
                 notes="Follow-up created during encounter"
             )
         )
-    # --- CONTINUATION LOGIC ---
+  # --- CONTINUATION LOGIC (CORRECT) ---
     if encounter_in.follow_up_date:
         new_encounter.is_continuation = True
-        new_encounter.previous_encounter_id = (
-        encounter_in.previous_encounter_id if hasattr(encounter_in, "previous_encounter_id") else None
-    )
+
+        # Get last encounter for this patient
+        prev_result = await db.execute(
+            select(Encounter)
+            .where(Encounter.patient_id == patient.id,Encounter.id!= new_encounter.id)
+            .order_by(Encounter.encounter_date.desc())
+        )
+        previous_encounter = prev_result.scalars().first()
+        new_encounter.previous_encounter_id = previous_encounter.id if previous_encounter else None
+    else:
+        new_encounter.is_continuation = False
+        new_encounter.previous_encounter_id = None
 
     await db.commit()
     await db.refresh(new_encounter)
@@ -255,6 +250,12 @@ async def update_encounter(
     if not encounter:
         raise HTTPException(404, "❌ No encounter found. Please start encounter first.")
 
+    if encounter.status == "completed":
+        raise HTTPException(
+            400,
+            "This encounter is already completed. Please start a new encounter instead."
+        )
+
     # ---- Permission Check ----
     doctor_result = await db.execute(select(Doctor).where(Doctor.user_id == current_user.id))
     doctor = doctor_result.unique().scalar_one_or_none()
@@ -268,24 +269,25 @@ async def update_encounter(
             if value is not None:
                 setattr(encounter, field, value)
 
-    # ---- Follow-up Logic ----
+    # ---- Follow-up Logic (Corrected) ----
     if encounter_update.follow_up_date:
         encounter.is_continuation = True
-        encounter.status = "in_progress"
+        encounter.status = "in-progress"
 
-        if not encounter_update.previous_encounter_id:
+        # Assign previous encounter if missing
+        if not encounter.previous_encounter_id:
             prev_result = await db.execute(
                 select(Encounter)
                 .where(Encounter.patient_id == encounter.patient_id)
-                .where(Encounter.id != encounter.id)
                 .order_by(Encounter.encounter_date.desc())
             )
             previous_encounter = prev_result.scalars().first()
             encounter.previous_encounter_id = previous_encounter.id if previous_encounter else None
+
     else:
-        encounter.is_continuation = False
-        encounter.previous_encounter_id = None
         encounter.status = "completed"
+        encounter.is_continuation = False
+
 
     # ---- Update Vitals ----
     if encounter_update.vitals is not None:
@@ -296,7 +298,17 @@ async def update_encounter(
             for key, val in encounter_update.vitals.dict(exclude_unset=True).items():
                 setattr(vitals, key, val)
         else:
-            db.add(Vitals(encounter_id=encounter.id, **encounter_update.vitals.dict()))
+            db.add(Vitals(
+                encounter_id=encounter.id,
+                patient_id=encounter.patient_id, 
+                height=encounter_update.vitals.height,
+                weight=encounter_update.vitals.weight,
+                blood_pressure=encounter_update.vitals.blood_pressure,
+                heart_rate=encounter_update.vitals.heart_rate,
+                temperature=encounter_update.vitals.temperature,
+                respiration_rate=encounter_update.vitals.respiration_rate,
+                oxygen_saturation=encounter_update.vitals.oxygen_saturation,
+            ))
 
     # ---- Update Medications ----
     if encounter_update.medications is not None:
@@ -361,31 +373,26 @@ async def update_encounter(
 # GET ALL ENCOUNTERS FOR A PATIENT (BY PUBLIC ID) - For Patient Dashboard
 @router.get("/patient/{public_id}")
 async def get_patient_encounters(
-    public_id: str, 
+    public_id: str,
     current_user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """
-    Get all encounters for a patient by their public_id.
-    Used in patient dashboard to show all their encounters.
-    """
-    # First, get the patient
+
     patient_result = await db.execute(
         select(Patient).where(Patient.public_id == public_id)
     )
     patient = patient_result.unique().scalar_one_or_none()
-    
+
     if not patient:
         raise HTTPException(404, "Patient not found")
-    
-    # Check permissions
+
+    # ----- Permission check -----
     if current_user.role == "doctor":
-        # Doctor can only see encounters for patients assigned to them
         doctor_result = await db.execute(
             select(Doctor).where(Doctor.user_id == current_user.id)
         )
         doctor = doctor_result.unique().scalar_one_or_none()
-        
+
         if doctor:
             assign = await db.execute(
                 select(Assignment).where(
@@ -393,14 +400,16 @@ async def get_patient_encounters(
                     Assignment.doctor_id == doctor.id
                 )
             )
-            if not assign.unique().scalar_one_or_none():
-                raise HTTPException(403, "Not authorized to view this patient's encounters")
+
+            assignment_record = assign.scalars().first() 
+
+            if not assignment_record:
+                raise HTTPException(403, "Not authorized to view this patient’s encounters")
+
     elif current_user.role == "patient":
-        # Patient can only see their own encounters
         if patient.user_id != current_user.id:
             raise HTTPException(403, "You can only view your own encounters")
-    
-    # Fetch encounters with all relationships
+
     stmt = (
         select(Encounter)
         .where(Encounter.patient_id == patient.id)
@@ -409,17 +418,16 @@ async def get_patient_encounters(
             selectinload(Encounter.vitals),
             selectinload(Encounter.medications),
             selectinload(Encounter.doctor),
-            selectinload(Encounter.hospital),
+            selectinload(Encounter.hospital)
         )
     )
 
     result = await db.execute(stmt)
     encounters = result.scalars().unique().all()
-    
-    # Build response
+
     response = []
     for e in encounters:
-        encounter_data = {
+        response.append({
             "id": e.id,
             "patient_id": e.patient_id,
             "patient_public_id": patient.public_id,
@@ -435,17 +443,7 @@ async def get_patient_encounters(
             "status": e.status,
             "created_at": e.created_at,
             "updated_at": e.updated_at,
-            "doctor": {
-                "id": e.doctor.id,
-                "first_name": e.doctor.first_name,
-                "last_name": e.doctor.last_name,
-                "specialty": e.doctor.specialty,
-            } if e.doctor else None,
             "doctor_name": f"{e.doctor.first_name} {e.doctor.last_name}" if e.doctor else None,
-            "hospital": {
-                "id": e.hospital.id,
-                "name": e.hospital.name,
-            } if e.hospital else None,
             "hospital_name": e.hospital.name if e.hospital else None,
             "vitals": e.vitals[0] if e.vitals else None,
             "medications": [
@@ -464,26 +462,21 @@ async def get_patient_encounters(
                 }
                 for m in e.medications
             ] if e.medications else [],
-        }
-        response.append(encounter_data)
-    
+        })
+
     return response
 
-# GET PATIENT ENCOUNTERS FOR DOCTOR - Doctor's view of their patient's encounters
 @router.get("/doctor/patient/{public_id}")
 async def get_doctor_patient_encounters(
     public_id: str,
     current_user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """
-    Get encounters for a specific patient that belong to the current doctor.
-    This is for doctors to see encounters they've created for a particular patient.
-    """
+
     if current_user.role != "doctor":
         raise HTTPException(403, "Only doctors can access this endpoint")
-    
-    # Get current doctor
+
+    # Get doctor
     doctor_result = await db.execute(
         select(Doctor).where(Doctor.user_id == current_user.id)
     )
@@ -492,7 +485,7 @@ async def get_doctor_patient_encounters(
     if not doctor:
         raise HTTPException(404, "Doctor not found")
     
-    # Get patient by public_id
+    # Get patient
     patient_result = await db.execute(
         select(Patient).where(Patient.public_id == public_id)
     )
@@ -500,8 +493,8 @@ async def get_doctor_patient_encounters(
     
     if not patient:
         raise HTTPException(404, "Patient not found")
-    
-    # Check if doctor is assigned to this patient
+
+    # Check assignment
     assign = await db.execute(
         select(Assignment).where(
             Assignment.patient_id == patient.id,
@@ -511,7 +504,6 @@ async def get_doctor_patient_encounters(
     if not assign.unique().scalar_one_or_none():
         raise HTTPException(403, "Doctor is not assigned to this patient")
     
-    # Fetch encounters created by this doctor for this patient
     stmt = (
         select(Encounter)
         .where(
@@ -529,73 +521,25 @@ async def get_doctor_patient_encounters(
 
     result = await db.execute(stmt)
     encounters = result.scalars().unique().all()
-    
-    # Build response
-    response = []
-    for e in encounters:
-        encounter_data = {
+
+    return [
+        {
             "id": e.id,
-            "patient_id": e.patient_id,
-            "patient_public_id": patient.public_id,
-            "doctor_id": e.doctor_id,
-            "hospital_id": e.hospital_id,
-            "encounter_date": e.encounter_date,
-            "encounter_type": e.encounter_type,
-            "reason_for_visit": e.reason_for_visit,
-            "diagnosis": e.diagnosis,
-            "notes": e.notes,
-            "follow_up_date": e.follow_up_date,
-            "is_lab_test_required": e.is_lab_test_required,
             "status": e.status,
-            "created_at": e.created_at,
-            "updated_at": e.updated_at,
-            "doctor": {
-                "id": e.doctor.id,
-                "first_name": e.doctor.first_name,
-                "last_name": e.doctor.last_name,
-                "specialty": e.doctor.specialty,
-            } if e.doctor else None,
-            "doctor_name": f"{e.doctor.first_name} {e.doctor.last_name}" if e.doctor else None,
-            "hospital": {
-                "id": e.hospital.id,
-                "name": e.hospital.name,
-            } if e.hospital else None,
-            "hospital_name": e.hospital.name if e.hospital else None,
-            "vitals": e.vitals[0] if e.vitals else None,
-            "medications": [
-                {
-                    "id": m.id,
-                    "medication_name": m.medication_name,
-                    "dosage": m.dosage,
-                    "frequency": m.frequency,
-                    "route": m.route,
-                    "start_date": m.start_date,
-                    "end_date": m.end_date,
-                    "status": m.status,
-                    "notes": m.notes,
-                    "icd_code": m.icd_code,
-                    "ndc_code": m.ndc_code,
-                }
-                for m in e.medications
-            ] if e.medications else [],
+            "encounter_date": e.encounter_date,
+            "follow_up_date": e.follow_up_date,
+            "previous_encounter_id": e.previous_encounter_id
         }
-        
-        has_followup = e.follow_up_date and e.follow_up_date > datetime.now().date()
+        for e in encounters
+    ]
 
-        encounter_data["is_continuation_pending"] = bool(has_followup)
-        encounter_data["continue_from_encounter_id"] = e.previous_encounter_id if has_followup else None
-        encounter_data["label"] = "Continue previous encounter" if has_followup else None
 
-        response.append(encounter_data)
-    
-    return response
-
-# GET MY OWN ENCOUNTERS (PATIENT) - Patient view of all their encounters
-@router.get("/my-encounters", response_model=List[EncounterOut])
+@router.get("/my-encounters")
 async def get_my_encounters(
     current_user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
+
     if current_user.role != "patient":
         raise HTTPException(403, "Only patients can view their own encounters")
 
@@ -613,20 +557,52 @@ async def get_my_encounters(
             selectinload(Encounter.vitals),
             selectinload(Encounter.medications),
             selectinload(Encounter.doctor),
-            selectinload(Encounter.hospital)
+            selectinload(Encounter.hospital),
+            selectinload(Encounter.patient),
+            selectinload(Encounter.lab_orders)  
         )
         .where(Encounter.patient_id == patient.id)
         .order_by(Encounter.encounter_date.desc())
     )
 
-    encounters = result.unique().scalars().all()
+    encounters = result.scalars().unique().all()
 
     response = []
     for e in encounters:
-        data = EncounterOut.from_orm(e)
-        data.doctor_name = f"{e.doctor.first_name} {e.doctor.last_name}"
-        data.hospital_name = e.hospital.name
-        response.append(data)
+        response.append({
+            "id": e.id,
+            "encounter_date": e.encounter_date,
+            "encounter_type": e.encounter_type,
+            "reason_for_visit": e.reason_for_visit,
+            "status": e.status,
+            "notes": e.notes,
+            "diagnosis": e.diagnosis,
+            "follow_up_date": e.follow_up_date,
+            "patient_public_id": e.patient.public_id,
+            "doctor_name": f"{e.doctor.first_name} {e.doctor.last_name}",
+            "hospital_name": e.hospital.name,
+            "vitals": e.vitals[0].__dict__ if e.vitals else None,
+            "medications": [
+                {
+                    "id": m.id,
+                    "medication_name": m.medication_name,
+                    "dosage": m.dosage,
+                    "route": m.route,
+                    "frequency": m.frequency,
+                    "start_date": m.start_date,
+                }
+                for m in e.medications
+            ],
+            "lab_orders": [
+                {
+                    "id": lab.id,
+                    "test_code": lab.test_code,
+                    "test_name": lab.test_name,
+                    "status": lab.status,
+                }
+                for lab in getattr(e, "lab_orders", [])
+            ]
+        })
 
     return response
 
@@ -704,15 +680,12 @@ async def get_encounter(
     if current_user.role == "doctor" and encounter.doctor.user_id != current_user.id:
         raise HTTPException(403, "You can only view encounters you created")
 
-    # ----- Build Response -----
     out = EncounterOut.from_orm(encounter)
 
-    # Assign UI-friendly values
     out.doctor_name = f"{encounter.doctor.first_name} {encounter.doctor.last_name}"
     out.hospital_name = encounter.hospital.name
     out.patient_public_id = encounter.patient.public_id
 
-    # Attach lab orders to response (if any)
     out.lab_orders = [
         {
             "id": lab.id,
@@ -733,7 +706,7 @@ async def generate_encounter_pdf(
     current_user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    # Get the encounter with all related data
+    
     result = await db.execute(
         select(Encounter)
         .options(
@@ -750,19 +723,16 @@ async def generate_encounter_pdf(
     if not encounter:
         raise HTTPException(404, "Encounter not found")
     
-    # Verify permissions
     if current_user.role == "doctor" and encounter.doctor.user_id != current_user.id:
         raise HTTPException(403, "Not authorized to access this encounter")
     if current_user.role == "patient" and encounter.patient.user_id != current_user.id:
         raise HTTPException(403, "Not authorized to access this encounter")
-    
-    # Create PDF in memory
+
     buffer = BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=letter)
     styles = getSampleStyleSheet()
     elements = []
     
-    # Add CareIQ logo
     possible_paths = [
         os.path.join("static", "mylogo.jpg"),
         os.path.join("Patient360-Backend", "static", "mylogo.jpg"),
@@ -781,18 +751,12 @@ async def generate_encounter_pdf(
         elements.append(Paragraph("Patient 360° Healthcare Platform", styles['Italic']))
     
     elements.append(Spacer(1, 12))
-    
-    # Add title
     elements.append(Paragraph("Patient Encounter Report", styles['Heading1']))
     elements.append(Spacer(1, 12))
-    
-    # Add encounter details
     elements.append(Paragraph(f"Encounter ID: {encounter.id}", styles['Heading3']))
     elements.append(Paragraph(f"Date: {encounter.encounter_date.strftime('%B %d, %Y')}", styles['Normal']))
     elements.append(Paragraph(f"Type: {encounter.encounter_type}", styles['Normal']))
     elements.append(Spacer(1, 12))
-    
-    # Add patient information
     elements.append(Paragraph("Patient Information", styles['Heading2']))
     elements.append(Paragraph(f"Name: {encounter.patient.first_name} {encounter.patient.last_name}", styles['Normal']))
     elements.append(Paragraph(f"ID: {encounter.patient.public_id}", styles['Normal']))

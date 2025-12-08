@@ -41,7 +41,6 @@ async def get_all_doctors(
     doctors = await crud.get_doctors_by_hospital(db, current_user.hospital_id)
     return doctors
 
-# GET ALL PATIENTS ASSIGNED TO THIS HOSPITAL
 @router.get("/patients", response_model=list[HospitalPatientOut])
 async def get_hospital_patients(
     current_user=Depends(get_current_user),
@@ -64,7 +63,6 @@ async def get_hospital_patients(
             models.Patient.citizenship_status,
             models.Patient.created_at,
 
-            # Calculate age using DOB
             func.date_part(
                 'year',
                 func.age(func.now(), models.Patient.dob)
@@ -74,45 +72,16 @@ async def get_hospital_patients(
             models.Patient.gender,
             models.Patient.phone,
 
-            # Set default values for frontend
             literal_column("'Active'").label("admission_status"),
             literal_column("'MRN001'").label("mrn"),
             literal_column("'Room 101'").label("room_bed"),
 
-            models.Encounter.created_at.label("last_visit_date"),
-            models.Encounter.diagnosis.label("diagnosis"),
-
             (models.Patient.first_name + " " + models.Patient.last_name)
                 .label("patient_name"),
-
-            (models.Doctor.first_name + " " + models.Doctor.last_name)
-                .label("assigned_doctor"),
-
-            # Insurance info
-            models.PatientInsurance.policy_number.label("policy_number"),
-            models.PatientPharmacyInsurance.policy_number.label("pharma_policy_number"),
-            
-            # Add insurance status based on policy existence
-            case(
-                (models.PatientInsurance.policy_number.isnot(None), "Insured"),
-                else_="Not Insured"
-            ).label("insurance_status"),
         )
         .join(models.Assignment, models.Assignment.patient_id == models.Patient.id)
-        .join(models.Encounter, models.Encounter.patient_id == models.Patient.id, isouter=True)
-        .join(models.Doctor, models.Doctor.id == models.Encounter.doctor_id, isouter=True)
-        .join(
-            models.PatientInsurance,
-            models.PatientInsurance.patient_id == models.Patient.id,
-            isouter=True
-        )
-        .join(
-            models.PatientPharmacyInsurance,
-            models.PatientPharmacyInsurance.patient_id == models.Patient.id,
-            isouter=True
-        )
         .where(models.Assignment.hospital_id == hospital_id)
-        .distinct()
+        .group_by(models.Patient.id)
     )
 
     try:
@@ -122,9 +91,8 @@ async def get_hospital_patients(
 
     except Exception as e:
         print("ERROR:", e)
-        import traceback
-        traceback.print_exc()
         raise HTTPException(500, f"Internal Error: {e}")
+
 
 # TODAY'S APPOINTMENT COUNT
 @router.get("/appointments/today")
