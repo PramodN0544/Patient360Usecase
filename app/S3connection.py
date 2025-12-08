@@ -62,8 +62,8 @@ async def upload_lab_result_to_s3(file, patient_id: int, lab_order_id: int, hosp
     
 async def upload_encounter_document_to_s3(hospital_id, patient_id, encounter_id, file):
     try:
-        # Detect if request is from FastAPI UploadFile or BytesIO PDF
-        if hasattr(file, "file"):  
+        # Detect if file is UploadFile or BytesIO
+        if hasattr(file, "file"):
             file_stream = file.file
             filename = file.filename
         else:
@@ -72,9 +72,11 @@ async def upload_encounter_document_to_s3(hospital_id, patient_id, encounter_id,
 
         file_key = f"encounters/{hospital_id}/{patient_id}/{encounter_id}/{filename}"
 
+        # Upload to S3
         s3_client.upload_fileobj(file_stream, AWS_BUCKET_NAME, file_key)
 
-        return f"s3://{AWS_BUCKET_NAME}/{file_key}"
+        # Return only the S3 object key
+        return file_key
 
     except Exception as e:
         print(f"❌ S3 upload failed: {e}")
