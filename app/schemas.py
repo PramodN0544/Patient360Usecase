@@ -256,7 +256,7 @@ class PatientCreate(BaseModel):
     pharmacy_insurances: Optional[List[PatientPharmacyInsuranceCreate]] = []
     
     
-    
+
 class PatientOut(BaseModel):
     id: int
     public_id: str
