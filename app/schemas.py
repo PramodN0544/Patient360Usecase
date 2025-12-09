@@ -908,6 +908,8 @@ class ChatParticipantInfo(BaseModel):
     name: str
     role: str
     photo_url: Optional[str] = None
+    dob: Optional[date] = None  
+    gender: Optional[str] = None 
 
 class ChatSummary(BaseModel):
     id: int
