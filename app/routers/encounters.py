@@ -1,6 +1,6 @@
 import ast
 import aiohttp
-from fastapi import APIRouter, Depends, HTTPException, File, UploadFile, Form
+from fastapi import APIRouter, Depends, HTTPException, File, UploadFile, Form, BackgroundTasks
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -18,9 +18,10 @@ from io import BytesIO
 import os
 import json
 import re
+import httpx
 from app.database import get_db
 from app.models import Encounter, Doctor, Patient, Vitals, Medication, Assignment, LabOrder
-from app.schemas import EncounterCreate, EncounterOut, EncounterUpdate,LabTestDetail
+from app.schemas import EncounterCreate, EncounterOut, EncounterUpdate, LabTestDetail, CarePlanGenerationInput, PatientProfile, CurrentEncounter, CurrentVitals, MedicationInfo, LabInfo, MedicalHistory, ConditionInfo, MedicationHistoryInfo, AllergyInfo, GuidelineRulesInfo
 from app.auth import get_current_user
 from app.S3connection import generate_presigned_url, upload_encounter_document_to_s3
 
@@ -230,6 +231,7 @@ async def create_encounter(
 
 @router.put("/{encounter_id}", response_model=EncounterOut)
 async def update_encounter(
+    background_tasks: BackgroundTasks,
     encounter_id: int,
     encounter_in: str = Form(...),
     files: List[UploadFile] | None = File(None),
@@ -289,6 +291,17 @@ async def update_encounter(
         encounter.is_continuation = False
         encounter.previous_encounter_id = None
         encounter.status = "completed"
+        
+        # If encounter is completed, trigger care plan generation
+        if encounter.status == "completed":
+            # This will be handled after the encounter update is committed
+            background_tasks = BackgroundTasks()
+            background_tasks.add_task(
+                generate_care_plan_for_encounter,
+                encounter_id=encounter.id,
+                user_id=current_user.id,
+                db=db
+            )
 
     # ---- Update Vitals ----
     if encounter_update.vitals is not None:
@@ -396,7 +409,7 @@ async def get_patient_encounters(
                     Assignment.doctor_id == doctor.id
                 )
             )
-            if not assign.unique().scalar_one_or_none():
+            if not assign.scalars().first():
                 raise HTTPException(403, "Not authorized to view this patient's encounters")
     elif current_user.role == "patient":
         # Patient can only see their own encounters
@@ -511,7 +524,7 @@ async def get_doctor_patient_encounters(
             Assignment.doctor_id == doctor.id
         )
     )
-    if not assign.unique().scalar_one_or_none():
+    if not assign.scalars().first():
         raise HTTPException(403, "Doctor is not assigned to this patient")
     
     # Fetch encounters created by this doctor for this patient
@@ -691,7 +704,7 @@ async def get_encounter(
             selectinload(Encounter.patient),
             selectinload(Encounter.hospital),
             selectinload(Encounter.doctor),
-            selectinload(LabOrder)   # 👈 Added lab orders
+            selectinload(Encounter.lab_orders)   # 👈 Added lab orders
         )
         .where(Encounter.id == encounter_id)
     )
@@ -1296,3 +1309,201 @@ async def download_encounter_document(
         media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'}
     )
+
+# Function to generate care plan for an encounter
+async def generate_care_plan_for_encounter(encounter_id: int, user_id: int, db: AsyncSession):
+    """
+    Background task to generate a care plan for a completed encounter
+    """
+    try:
+        # Get the encounter with all related data
+        result = await db.execute(
+            select(Encounter)
+            .options(
+                selectinload(Encounter.vitals),
+                selectinload(Encounter.medications),
+                selectinload(Encounter.doctor),
+                selectinload(Encounter.hospital),
+                selectinload(Encounter.patient),
+                selectinload(Encounter.lab_orders)
+            )
+            .where(Encounter.id == encounter_id)
+        )
+        encounter = result.unique().scalar_one_or_none()
+        
+        if not encounter:
+            print(f"Encounter {encounter_id} not found for care plan generation")
+            return
+        
+        # Get the user
+        user_result = await db.execute(select(models.User).where(models.User.id == user_id))
+        user = user_result.scalars().first()
+        
+        if not user:
+            print(f"User {user_id} not found for care plan generation")
+            return
+        
+        # Calculate patient age
+        patient = encounter.patient
+        today = datetime.now().date()
+        age = today.year - patient.dob.year
+        if today.month < patient.dob.month or (today.month == patient.dob.month and today.day < patient.dob.day):
+            age -= 1
+        
+        # Prepare input data for care plan generation
+        input_data = CarePlanGenerationInput(
+            context_id=f"ctx_{encounter_id}",
+            patient_profile=PatientProfile(
+                age=age,
+                gender=patient.gender,
+                smoking_status=patient.smoking_status,
+                alcohol_use=patient.alcohol_use,
+                pregnancy_status=False  # Default value, could be updated based on patient data
+            ),
+            current_encounter=CurrentEncounter(
+                encounter_id=str(encounter.id),
+                encounter_type=encounter.encounter_type,
+                reason_for_visit=encounter.reason_for_visit,
+                diagnosis_text=encounter.diagnosis,
+                icd_codes=[],  # Would need to extract from diagnosis if available
+                encounter_date=encounter.encounter_date,
+                follow_up_date=encounter.follow_up_date,
+                clinical_notes=encounter.notes
+            ),
+            current_vitals=CurrentVitals(
+                blood_pressure=encounter.vitals[0].blood_pressure if encounter.vitals else None,
+                heart_rate=encounter.vitals[0].heart_rate if encounter.vitals else None,
+                respiratory_rate=encounter.vitals[0].respiration_rate if encounter.vitals else None,
+                temperature=encounter.vitals[0].temperature if encounter.vitals else None,
+                bmi=encounter.vitals[0].bmi if encounter.vitals else None,
+                oxygen_saturation=encounter.vitals[0].oxygen_saturation if encounter.vitals else None,
+                height_cm=float(encounter.vitals[0].height) if encounter.vitals and encounter.vitals[0].height else None,
+                weight_kg=float(encounter.vitals[0].weight) if encounter.vitals and encounter.vitals[0].weight else None
+            ),
+            current_medications=[
+                MedicationInfo(
+                    medication_name=med.medication_name,
+                    dosage=med.dosage,
+                    frequency=med.frequency,
+                    route=med.route,
+                    start_date=med.start_date,
+                    stop_date=med.end_date
+                )
+                for med in encounter.medications
+            ] if encounter.medications else [],
+            lab_orders=[
+                LabInfo(
+                    lab_test=lab.test_name or lab.test_code,
+                    status=lab.status,
+                    result_value=None,
+                    result_date=None,
+                    lab_report_url=None
+                )
+                for lab in encounter.lab_orders
+            ] if encounter.lab_orders else [],
+            medical_history=MedicalHistory(
+                chronic_conditions=[
+                    ConditionInfo(
+                        condition_name=encounter.diagnosis,
+                        icd_code=None
+                    )
+                ] if encounter.diagnosis else [],
+                medication_history=[],
+                allergies=[
+                    AllergyInfo(
+                        allergen=allergy.name,
+                        reaction=None,
+                        severity=None
+                    )
+                    for allergy in patient.allergies
+                ] if patient.allergies else []
+            ),
+            guideline_rules=GuidelineRulesInfo(
+                condition_group=encounter.diagnosis.split()[0] if encounter.diagnosis else "General",
+                guideline_source="Standard of Care",
+                rules_version="2025-01",
+                rules_json={
+                    "standard_of_care": True,
+                    "follow_up_required": encounter.follow_up_date is not None,
+                    "lab_tests_required": encounter.is_lab_test_required
+                }
+            )
+        )
+        
+        # Call the care plan API
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                f"http://localhost:8000/api/care-plans/generate",
+                json=input_data.dict(),
+                headers={
+                    "Authorization": f"Bearer {user.token if hasattr(user, 'token') else ''}"
+                }
+            )
+            
+            if response.status_code == 200:
+                print(f"Care plan generated successfully for encounter {encounter_id}")
+            else:
+                print(f"Failed to generate care plan for encounter {encounter_id}: {response.text}")
+    
+    except Exception as e:
+        print(f"Error generating care plan for encounter {encounter_id}: {str(e)}")
+
+# Endpoint to manually trigger care plan generation
+@router.post("/{encounter_id}/generate-care-plan", response_model=EncounterOut)
+async def trigger_care_plan_generation(
+    encounter_id: int,
+    background_tasks: BackgroundTasks,
+    current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Manually trigger care plan generation for an encounter
+    """
+    # Get the encounter
+    result = await db.execute(
+        select(Encounter)
+        .options(
+            selectinload(Encounter.vitals),
+            selectinload(Encounter.medications),
+            selectinload(Encounter.doctor),
+            selectinload(Encounter.hospital),
+            selectinload(Encounter.patient)
+        )
+        .where(Encounter.id == encounter_id)
+    )
+    encounter = result.unique().scalar_one_or_none()
+    
+    if not encounter:
+        raise HTTPException(404, "Encounter not found")
+    
+    # Check permissions
+    if current_user.role == "doctor":
+        doctor_result = await db.execute(select(Doctor).where(Doctor.user_id == current_user.id))
+        doctor = doctor_result.unique().scalar_one_or_none()
+        
+        if not doctor or doctor.id != encounter.doctor_id:
+            raise HTTPException(403, "Not authorized to generate care plan for this encounter")
+    elif current_user.role != "admin":
+        raise HTTPException(403, "Only doctors and admins can generate care plans")
+    
+    # Schedule care plan generation
+    background_tasks.add_task(
+        generate_care_plan_for_encounter,
+        encounter_id=encounter.id,
+        user_id=current_user.id,
+        db=db
+    )
+    
+    # Update encounter status if not already completed
+    if encounter.status != "completed":
+        encounter.status = "completed"
+        await db.commit()
+        await db.refresh(encounter)
+    
+    # Build response
+    response = EncounterOut.from_orm(encounter)
+    response.doctor_name = f"{encounter.doctor.first_name} {encounter.doctor.last_name}"
+    response.hospital_name = encounter.hospital.name
+    response.patient_public_id = encounter.patient.public_id
+    
+    return response

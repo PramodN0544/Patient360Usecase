@@ -17,3 +17,4 @@ websockets>=11.0.2
 apscheduler
 pytz
 boto3==1.42.0
+httpx==0.24.1

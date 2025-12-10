@@ -17,6 +17,7 @@ from app.routers import pharmacy_insurance_master
 from app.routers import file_upload
 from app.routers import lab_routes
 from app.routers import hospitals
+from app.routers import care_plan
 from app.routers import chat_api
 from fastapi import WebSocket, WebSocketDisconnect, Query
 from app.web_socket import chat_manager, get_user_from_token, check_chat_access, process_websocket_message
@@ -47,6 +48,7 @@ app.mount("/socket.io", socket_app, name="socketio")
 
 apply_cors(app)
 app.include_router(medications.router)
+app.include_router(care_plan.router)
 app.include_router(notifications.router)
 app.include_router(vitals.router)
 app.include_router(file_upload.router)

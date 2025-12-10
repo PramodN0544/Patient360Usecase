@@ -1,5 +1,5 @@
 from pydantic import BaseModel, EmailStr, Field
-from typing import List, Optional,Dict
+from typing import List, Optional, Dict, Any
 from datetime import date, time, datetime
 from typing import Literal
 from decimal import Decimal
@@ -948,7 +948,7 @@ class PatientBasicInfo(BaseModel):
            
 # Resolve forward references for Pydantic models defined out-of-order
 PatientOut.update_forward_refs()
-PatientsWithCount.update_forward_refs() 
+PatientsWithCount.update_forward_refs()
         
 # ================================
 # Hospital Patient Overview Schema
@@ -1183,3 +1183,255 @@ class AppointmentPatientResponse(BaseModel):
 
     class Config:
         orm_mode = True
+
+# Care Plan Feature - New Schemas
+
+# Condition Group Schemas
+class ConditionGroupBase(BaseModel):
+    name: str
+    description: Optional[str] = None
+
+class ConditionGroupCreate(ConditionGroupBase):
+    pass
+
+class ConditionGroupOut(ConditionGroupBase):
+    condition_group_id: int
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        orm_mode = True
+
+# ICD Condition Map Schemas
+class ICDConditionMapBase(BaseModel):
+    icd_code: str
+    condition_group_id: int
+    is_pattern: Optional[bool] = False
+
+class ICDConditionMapCreate(ICDConditionMapBase):
+    pass
+
+class ICDConditionMapOut(ICDConditionMapBase):
+    id: int
+
+    class Config:
+        orm_mode = True
+
+# Guideline Master Schemas
+class GuidelineMasterBase(BaseModel):
+    name: str
+    guideline_number: str
+    url: Optional[str] = None
+    version: Optional[str] = None
+    description: Optional[str] = None
+    pdf_url: Optional[str] = None
+
+class GuidelineMasterCreate(GuidelineMasterBase):
+    pass
+
+class GuidelineMasterOut(GuidelineMasterBase):
+    guideline_id: int
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        orm_mode = True
+
+# Condition Guideline Map Schemas
+class ConditionGuidelineMapBase(BaseModel):
+    condition_group_id: int
+    guideline_id: int
+
+class ConditionGuidelineMapCreate(ConditionGuidelineMapBase):
+    pass
+
+class ConditionGuidelineMapOut(ConditionGuidelineMapBase):
+    id: int
+
+    class Config:
+        orm_mode = True
+
+# Guideline Rules Schemas
+class GuidelineRulesBase(BaseModel):
+    guideline_id: int
+    rules_json: Dict[str, Any]
+    version: Optional[str] = None
+
+class GuidelineRulesCreate(GuidelineRulesBase):
+    pass
+
+class GuidelineRulesOut(GuidelineRulesBase):
+    id: int
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        orm_mode = True
+
+# Care Plan Task Schemas
+class CarePlanTaskBase(BaseModel):
+    type: str  # lab_test, monitoring, education, visit, screening, referral
+    title: str
+    description: Optional[str] = None
+    frequency: Optional[str] = None
+    due_date: Optional[date] = None
+    assigned_to: str  # patient or provider
+    requires_clinician_review: Optional[bool] = False
+    status: Optional[str] = "pending"
+
+class CarePlanTaskCreate(CarePlanTaskBase):
+    pass
+
+class CarePlanTaskUpdate(BaseModel):
+    title: Optional[str] = None
+    description: Optional[str] = None
+    frequency: Optional[str] = None
+    due_date: Optional[date] = None
+    status: Optional[str] = None
+    requires_clinician_review: Optional[bool] = None
+
+class CarePlanTaskOut(CarePlanTaskBase):
+    task_id: int
+    careplan_id: int
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        orm_mode = True
+
+# Care Plan Schemas
+class CarePlanBase(BaseModel):
+    patient_id: int
+    encounter_id: int
+    condition_group_id: int
+    status: Optional[str] = "proposed"
+    patient_friendly_summary: Optional[str] = None
+    clinician_summary: Optional[str] = None
+    plan_metadata: Optional[Dict[str, Any]] = None
+
+class CarePlanCreate(CarePlanBase):
+    tasks: List[CarePlanTaskCreate] = []
+
+class CarePlanUpdate(BaseModel):
+    status: Optional[str] = None
+    patient_friendly_summary: Optional[str] = None
+    clinician_summary: Optional[str] = None
+    plan_metadata: Optional[Dict[str, Any]] = None
+
+class CarePlanOut(CarePlanBase):
+    careplan_id: int
+    created_at: datetime
+    updated_at: datetime
+    tasks: List[CarePlanTaskOut] = []
+
+    class Config:
+        orm_mode = True
+
+# Care Plan Audit Schemas
+class CarePlanAuditBase(BaseModel):
+    careplan_id: int
+    action: str
+    actor_id: int
+    notes: Optional[str] = None
+
+class CarePlanAuditCreate(CarePlanAuditBase):
+    pass
+
+class CarePlanAuditOut(CarePlanAuditBase):
+    audit_id: int
+    timestamp: datetime
+
+    class Config:
+        orm_mode = True
+
+# Care Plan Generation Input Schema
+class PatientProfile(BaseModel):
+    age: int
+    gender: str
+    smoking_status: Optional[str] = None
+    alcohol_use: Optional[str] = None
+    pregnancy_status: Optional[bool] = None
+
+class CurrentEncounter(BaseModel):
+    encounter_id: str
+    encounter_type: str
+    reason_for_visit: Optional[str] = None
+    diagnosis_text: Optional[str] = None
+    icd_codes: Optional[List[str]] = None
+    encounter_date: date
+    follow_up_date: Optional[date] = None
+    clinical_notes: Optional[str] = None
+
+class CurrentVitals(BaseModel):
+    blood_pressure: Optional[str] = None
+    heart_rate: Optional[int] = None
+    respiratory_rate: Optional[int] = None
+    temperature: Optional[float] = None
+    bmi: Optional[float] = None
+    oxygen_saturation: Optional[int] = None
+    height_cm: Optional[float] = None
+    weight_kg: Optional[float] = None
+
+class MedicationInfo(BaseModel):
+    medication_name: str
+    dosage: str
+    frequency: str
+    route: Optional[str] = None
+    start_date: date
+    stop_date: Optional[date] = None
+
+class LabInfo(BaseModel):
+    lab_test: str
+    status: str
+    result_value: Optional[str] = None
+    result_date: Optional[date] = None
+    lab_report_url: Optional[str] = None
+
+class ConditionInfo(BaseModel):
+    condition_name: str
+    icd_code: Optional[str] = None
+
+class MedicationHistoryInfo(BaseModel):
+    name: str
+    discontinued: Optional[str] = None
+
+class AllergyInfo(BaseModel):
+    allergen: str
+    reaction: Optional[str] = None
+    severity: Optional[str] = None
+
+class MedicalHistory(BaseModel):
+    chronic_conditions: Optional[List[ConditionInfo]] = None
+    medication_history: Optional[List[MedicationHistoryInfo]] = None
+    allergies: Optional[List[AllergyInfo]] = None
+
+class GuidelineRulesInfo(BaseModel):
+    condition_group: str
+    guideline_source: str
+    rules_version: str
+    rules_json: Dict[str, Any]
+
+class CarePlanGenerationInput(BaseModel):
+    context_id: Optional[str] = None
+    patient_profile: PatientProfile
+    current_encounter: CurrentEncounter
+    current_vitals: Optional[CurrentVitals] = None
+    current_medications: Optional[List[MedicationInfo]] = None
+    lab_orders: Optional[List[LabInfo]] = None
+    medical_history: Optional[MedicalHistory] = None
+    guideline_rules: Optional[GuidelineRulesInfo] = None
+
+# Care Plan Generation Output Schema
+class CarePlanGenerationOutput(BaseModel):
+    careplan_id: str
+    status: str = "proposed"
+    generated_at: datetime
+    condition_group: str
+    icd_codes: List[str] = []
+    tasks: List[CarePlanTaskCreate] = []
+    patient_friendly_summary: str
+    clinician_summary: str
+    plan_metadata: Dict[str, Any] = {}
+
+# Update forward references for Care Plan models
+CarePlanOut.update_forward_refs()
