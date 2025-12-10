@@ -910,6 +910,9 @@ class ChatParticipantInfo(BaseModel):
     photo_url: Optional[str] = None
     dob: Optional[date] = None  
     gender: Optional[str] = None 
+    specialty: Optional[str] = None  # Add this
+    hospital: Optional[str] = None   # Add this
+    
 
 class ChatSummary(BaseModel):
     id: int

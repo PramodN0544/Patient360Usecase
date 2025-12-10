@@ -203,6 +203,7 @@ class Assignment(Base):
     
 # Allergy 
 class Allergy(Base, TimestampMixin):
+    
     __tablename__ = "allergies"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
