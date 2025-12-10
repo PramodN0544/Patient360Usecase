@@ -1,4 +1,3 @@
-
 from typing import List
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -8,7 +7,7 @@ from app.models import PharmacyInsuranceMaster
 from app.schemas import PharmacyInsuranceMasterOut
 from app.auth import get_current_user
 
-router = APIRouter(prefix="/pharmacyinsurance", tags=["Pharmacy Insurance"])
+router = APIRouter(prefix="/pharmacyinsurance", tags=["Pharmclsacy Insurance"])
 
 @router.get("/", response_model=List[PharmacyInsuranceMasterOut], summary="Get all pharmacy insurance plans")
 async def get_all_pharmacy_insurance(

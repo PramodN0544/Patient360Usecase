@@ -2,9 +2,8 @@ from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisco
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy import func, and_, or_
-from typing import List, Optional, Dict, Any
-from datetime import datetime
-
+from typing import List, Dict, Any
+from datetime import datetime, timedelta, timezone
 from app.database import get_db
 from app.auth import get_current_user
 from app import models, schemas
@@ -13,6 +12,7 @@ from sqlalchemy.orm import selectinload
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
 
+IST = timezone(timedelta(hours=5, minutes=30))
 # Get all chats for the current patient
 @router.get("/patient-chats", response_model=List[schemas.ChatSummary])
 async def get_patient_chats(
@@ -150,31 +150,26 @@ async def get_doctor_chats(
     if not doctor:
         raise HTTPException(status_code=404, detail="Doctor record not found")
     
-    # Get all chats for this doctor
     chats_result = await db.execute(
         select(models.Chat).where(models.Chat.doctor_id == doctor.id)
     )
     chats = chats_result.scalars().all()
     
-    # Format the response
     chat_summaries = []
     for chat in chats:
-        # Get patient info
         patient_result = await db.execute(
             select(models.Patient).where(models.Patient.id == chat.patient_id)
         )
         patient = patient_result.scalars().first()
         
-        # Get the last message
         last_message_result = await db.execute(
             select(models.ChatMessage)
             .where(models.ChatMessage.chat_id == chat.id)
-            .order_by(models.ChatMessage.timestamp.desc())  # Changed from sent_at to timestamp
+            .order_by(models.ChatMessage.timestamp.desc())  
             .limit(1)
         )
         last_message = last_message_result.scalars().first()
         
-        # Get unread count
         unread_count_result = await db.execute(
             select(func.count())
             .where(
@@ -186,8 +181,7 @@ async def get_doctor_chats(
             )
         )
         unread_count = unread_count_result.scalar()
-        
-        # Format doctor info
+
         doctor_info = schemas.ChatParticipantInfo(
             id=doctor.id,
             public_id=doctor.public_id or "",
@@ -195,14 +189,15 @@ async def get_doctor_chats(
             role="doctor",
             photo_url=doctor.license_url
         )
-        
-        # Format patient info
+    
         patient_info = schemas.ChatParticipantInfo(
             id=patient.id,
             public_id=patient.public_id,
             name=f"{patient.first_name} {patient.last_name}",
             role="patient",
-            photo_url=patient.photo_url
+            photo_url=patient.photo_url,
+            dob=patient.dob,  
+            gender=patient.gender  
         )
         
         chat_summary = schemas.ChatSummary(
@@ -218,7 +213,6 @@ async def get_doctor_chats(
         chat_summaries.append(chat_summary)
     
     return chat_summaries
-
 
 # Get or create a chat by doctor's public_id
 @router.get("/by-doctor/{doctor_public_id}", response_model=schemas.ChatOut)
@@ -503,7 +497,7 @@ async def send_message(
             chat_id=chat.id,
             sender_id=current_user.id,
             message=message.message,
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(IST),
             doctor_id=chat.doctor_id,
             patient_id=chat.patient_id
         )
@@ -797,7 +791,6 @@ async def get_doctors_from_encounters(
     db: AsyncSession = Depends(get_db)
 ):
 
-    # Match the SAME logic of the working API
     patient_result = await db.execute(
         select(models.Patient).where(models.Patient.user_id == current_user.id)
     )
@@ -806,15 +799,15 @@ async def get_doctors_from_encounters(
     if not patient:
         raise HTTPException(403, "Only patients can access this endpoint")
 
-    # Load encounters + doctor relationship
     result = await db.execute(
         select(models.Encounter)
         .options(selectinload(models.Encounter.doctor))
         .where(models.Encounter.patient_id == patient.id)
     )
 
-    encounters = result.scalars().all()
-    # Extract unique doctors
+    # 🔥 THIS FIXES THE ERROR
+    encounters = result.unique().scalars().all()
+
     doctors = []
     seen = set()
 
@@ -837,6 +830,7 @@ async def get_doctors_from_encounters(
             )
 
     return doctors
+
     
 @router.get("/patients-from-encounters", response_model=List[schemas.PatientBasicInfo])
 async def get_patients_from_encounters(
