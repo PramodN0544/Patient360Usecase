@@ -7,11 +7,15 @@ from datetime import datetime, date
 import json
 import httpx
 import os
+from sqlalchemy.orm import selectinload
 
 from app.database import get_db
 from app.auth import get_current_user
 from app import models, schemas
 from app.utils import send_email
+from dotenv import load_dotenv
+load_dotenv()
+
 
 router = APIRouter(prefix="/api/care-plans", tags=["care-plans"])
 
@@ -19,6 +23,36 @@ router = APIRouter(prefix="/api/care-plans", tags=["care-plans"])
 LLM_API_URL = os.getenv("LLM_API_URL", "https://api.openai.com/v1/chat/completions")
 LLM_API_KEY = os.getenv("LLM_API_KEY", "")
 LLM_MODEL = os.getenv("LLM_MODEL", "gpt-4")
+
+from datetime import datetime, date
+
+def parse_iso_date(value):
+    if not value:
+        return None
+    try:
+        return date.fromisoformat(value)
+    except:
+        return None
+
+import re
+
+def extract_json_from_llm(text: str) -> dict:
+    """
+    Extract JSON safely from LLM response, removing markdown fences like ```json.
+    """
+    cleaned = text.strip()
+
+    # Remove leading/trailing code fences if present
+    if cleaned.startswith("```"):
+        cleaned = re.sub(r"^```(json)?", "", cleaned).strip()
+        cleaned = cleaned.replace("```", "").strip()
+
+    # Extract JSON block
+    match = re.search(r"\{[\s\S]*\}", cleaned)
+    if not match:
+        raise ValueError("No JSON object found in LLM response")
+
+    return json.loads(match.group(0))
 
 async def generate_care_plan_with_llm(input_data: Dict[str, Any]) -> Dict[str, Any]:
     """
@@ -36,7 +70,7 @@ async def generate_care_plan_with_llm(input_data: Dict[str, Any]) -> Dict[str, A
     Do not hallucinate any information; only use the data provided.
     
     Patient Information:
-    {json.dumps(input_data, indent=2)}
+    {json.dumps(input_data, indent=2, default=str)}
     
     Generate a care plan that includes:
     1. A list of tasks for the patient and healthcare providers
@@ -85,23 +119,59 @@ async def generate_care_plan_with_llm(input_data: Dict[str, Any]) -> Dict[str, A
     }
     
     try:
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(timeout=60) as client:
             response = await client.post(LLM_API_URL, json=payload, headers=headers)
+            print("RAW RESPONSE STATUS:", response.status_code)
+            print("RAW RESPONSE TEXT:", response.text[:500]) 
             response.raise_for_status()
             
             result = response.json()
             llm_response = result["choices"][0]["message"]["content"]
             
             # Parse the JSON response from the LLM
-            care_plan_data = json.loads(llm_response)
+            care_plan_data = extract_json_from_llm(llm_response)
             return care_plan_data
-    except Exception as e:
-        print(f"Error generating care plan with LLM: {e}")
+    except httpx.HTTPStatusError as e:
+        error_detail = f"HTTP {e.response.status_code}: {e.response.text[:300]}"
+        print(f"❌ HTTP Status Error: {error_detail}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to generate care plan: {str(e)}"
+            detail=error_detail
         )
-
+    except httpx.TimeoutException as e:
+        print(f"⏱️ Timeout Error: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="LLM API request timed out"
+        )
+    except httpx.RequestError as e:
+        print(f"🌐 Request Error: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to connect to LLM API: {str(e)}"
+        )
+    except json.JSONDecodeError as e:
+        print(f"📋 JSON Decode Error: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Invalid JSON response from LLM: {str(e)}"
+        )
+    except KeyError as e:
+        print(f"🔑 KeyError: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Unexpected LLM response format: missing key {str(e)}"
+        )
+    except Exception as e:
+        # ✅ Generic exception LAST
+        print(f"💥 Unexpected Error: {type(e).__name__}: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to generate care plan: {type(e).__name__}: {str(e)}"
+        )
+        
 async def send_care_plan_notification(user_id: int, care_plan_id: int, db: AsyncSession):
     """
     Send a notification to the user about the new care plan
@@ -205,7 +275,7 @@ async def generate_care_plan(
     # Create care plan in database
     care_plan = models.CarePlan(
         patient_id=encounter.patient_id,
-        encounter_id=encounter.id,
+        encounter_id = int(input_data.current_encounter.encounter_id),
         condition_group_id=condition_group.condition_group_id,
         status="proposed",
         patient_friendly_summary=care_plan_data.get("patient_friendly_summary", ""),
@@ -225,7 +295,7 @@ async def generate_care_plan(
             title=task_data.get("title", ""),
             description=task_data.get("description", ""),
             frequency=task_data.get("frequency", ""),
-            due_date=task_data.get("due_date"),
+            due_date=parse_iso_date(task_data.get("due_date")),
             assigned_to=task_data.get("assigned_to", "patient"),
             requires_clinician_review=task_data.get("requires_clinician_review", False),
             status="pending"
@@ -258,8 +328,12 @@ async def generate_care_plan(
             db
         )
     
-    # Refresh care plan to get tasks
-    await db.refresh(care_plan)
+    result = await db.execute(
+    select(models.CarePlan)
+    .where(models.CarePlan.careplan_id == care_plan.careplan_id)
+    .options(selectinload(models.CarePlan.tasks))
+)
+    care_plan = result.scalars().first()
     
     return care_plan
 
@@ -315,7 +389,12 @@ async def get_care_plan(
                 detail="You are not authorized to view this care plan"
             )
     
-    return care_plan
+    result = await db.execute(
+    select(models.CarePlan)
+    .where(models.CarePlan.careplan_id == careplan_id)
+    .options(selectinload(models.CarePlan.tasks))
+)
+    return result.scalars().first()
 
 @router.get("/patient/{patient_id}", response_model=List[schemas.CarePlanOut])
 async def get_patient_care_plans(
@@ -375,7 +454,12 @@ async def get_patient_care_plans(
     )
     care_plans = care_plans_result.scalars().all()
     
-    return care_plans
+    result = await db.execute(
+    select(models.CarePlan)
+    .where(models.CarePlan.patient_id == patient_id)
+    .options(selectinload(models.CarePlan.tasks))
+)
+    return result.scalars().all()
 
 @router.put("/{careplan_id}", response_model=schemas.CarePlanOut)
 async def update_care_plan(

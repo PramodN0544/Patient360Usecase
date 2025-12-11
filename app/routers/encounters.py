@@ -682,7 +682,7 @@ async def get_encounter(
             selectinload(Encounter.patient),
             selectinload(Encounter.hospital),
             selectinload(Encounter.doctor),
-            selectinload(Encounter.lab_orders)   # 👈 Added lab orders
+            selectinload(Encounter.lab_orders),  # 👈 Added lab orders
             selectinload(Encounter.lab_orders),
             selectinload(Encounter.previous_encounter)
         )

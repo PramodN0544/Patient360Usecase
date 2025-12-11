@@ -1355,7 +1355,7 @@ class PatientProfile(BaseModel):
     pregnancy_status: Optional[bool] = None
 
 class CurrentEncounter(BaseModel):
-    encounter_id: str
+    encounter_id: int
     encounter_type: str
     reason_for_visit: Optional[str] = None
     diagnosis_text: Optional[str] = None

@@ -676,7 +676,6 @@ class GuidelineMaster(Base, TimestampMixin):
    url = Column(Text)
    version = Column(String(50))
    description = Column(Text)
-   pdf_url = Column(Text)
    
    # Relationships
    conditions = relationship("ConditionGuidelineMap", back_populates="guideline")
