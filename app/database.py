@@ -30,6 +30,10 @@ engine = create_async_engine(
     DATABASE_URL,
     echo=False,
     connect_args={"ssl": ssl_ctx},  
+    pool_pre_ping=True,          
+    pool_recycle=1800,           
+    pool_size=10,                
+    max_overflow=20             
 )
 
 AsyncSessionLocal = sessionmaker(

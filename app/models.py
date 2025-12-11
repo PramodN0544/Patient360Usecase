@@ -322,7 +322,7 @@ class Encounter(Base, TimestampMixin):
     diagnosis = Column(Text)
     notes = Column(Text)
     follow_up_date = Column(Date)
-    status = Column(String(20), default="open")
+    status = Column(String(20), default="pending")
     is_lab_test_required = Column(Boolean, default=False)
     documents = Column(ARRAY(String), nullable=True)  # <-- Add this
     patient = relationship("Patient", back_populates="encounters")

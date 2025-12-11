@@ -511,26 +511,8 @@ class EncounterIcdCodeInDB(EncounterIcdCodeBase):
     class Config:
         orm_mode = True
 
-# ================================
-# ENCOUNTER SCHEMAS (Updated with ICD)
-# ================================
-class EncounterCreate(BaseModel):
-    patient_public_id: Optional[str] = None
-    previous_encounter_id: Optional[int] = None
-    is_continuation: bool = False
-    doctor_id: Optional[int] = None
-    hospital_id: Optional[int] = None
-    encounter_date: Optional[date] = None
-    encounter_type: str
-    reason_for_visit: Optional[str] = None
-    diagnosis: Optional[str] = None
-    notes: Optional[str] = None
-    follow_up_date: Optional[date] = None
-    status: Optional[str] = "open"
-    is_lab_test_required: Optional[bool] = False
-    documents: Optional[List[str]] = None
-    icd_codes: Optional[List[EncounterIcdCodeCreate]] = None
-    primary_icd_code_id: Optional[int] = None
+
+    
 
     class Config:
         orm_mode = True
@@ -566,61 +548,108 @@ class LabOrderUpdate(BaseModel):
     class Config:
         orm_mode = True
 
-class EncounterUpdate(BaseModel):
-    doctor_id: Optional[int] = None
-    hospital_id: Optional[int] = None
-    encounter_date: Optional[date] = None
-    encounter_type: Optional[str] = None
-    primary_icd_code_id: Optional[int] = None
-    reason_for_visit: Optional[str] = None
-    notes: Optional[str] = None
-    follow_up_date: Optional[date] = None
-    status: Optional[str] = None
-    is_lab_test_required: Optional[bool] = None
-    documents: Optional[List[str]] = None
-    icd_codes: Optional[List[EncounterIcdCodeCreate]] = None
-    previous_encounter_id: Optional[int] = None
-    is_continuation: Optional[bool] = None
-    reason_for_visit: Optional[str]
-    diagnosis: Optional[str]
-    vitals: Optional[VitalsUpdate]
-    medications: Optional[List[MedicationUpdate]]
-    previous_encounter_id: Optional[int] = None
-    is_continuation: Optional[bool] = None
-    lab_orders: Optional[List[LabOrderUpdate]] = None
-
-class EncounterOut(BaseModel):
-    id: int
+class EncounterCreate(BaseModel):
     patient_public_id: str
-    doctor_id: Optional[int]
-    hospital_id: Optional[int]
-    encounter_date: date
+
     encounter_type: str
-    reason_for_visit: Optional[str]
-    diagnosis: Optional[str]
-    notes: Optional[str]
-    follow_up_date: Optional[date]
-    status: str
-    is_lab_test_required: Optional[bool]
-    documents: Optional[List[str]]
-    previous_encounter_id: Optional[int]
-    is_continuation: bool
-    primary_icd_code_id: Optional[int]
-    
-    # Relationships
-    doctor_name: Optional[str] = None
-    hospital_name: Optional[str] = None
-    primary_icd_code: Optional[IcdCodeResponse] = None
-    icd_codes: List[EncounterIcdCodeInDB] = []
-    # Note: Remove vitals, medications, lab_orders from here if they're causing circular imports
-    # They should be in separate response schemas
+    reason_for_visit: Optional[str] = None
+    diagnosis: Optional[str] = None
+    notes: Optional[str] = None
+
+    encounter_date: Optional[date] = None
+    follow_up_date: Optional[date] = None
+
+    is_lab_test_required: Optional[bool] = False
+
+    # ICD
+    primary_icd_code_id: Optional[int] = None
+    icd_codes: Optional[List[EncounterIcdCodeCreate]] = None
+
+    # Clinical data
+    vitals: Optional[VitalsUpdate] = None
+    medications: Optional[List[MedicationUpdate]] = None
+
+    # Continuation logic (backend decides, but allowed)
+    previous_encounter_id: Optional[int] = None
+    is_continuation: Optional[bool] = False
+
+    documents: Optional[List[str]] = None
 
     class Config:
         orm_mode = True
 
-# ================================
-# SIMPLIFIED ENCOUNTER RESPONSE FOR LISTS
-# ================================
+
+class EncounterUpdate(BaseModel):
+    encounter_type: Optional[str] = None
+    reason_for_visit: Optional[str] = None
+    diagnosis: Optional[str] = None
+    notes: Optional[str] = None
+
+    follow_up_date: Optional[date] = None
+    is_lab_test_required: Optional[bool] = None
+
+    # Status should NOT be manually controlled by frontend
+    status: Optional[str] = None  
+
+    # ICD codes
+    primary_icd_code_id: Optional[int] = None
+    icd_codes: Optional[List[EncounterIcdCodeCreate]] = None
+
+    # Continuation logic is controlled by backend, but allow passing
+    previous_encounter_id: Optional[int] = None
+    is_continuation: Optional[bool] = None
+
+    # Vitals, medications, lab orders
+    vitals: Optional[VitalsUpdate] = None
+    medications: Optional[List[MedicationUpdate]] = None
+    lab_orders: Optional[List[LabOrderUpdate]] = None
+
+    # Documents (S3 URLs)
+    documents: Optional[List[str]] = None
+
+    class Config:
+        orm_mode = True
+
+
+class EncounterOut(BaseModel):
+    id: int
+    patient_public_id: str
+
+    doctor_id: Optional[int]
+    hospital_id: Optional[int]
+
+    encounter_date: date
+    encounter_type: str
+
+    reason_for_visit: Optional[str] = None
+    diagnosis: Optional[str] = None
+    notes: Optional[str] = None
+
+    follow_up_date: Optional[date] = None
+    status: str
+    is_lab_test_required: Optional[bool] = False
+
+    documents: Optional[List[str]] = None
+
+    previous_encounter_id: Optional[int] = None
+    is_continuation: bool = False
+
+    primary_icd_code_id: Optional[int] = None
+
+    # Relationship fields
+    doctor_name: Optional[str] = None
+    hospital_name: Optional[str] = None
+
+    primary_icd_code: Optional[IcdCodeResponse] = None
+    icd_codes: List[EncounterIcdCodeInDB] = []
+
+    class Config:
+        orm_mode = True
+
+    class Config:
+        orm_mode = True
+
+
 class EncounterSummary(BaseModel):
     id: int
     patient_public_id: str
@@ -629,7 +658,7 @@ class EncounterSummary(BaseModel):
     status: str
     doctor_name: Optional[str] = None
     hospital_name: Optional[str] = None
-    primary_diagnosis: Optional[str] = None  # From primary ICD code
+    primary_diagnosis: Optional[str] = None 
     
     class Config:
         orm_mode = True
@@ -646,7 +675,6 @@ class EncounterBase(BaseModel):
     class Config:
         orm_mode = True
 
-
 class EncounterResponse(BaseModel):
     id: int
     encounter_id: str
@@ -659,27 +687,9 @@ class EncounterResponse(BaseModel):
     class Config:
         orm_mode = True
 
-
 class PatientEncounterResponse(EncounterBase):
     id: int
     patient_id: int
-
-
-
-# class EncounterUpdate(BaseModel):
-#     encounter_type: Optional[str]
-#     reason_for_visit: Optional[str]
-#     diagnosis: Optional[str]
-#     notes: Optional[str]
-#     follow_up_date: Optional[date]
-#     is_lab_test_required: Optional[bool]
-#     vitals: Optional[VitalsUpdate]
-#     medications: Optional[List[MedicationUpdate]]
-#     documents: Optional[List[str]] = None 
-#     previous_encounter_id: Optional[int] = None
-#     is_continuation: Optional[bool] = None
-#     lab_orders: Optional[List[LabOrderUpdate]] = None
-
 
 # INSURANCE MASTER SCHEMAS
 class InsuranceMasterOut(BaseModel):

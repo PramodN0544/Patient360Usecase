@@ -49,22 +49,22 @@ def safe_parse(data: str):
         except:
             raise HTTPException(422, "Invalid encounter_in format")
 
-# CREATE ENCOUNTER
+# CREATE ENCOUNTER (FINAL FIXED VERSION)
 @router.post("/", response_model=EncounterOut)
 async def create_encounter(
-    encounter_in: str = Form(...), 
-    files: List[UploadFile] | None = File(None), 
+    encounter_in: str = Form(...),
+    files: List[UploadFile] | None = File(None),
     current_user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    parsed_data = json.loads(encounter_in) 
+    parsed_data = json.loads(encounter_in)
     encounter_in = EncounterCreate(**parsed_data)
 
-    # ---------- DOCTOR / HOSPITAL VALIDATION ----------
+    # ------------------ VALIDATE DOCTOR ------------------
     doctor_result = await db.execute(
         select(Doctor).where(Doctor.user_id == current_user.id)
     )
-    doctor = doctor_result.unique().scalar_one_or_none()
+    doctor = doctor_result.scalar_one_or_none()
 
     if current_user.role == "hospital":
         doctor_result = await db.execute(
@@ -73,38 +73,37 @@ async def create_encounter(
                 Doctor.hospital_id == current_user.hospital_id
             )
         )
-        doctor = doctor_result.unique().scalar_one_or_none()
-
+        doctor = doctor_result.scalar_one_or_none()
         if not doctor:
             raise HTTPException(404, "Doctor not found in hospital")
 
     elif not doctor:
         raise HTTPException(403, "Only doctors or hospitals can create encounters")
 
-    # ---------- PATIENT VALIDATION ----------
+    # ------------------ VALIDATE PATIENT ------------------
     if not encounter_in.patient_public_id:
         raise HTTPException(400, "patient_public_id is required")
 
     patient_result = await db.execute(
         select(Patient).where(Patient.public_id == encounter_in.patient_public_id)
     )
-    patient = patient_result.unique().scalar_one_or_none()
-
+    patient = patient_result.scalar_one_or_none()
     if not patient:
         raise HTTPException(404, "Patient not found")
 
-    # ---------- ASSIGNMENT CHECK ----------
+    # ------------------ VALIDATE ASSIGNMENT ------------------
     assign = await db.execute(
         select(Assignment).where(
             Assignment.patient_id == patient.id,
             Assignment.doctor_id == doctor.id
         )
     )
-    assignment_record = assign.scalars().first() 
+    assignment_record = assign.first()  # SAFE: even if duplicates exist
+
     if not assignment_record:
         raise HTTPException(403, "Doctor is not assigned to this patient")
 
-    # ---------- CREATE ENCOUNTER ----------
+    # ------------------ CREATE ENCOUNTER ------------------
     new_encounter = Encounter(
         patient_id=patient.id,
         patient_public_id=patient.public_id,
@@ -117,66 +116,51 @@ async def create_encounter(
         notes=encounter_in.notes,
         follow_up_date=encounter_in.follow_up_date,
         is_lab_test_required=encounter_in.is_lab_test_required,
+        
+        # ALWAYS start with pending
         status="pending",
+
         documents=[]
     )
-    # ===== ADD ICD CODE HANDLING =====
-    # Handle primary ICD code if provided
+
+    # ------------------ PRIMARY ICD CODE ------------------
     if encounter_in.primary_icd_code_id:
-        # Validate ICD code exists and is active
         icd_result = await db.execute(
             select(IcdCodeMaster).where(
                 IcdCodeMaster.id == encounter_in.primary_icd_code_id,
                 IcdCodeMaster.is_active == True
             )
         )
-        icd_code = icd_result.scalar_one_or_none()
-        
-        if not icd_code:
+        if not icd_result.scalar_one_or_none():
             raise HTTPException(400, "Primary ICD code not found or inactive")
-        
+
         new_encounter.primary_icd_code_id = encounter_in.primary_icd_code_id
 
     db.add(new_encounter)
     await db.flush()
 
-     # ===== ADD ENCOUNTER ICD CODES =====
+    # ------------------ ICD CODES LIST ------------------
     if encounter_in.icd_codes:
         for icd_data in encounter_in.icd_codes:
-            # Validate ICD code exists and is active
+
             icd_result = await db.execute(
                 select(IcdCodeMaster).where(
                     IcdCodeMaster.id == icd_data.icd_code_id,
                     IcdCodeMaster.is_active == True
                 )
             )
-            icd_code = icd_result.scalar_one_or_none()
-            
-            if not icd_code:
-                raise HTTPException(400, f"ICD code ID {icd_data.icd_code_id} not found or inactive")
-            
-            # Check for duplicate
-            existing = await db.execute(
-                select(EncounterIcdCode).where(
-                    EncounterIcdCode.encounter_id == new_encounter.id,
-                    EncounterIcdCode.icd_code_id == icd_data.icd_code_id
-                )
-            )
-            duplicate = existing.scalar_one_or_none()
-            
-            if duplicate:
-                raise HTTPException(400, f"Duplicate ICD code: {icd_code.code}")
-            
-            # Create encounter ICD code
-            db_encounter_icd = EncounterIcdCode(
+            icd = icd_result.scalar_one_or_none()
+            if not icd:
+                raise HTTPException(400, f"ICD {icd_data.icd_code_id} not found")
+
+            db.add(EncounterIcdCode(
                 encounter_id=new_encounter.id,
                 icd_code_id=icd_data.icd_code_id,
                 is_primary=icd_data.is_primary,
                 notes=icd_data.notes
-            )
-            db.add(db_encounter_icd)
+            ))
 
-    # ---------- SAVE VITALS ----------
+    # ------------------ VITALS ------------------
     if encounter_in.vitals:
         v = encounter_in.vitals
         bmi = None
@@ -196,7 +180,7 @@ async def create_encounter(
             oxygen_saturation=v.oxygen_saturation,
         ))
 
-    # ---------- SAVE MEDICATIONS ----------
+    # ------------------ MEDICATIONS ------------------
     if encounter_in.medications:
         for m in encounter_in.medications:
             db.add(Medication(
@@ -210,14 +194,12 @@ async def create_encounter(
                 start_date=m.start_date,
                 end_date=m.end_date,
                 status=m.status,
-                notes=m.notes,
-                icd_code=m.icd_code,
-                ndc_code=m.ndc_code,
+                notes=m.notes
             ))
 
-    # ---------- FILE UPLOAD TO S3 ----------
+    # ------------------ FILE UPLOAD ------------------
     if files:
-        current_docs = new_encounter.documents or []
+        docs = []
         for file in files:
             file_path = await upload_encounter_document_to_s3(
                 hospital_id=doctor.hospital_id,
@@ -225,57 +207,56 @@ async def create_encounter(
                 encounter_id=new_encounter.id,
                 file=file
             )
-            current_docs.append(file_path)
-            new_encounter.documents = current_docs
-    
-    if encounter_in.follow_up_date:
-        db.add(
-            EncounterHistory(
-                encounter_id=new_encounter.id,
-                status="FOLLOW_UP_SCHEDULED",
-                updated_by=current_user.id,
-                notes="Follow-up created during encounter"
-            )
-        )
-  # --- CONTINUATION LOGIC (CORRECT) ---
-    if encounter_in.follow_up_date:
-        new_encounter.is_continuation = True
+            docs.append(file_path)
+        new_encounter.documents = docs
 
-        # Get last encounter for this patient
-        prev_result = await db.execute(
+    # ------------------ CONTINUATION LOGIC ------------------
+    if encounter_in.follow_up_date:
+        prev_enc_result = await db.execute(
             select(Encounter)
-            .where(Encounter.patient_id == patient.id,Encounter.id!= new_encounter.id)
+            .where(
+                Encounter.patient_id == patient.id,
+                Encounter.id != new_encounter.id
+            )
             .order_by(Encounter.encounter_date.desc())
         )
-        previous_encounter = prev_result.scalars().first()
-        new_encounter.previous_encounter_id = previous_encounter.id if previous_encounter else None
-    else:
-        new_encounter.is_continuation = False
-        new_encounter.previous_encounter_id = None
+        previous_encounter = prev_enc_result.unique().scalars().first()
+
+        new_encounter.previous_encounter_id = (
+            previous_encounter.id if previous_encounter else None
+        )
+
+        db.add(EncounterHistory(
+            encounter_id=new_encounter.id,
+            status="FOLLOW_UP_SCHEDULED",
+            updated_by=current_user.id,
+            notes="Follow-up created"
+        ))
 
     await db.commit()
     await db.refresh(new_encounter)
 
-    # ---------- FETCH COMPLETE OBJECT ----------
-    final = await db.execute(
+    # ------------------ RETURN FULL OBJECT ------------------
+    result = await db.execute(
         select(Encounter)
         .options(
             selectinload(Encounter.vitals),
             selectinload(Encounter.medications),
+            selectinload(Encounter.patient),
             selectinload(Encounter.doctor),
             selectinload(Encounter.hospital),
-            selectinload(Encounter.patient),
-            selectinload(Encounter.icd_codes).selectinload(EncounterIcdCode.icd_code),  
-            selectinload(Encounter.primary_icd_code) 
+            selectinload(Encounter.icd_codes).selectinload(EncounterIcdCode.icd_code),
+            selectinload(Encounter.primary_icd_code),
         )
         .where(Encounter.id == new_encounter.id)
     )
-    e = final.unique().scalar_one()
 
-    out = EncounterOut.from_orm(e)
+    enc = result.unique().scalar_one()
+    out = EncounterOut.from_orm(enc)
     out.doctor_name = f"{doctor.first_name} {doctor.last_name}"
-    out.hospital_name = e.hospital.name
-    out.patient_public_id = e.patient.public_id
+    out.hospital_name = doctor.hospital.name
+    out.patient_public_id = patient.public_id
+
     out.icd_codes = [
         {
             "id": ec.id,
@@ -286,10 +267,11 @@ async def create_encounter(
             "notes": ec.notes,
             "created_at": ec.created_at
         }
-        for ec in e.icd_codes
+        for ec in enc.icd_codes
     ]
 
     return out
+
 
 @router.put("/{encounter_id}", response_model=EncounterOut)
 async def update_encounter(
@@ -299,105 +281,160 @@ async def update_encounter(
     current_user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
+    if not encounter_in:
+        raise HTTPException(400, "Missing encounter data")
 
-    # ===== DEBUG: Log the start of the request =====
-    print(f"\n" + "="*60)
-    print(f"🔄 UPDATE ENCOUNTER API CALLED - ID: {encounter_id}")
-    print(f"👤 User ID: {current_user.id}, Role: {current_user.role}")
-    print("="*60)
-    
-    # ===== VALIDATE encounter_in IS PROVIDED =====
-    if encounter_in is None:
-        print("❌ ERROR: No 'encounter_in' field in FormData")
-        raise HTTPException(
-            status_code=400,
-            detail="Missing 'encounter_in' field. Please send encounter data as JSON string in FormData."
-        )
-    
-    if not encounter_in.strip():
-        print("❌ ERROR: 'encounter_in' is empty string")
-        raise HTTPException(
-            status_code=400,
-            detail="Encounter data is empty. Please provide valid JSON data."
-        )
-    
-    print(f"📥 Raw data received (first 300 chars):")
-    print(f"   {encounter_in[:300]}...")
-    print(f"📥 Total length: {len(encounter_in)} characters")
-    
-    # ===== PARSE THE INCOMING DATA =====
-    parsed_data = None
+    # Parse JSON
     try:
-        # First try JSON parsing
-        parsed_data = json.loads(encounter_in)
-        print(f"✅ Successfully parsed as JSON")
-        print(f"✅ Data type: {type(parsed_data)}")
-    except json.JSONDecodeError as json_error:
-        print(f"❌ JSON parsing failed: {json_error}")
-        print(f"❌ Problematic data: {encounter_in[:100]}...")
-        
-        try:
-            # Fallback to ast.literal_eval for Python literals
-            parsed_data = ast.literal_eval(encounter_in)
-            print(f"✅ Successfully parsed with ast.literal_eval")
-            print(f"✅ Data type: {type(parsed_data)}")
-        except Exception as eval_error:
-            print(f"❌ ast.literal_eval also failed: {eval_error}")
-            raise HTTPException(
-                status_code=400,
-                detail=f"Invalid data format. Expected JSON. Error: {str(json_error)}"
-            )
-    
-    # ===== VALIDATE PARSED DATA TYPE =====
-    # Handle case where frontend sends just a string like "in-progress"
-    if isinstance(parsed_data, str):
-        print(f"⚠️ WARNING: Received string instead of object: '{parsed_data}'")
-        print(f"⚠️ Converting to dict with status field")
-        parsed_data = {"status": parsed_data}
-    
-    if not isinstance(parsed_data, dict):
-        print(f"❌ ERROR: parsed_data is {type(parsed_data)}, expected dict")
-        print(f"❌ Value: {parsed_data}")
-        raise HTTPException(
-            status_code=400,
-            detail=f"Expected JSON object, got {type(parsed_data).__name__}"
-        )
-    
-    print(f"📊 Parsed data keys: {list(parsed_data.keys())}")
-    print(f"📊 Parsed data values: {parsed_data}")
-    
-    # ===== CREATE ENCOUNTER UPDATE OBJECT =====
+        parsed = json.loads(encounter_in)
+    except:
+        raise HTTPException(400, "Invalid JSON format in encounter_in")
+
+    # Build update schema
     try:
-        # Ensure all required fields have defaults
-        default_values = {
-            "encounter_type": parsed_data.get("encounter_type") or "office_visit",
-            "reason_for_visit": parsed_data.get("reason_for_visit") or "",
-            "diagnosis": parsed_data.get("diagnosis") or "",
-            "notes": parsed_data.get("notes") or "",
-            "follow_up_date": parsed_data.get("follow_up_date"),
-            "is_lab_test_required": parsed_data.get("is_lab_test_required", False),
-            "status": parsed_data.get("status") or "in-progress",
-            "vitals": parsed_data.get("vitals"),
-            "medications": parsed_data.get("medications", []),
-            "lab_orders": parsed_data.get("lab_orders", [])
-        }
-        
-        # Merge with parsed data (parsed data overrides defaults)
-        final_data = {**default_values, **parsed_data}
-        
-        encounter_update = EncounterUpdate(**final_data)
-        print(f"✅ EncounterUpdate model created successfully")
-        
+        encounter_update = EncounterUpdate(
+            encounter_type=parsed.get("encounter_type"),
+            reason_for_visit=parsed.get("reason_for_visit"),
+            diagnosis=parsed.get("diagnosis"),
+            notes=parsed.get("notes"),
+            follow_up_date=parsed.get("follow_up_date"),
+            is_lab_test_required=parsed.get("is_lab_test_required"),
+            vitals=parsed.get("vitals"),
+            medications=parsed.get("medications"),
+            lab_orders=parsed.get("lab_orders"),
+        )
     except Exception as e:
-        print(f"❌ ERROR creating EncounterUpdate: {e}")
-        print(f"❌ Data that failed validation: {parsed_data}")
-        raise HTTPException(
-            status_code=400,
-            detail=f"Invalid encounter data: {str(e)}"
-        )
-    
-    # ===== FETCH THE EXISTING ENCOUNTER =====
+        raise HTTPException(400, f"Invalid encounter fields: {e}")
+
+    # Fetch encounter
     result = await db.execute(
+        select(Encounter)
+        .options(
+            selectinload(Encounter.vitals),
+            selectinload(Encounter.medications),
+            selectinload(Encounter.lab_orders),
+            selectinload(Encounter.patient),
+            selectinload(Encounter.doctor),
+            selectinload(Encounter.hospital)
+        )
+        .where(Encounter.id == encounter_id)
+    )
+    encounter = result.scalar_one_or_none()
+
+    if not encounter:
+        raise HTTPException(404, "Encounter not found")
+
+    # Permission check
+    doctor_result = await db.execute(select(Doctor).where(Doctor.user_id == current_user.id))
+    doctor = doctor_result.scalar_one_or_none()
+
+    if not doctor or doctor.id != encounter.doctor_id:
+        raise HTTPException(403, "You can update only your own encounters")
+
+    # Prevent editing completed encounters
+    if encounter.status == "completed":
+        raise HTTPException(400, "Completed encounters cannot be modified")
+
+    # -----------------------------
+    # SIMPLE STATUS LOGIC (FINAL)
+    # -----------------------------
+    follow_up = encounter_update.follow_up_date
+
+    if follow_up:
+        encounter.status = "in-progress"
+        encounter.is_continuation = True
+    else:
+        encounter.status = "completed"
+        encounter.is_continuation = False
+
+    # Update simple fields
+    for field, value in encounter_update.dict(exclude_unset=True, exclude_none=True).items():
+        if field not in ["vitals", "medications", "lab_orders"]:
+            setattr(encounter, field, value)
+
+    # -----------------------------
+    # UPDATE VITALS
+    # -----------------------------
+    if encounter_update.vitals:
+        vitals_result = await db.execute(
+            select(Vitals).where(Vitals.encounter_id == encounter.id)
+        )
+        vitals = vitals_result.scalar_one_or_none()
+
+        if not vitals:
+            vitals = Vitals(encounter_id=encounter.id, patient_id=encounter.patient_id)
+            db.add(vitals)
+
+        for key, val in encounter_update.vitals.items():
+            setattr(vitals, key, val)
+
+        # Calculate BMI
+        if vitals.height and vitals.weight:
+            vitals.bmi = round(vitals.weight / ((vitals.height / 100) ** 2), 2)
+
+    # -----------------------------
+    # UPDATE MEDICATIONS
+    # -----------------------------
+    if encounter_update.medications is not None:
+        await db.execute(
+            Medication.__table__.delete().where(Medication.encounter_id == encounter.id)
+        )
+        for m in encounter_update.medications:
+            db.add(Medication(
+                encounter_id=encounter.id,
+                patient_id=encounter.patient_id,
+                doctor_id=encounter.doctor_id,
+                **m
+            ))
+
+    # -----------------------------
+    # UPDATE LAB ORDERS
+    # -----------------------------
+    if encounter_update.lab_orders is not None:
+        await db.execute(
+            LabOrder.__table__.delete().where(LabOrder.encounter_id == encounter.id)
+        )
+        for l in encounter_update.lab_orders:
+            db.add(LabOrder(
+                encounter_id=encounter.id,
+                patient_id=encounter.patient_id,
+                doctor_id=encounter.doctor_id,
+                test_code=l["test_code"],
+                test_name=l.get("test_name", ""),
+                sample_type=l["sample_type"],
+                status="Ordered"
+            ))
+
+    # -----------------------------
+    # FILE UPLOAD
+    # -----------------------------
+    if files:
+        docs = encounter.documents or []
+        for f in files:
+            url = await upload_encounter_document_to_s3(
+                hospital_id=encounter.hospital_id,
+                patient_id=encounter.patient_id,
+                encounter_id=encounter.id,
+                file=f
+            )
+            docs.append(url)
+        encounter.documents = docs
+
+    # Log history
+    db.add(
+        EncounterHistory(
+            encounter_id=encounter.id,
+            status=encounter.status,
+            updated_by=current_user.id,
+            notes=f"Encounter updated - status: {encounter.status}"
+        )
+    )
+
+    await db.commit()
+    await db.refresh(encounter)
+
+    # Return response
+    refreshed = await db.execute(
         select(Encounter)
         .options(
             selectinload(Encounter.vitals),
@@ -406,444 +443,12 @@ async def update_encounter(
             selectinload(Encounter.doctor),
             selectinload(Encounter.hospital),
             selectinload(Encounter.patient),
-            selectinload(Encounter.previous_encounter)
         )
-        .where(Encounter.id == encounter_id)
+        .where(Encounter.id == encounter.id)
     )
-    encounter = result.unique().scalar_one_or_none()
 
-    if not encounter:
-        print(f"❌ ERROR: Encounter {encounter_id} not found")
-        raise HTTPException(
-            status_code=404,
-            detail="Encounter not found. Please start encounter first."
-        )
-    
-    print(f"✅ Found encounter {encounter_id}")
-    print(f"   Patient: {encounter.patient.first_name} {encounter.patient.last_name}")
-    print(f"   Doctor: {encounter.doctor.first_name} {encounter.doctor.last_name}")
-    print(f"   Current status: {encounter.status}")
-    
-    # ===== PERMISSION CHECK =====
-    doctor_result = await db.execute(
-        select(Doctor).where(Doctor.user_id == current_user.id)
-    )
-    doctor = doctor_result.unique().scalar_one_or_none()
+    return EncounterOut.from_orm(refreshed.scalar_one())
 
-    if current_user.role == "doctor" and not doctor:
-        print(f"❌ ERROR: User {current_user.id} is not a doctor")
-        raise HTTPException(status_code=403, detail="Only doctors can update encounters")
-    
-    if current_user.role == "doctor" and doctor.id != encounter.doctor_id:
-        print(f"❌ ERROR: Doctor {doctor.id} is not assigned to this encounter")
-        print(f"   Encounter doctor: {encounter.doctor_id}, Current doctor: {doctor.id}")
-        raise HTTPException(status_code=403, detail="You can only update your own encounters")
-    
-    if current_user.role == "patient":
-        print(f"❌ ERROR: Patient trying to update encounter")
-        raise HTTPException(status_code=403, detail="Patients cannot update encounters")
-    
-    print(f"✅ Permission check passed")
-    
-    # ===== VALIDATE ASSIGNMENT (DOCTOR TO PATIENT) =====
-    if current_user.role == "doctor":
-        assign_result = await db.execute(
-            select(Assignment).where(
-                Assignment.patient_id == encounter.patient_id,
-                Assignment.doctor_id == doctor.id
-            )
-        )
-        assignment = assign_result.scalars().first()  # CHANGED: scalar_one_or_none() → scalars().first()
-    
-        if not assignment:
-            print(f"❌ ERROR: Doctor {doctor.id} not assigned to patient {encounter.patient_id}")
-            raise HTTPException(
-                status_code=403,
-                detail="Doctor is not assigned to this patient"
-            )
-        print(f"✅ Assignment verified")
-    
-    # ===== WORKFLOW STATUS LOGIC =====
-    print(f"\n" + "="*60)
-    print(f"📋 STATUS LOGIC ANALYSIS")
-    print("="*60)
-    print(f"Current status: {encounter.status}")
-    print(f"New follow_up_date: {encounter_update.follow_up_date}")
-    print(f"Has diagnosis: {bool(encounter_update.diagnosis)}")
-    print(f"Has notes: {bool(encounter_update.notes)}")
-    print(f"Has vitals: {bool(encounter_update.vitals)}")
-    print(f"Has medications: {len(encounter_update.medications or []) > 0}")
-    
-    # RULE 1: Prevent updates to completed encounters
-    if encounter.status == "completed":
-        print(f"❌ ERROR: Attempting to update completed encounter")
-        raise HTTPException(
-            status_code=400,
-            detail="This encounter is already completed. Please start a new encounter instead."
-        )
-    
-    # Determine if new clinical data is being added
-    has_new_diagnosis = (
-        encounter_update.diagnosis and 
-        encounter_update.diagnosis != encounter.diagnosis
-    )
-    has_new_notes = (
-        encounter_update.notes and 
-        encounter_update.notes != encounter.notes
-    )
-    has_new_clinical_data = (
-        has_new_diagnosis or 
-        has_new_notes or 
-        encounter_update.vitals is not None or
-        (encounter_update.medications is not None and len(encounter_update.medications) > 0)
-    )
-    
-    print(f"Has new clinical data: {has_new_clinical_data}")
-    
-    # RULE 2: Determine new status
-    new_status = encounter.status
-    
-    if encounter.status == "pending" and has_new_clinical_data:
-        new_status = "in-progress"
-        print(f"🔄 Status: pending → in-progress (clinical data added)")
-    
-    # RULE 3: Follow-up date logic
-    if encounter_update.follow_up_date:
-        new_status = "in-progress"
-        encounter.is_continuation = True
-        print(f"🔄 Status set to: in-progress (follow-up date provided)")
-        
-        # Link to previous encounter if not already linked
-        if not encounter.previous_encounter_id:
-            prev_result = await db.execute(
-                select(Encounter)
-                .where(
-                    Encounter.patient_id == encounter.patient_id,
-                    Encounter.id != encounter.id,
-                    Encounter.status.in_(["completed", "in-progress"])
-                )
-                .order_by(Encounter.encounter_date.desc())
-            )
-            previous_encounter = prev_result.scalars().first()
-            
-            if previous_encounter:
-                encounter.previous_encounter_id = previous_encounter.id
-                print(f"🔗 Linked to previous encounter: {previous_encounter.id}")
-            else:
-                print(f"ℹ️ No previous encounter found for linking")
-    else:
-        # No follow-up date
-        encounter.is_continuation = False
-        
-        if has_new_clinical_data:
-            new_status = "completed"
-            print(f"✅ Status set to: completed (no follow-up, has clinical data)")
-        elif encounter.status == "in-progress" and not has_new_clinical_data:
-            # Keep as in-progress if no changes
-            new_status = "in-progress"
-            print(f"⏳ Status remains: in-progress (no new clinical data)")
-        else:
-            new_status = "pending"
-            print(f"⏳ Status remains: pending (no clinical data, no follow-up)")
-    
-    # Update the status
-    encounter.status = new_status
-    print(f"📝 Final status: {encounter.status}")
-    print(f"📝 Is continuation: {encounter.is_continuation}")
-    
-    # ===== UPDATE MAIN ENCOUNTER FIELDS =====
-    print(f"\n" + "="*60)
-    print(f"🔄 UPDATING FIELDS")
-    print("="*60)
-    
-    update_dict = encounter_update.dict(exclude_unset=True, exclude_none=True)
-    print(f"Fields to update: {list(update_dict.keys())}")
-    
-    for field, value in update_dict.items():
-        if field not in ["vitals", "medications", "lab_orders", "icd_codes", "primary_icd_code_id","previous_encounter_id", "is_continuation"]:
-            if value is not None:
-                current_value = getattr(encounter, field, None)
-                if current_value != value:
-                    setattr(encounter, field, value)
-                    print(f"Updated '{field}': {current_value} → {value}")
-                else:
-                    print(f"Skipped '{field}' (no change)")
-     # ===== UPDATE PRIMARY ICD CODE =====
-    if encounter_update.primary_icd_code_id is not None:
-        print(f"\n🏷️ UPDATING PRIMARY ICD CODE")
-        if encounter_update.primary_icd_code_id:
-            # Validate ICD code exists and is active
-            icd_result = await db.execute(
-                select(IcdCodeMaster).where(
-                    IcdCodeMaster.id == encounter_update.primary_icd_code_id,
-                    IcdCodeMaster.is_active == True
-                )
-            )
-            icd_code = icd_result.scalar_one_or_none()
-            
-            if not icd_code:
-                raise HTTPException(400, "Primary ICD code not found or inactive")
-            
-            encounter.primary_icd_code_id = encounter_update.primary_icd_code_id
-            print(f"   ✅ Set primary ICD code to: {icd_code.code} - {icd_code.name}")
-        else:
-            encounter.primary_icd_code_id = None
-            print(f"   ✅ Removed primary ICD code")
-
-    # ===== UPDATE ENCOUNTER ICD CODES =====
-    if encounter_update.icd_codes is not None:
-        print(f"\n📋 UPDATING ICD CODES")
-        
-        # Remove existing ICD codes
-        await db.execute(
-            EncounterIcdCode.__table__.delete().where(
-                EncounterIcdCode.encounter_id == encounter_id
-            )
-        )
-        print(f"   ✅ Removed existing ICD codes")
-        
-        # Add new ICD codes
-        if encounter_update.icd_codes:
-            for icd_data in encounter_update.icd_codes:
-                # Validate ICD code exists and is active
-                icd_result = await db.execute(
-                    select(IcdCodeMaster).where(
-                        IcdCodeMaster.id == icd_data.icd_code_id,
-                        IcdCodeMaster.is_active == True
-                    )
-                )
-                icd_code = icd_result.scalar_one_or_none()
-                
-                if not icd_code:
-                    raise HTTPException(400, f"ICD code ID {icd_data.icd_code_id} not found or inactive")
-                
-                # Create encounter ICD code
-                db_encounter_icd = EncounterIcdCode(
-                    encounter_id=encounter_id,
-                    icd_code_id=icd_data.icd_code_id,
-                    is_primary=icd_data.is_primary,
-                    notes=icd_data.notes
-                )
-                db.add(db_encounter_icd)
-            print(f"   ✅ Added {len(encounter_update.icd_codes)} ICD codes")
-        else:
-            print(f"   ℹ️ No ICD codes to add (empty list)")
-    
-    # ===== UPDATE VITALS =====
-    if encounter_update.vitals is not None:
-        print(f"\n💓 UPDATING VITALS")
-        vitals_result = await db.execute(
-            select(Vitals).where(Vitals.encounter_id == encounter.id)
-        )
-        vitals = vitals_result.unique().scalar_one_or_none()
-        
-        if vitals:
-            # Update existing vitals
-            for key, val in encounter_update.vitals.dict(exclude_unset=True).items():
-                if val is not None:
-                    setattr(vitals, key, val)
-                    print(f"   ✅ Updated vitals.{key}: {val}")
-            
-            # Calculate BMI if height and weight provided
-            if vitals.height and vitals.weight:
-                bmi = round(vitals.weight / ((vitals.height / 100) ** 2), 2)
-                vitals.bmi = bmi
-                print(f"   ✅ Calculated BMI: {bmi}")
-        else:
-            # Create new vitals
-            v_data = encounter_update.vitals.dict(exclude_unset=True)
-            
-            # Calculate BMI
-            bmi = None
-            if v_data.get('height') and v_data.get('weight'):
-                bmi = round(v_data['weight'] / ((v_data['height'] / 100) ** 2), 2)
-            
-            new_vitals = Vitals(
-                encounter_id=encounter.id,
-                patient_id=encounter.patient_id,
-                **v_data
-            )
-            
-            if bmi:
-                new_vitals.bmi = bmi
-            
-            db.add(new_vitals)
-            print(f"   ✅ Created new vitals record")
-            print(f"   ✅ BMI: {bmi}" if bmi else "   ✅ No BMI calculated")
-    
-    # ===== UPDATE MEDICATIONS =====
-    if encounter_update.medications is not None:
-        print(f"\n💊 UPDATING MEDICATIONS")
-        
-        # Count existing medications
-        existing_meds_result = await db.execute(
-            select(Medication).where(Medication.encounter_id == encounter.id)
-        )
-        existing_meds = existing_meds_result.scalars().all()
-        print(f"   Found {len(existing_meds)} existing medications")
-        
-        # Remove old medications
-        if existing_meds:
-            await db.execute(
-                Medication.__table__.delete().where(Medication.encounter_id == encounter.id)
-            )
-            print(f"   ✅ Removed {len(existing_meds)} old medications")
-        
-        # Add new medications
-        if encounter_update.medications:
-            for med in encounter_update.medications:
-                med_data = med.dict(exclude_unset=True)
-                db.add(Medication(
-                    encounter_id=encounter.id,
-                    patient_id=encounter.patient_id,
-                    doctor_id=encounter.doctor_id,
-                    **med_data
-                ))
-            print(f"   ✅ Added {len(encounter_update.medications)} new medications")
-        else:
-            print(f"   ℹ️ No medications to add (empty list)")
-    
-    # ===== UPDATE LAB ORDERS =====
-    if encounter_update.lab_orders is not None:
-        print(f"\n🧪 UPDATING LAB ORDERS")
-        
-        # Only update if lab test is required
-        if encounter.is_lab_test_required:
-            # Remove old lab orders
-            existing_labs_result = await db.execute(
-                select(LabOrder).where(LabOrder.encounter_id == encounter.id)
-            )
-            existing_labs = existing_labs_result.scalars().all()
-            
-            if existing_labs:
-                await db.execute(
-                    LabOrder.__table__.delete().where(LabOrder.encounter_id == encounter.id)
-                )
-                print(f"   ✅ Removed {len(existing_labs)} old lab orders")
-            
-            # Add new lab orders
-            if encounter_update.lab_orders:
-                for lab in encounter_update.lab_orders:
-                    db.add(LabOrder(
-                        encounter_id=encounter.id,
-                        patient_id=encounter.patient_id,
-                        doctor_id=encounter.doctor_id,
-                        test_code=lab.test_code,
-                        test_name=getattr(lab, "test_name", None) or "",
-                        sample_type=getattr(lab, "sample_type", None),
-                        status="Ordered"
-                    ))
-                print(f"   ✅ Added {len(encounter_update.lab_orders)} new lab orders")
-            else:
-                print(f"   ℹ️ No lab orders to add")
-        else:
-            print(f"   ⏭️ Skipped (lab test not required)")
-    
-    # ===== HANDLE FILE UPLOADS =====
-    if files:
-        print(f"\n📎 HANDLING FILE UPLOADS")
-        docs = encounter.documents or []
-        uploaded_count = 0
-        
-        for file in files:
-            try:
-                print(f"   Processing: {file.filename} ({file.content_type})")
-                url = await upload_encounter_document_to_s3(
-                    hospital_id=encounter.hospital_id,
-                    patient_id=encounter.patient_id,
-                    encounter_id=encounter.id,
-                    file=file
-                )
-                docs.append(url)
-                uploaded_count += 1
-                print(f"   ✅ Uploaded: {file.filename}")
-            except Exception as e:
-                print(f"   ❌ Failed to upload {file.filename}: {e}")
-        
-        if uploaded_count > 0:
-            encounter.documents = docs
-            print(f"   ✅ Total files uploaded: {uploaded_count}")
-    
-    # ===== SAVE HISTORY =====
-    print(f"\n📖 SAVING HISTORY")
-    db.add(EncounterHistory(
-        encounter_id=encounter.id,
-        status=encounter.status,
-        updated_by=current_user.id,
-        notes=f"Encounter updated via API. Status: {encounter.status}"
-    ))
-    print(f"   ✅ History record created")
-    
-    # ===== COMMIT TRANSACTION =====
-    try:
-        print(f"\n💾 COMMITTING CHANGES TO DATABASE")
-        await db.commit()
-        await db.refresh(encounter)
-        print(f"✅ Successfully updated encounter {encounter_id}")
-        print(f"✅ Final status: {encounter.status}")
-        print(f"✅ Updated at: {encounter.updated_at}")
-    except Exception as e:
-        await db.rollback()
-        print(f"❌ DATABASE ERROR: {e}")
-        print(f"❌ Rolled back transaction")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to update encounter: {str(e)}"
-        )
-    
-    # ===== BUILD RESPONSE =====
-    print(f"\n📤 BUILDING RESPONSE")
-    # Refresh encounter with ICD codes
-    refreshed = await db.execute(
-        select(Encounter)
-        .options(
-            selectinload(Encounter.vitals),
-            selectinload(Encounter.medications),
-            selectinload(Encounter.doctor),
-            selectinload(Encounter.hospital),
-            selectinload(Encounter.patient),
-            selectinload(Encounter.icd_codes).selectinload(EncounterIcdCode.icd_code),
-            selectinload(Encounter.primary_icd_code)
-        )
-        .where(Encounter.id == encounter_id)
-    )
-    encounter = refreshed.unique().scalar_one()
-    
-    response = EncounterOut.from_orm(encounter)
-    response.doctor_name = f"{encounter.doctor.first_name} {encounter.doctor.last_name}"
-    response.hospital_name = encounter.hospital.name
-    response.patient_public_id = encounter.patient.public_id
-    
-    # Add ICD codes to response
-    response_dict = response.dict()
-    response_dict["icd_codes"] = [
-        {
-            "id": ec.id,
-            "icd_code_id": ec.icd_code_id,
-            "code": ec.icd_code.code,
-            "name": ec.icd_code.name,
-            "is_primary": ec.is_primary,
-            "notes": ec.notes,
-            "created_at": ec.created_at
-        }
-        for ec in encounter.icd_codes
-    ]
-    
-    response_dict["primary_icd_code"] = {
-        "id": encounter.primary_icd_code.id,
-        "code": encounter.primary_icd_code.code,
-        "name": encounter.primary_icd_code.name
-    } if encounter.primary_icd_code else None
-    
-    response_dict["previous_encounter_id"] = encounter.previous_encounter_id
-    response_dict["is_continuation"] = encounter.is_continuation
-    
-    print(f"✅ Response ready with {len(response_dict['icd_codes'])} ICD codes")
-    print(f"\n" + "="*60)
-    print(f"🎉 UPDATE ENCOUNTER COMPLETED SUCCESSFULLY")
-    print("="*60 + "\n")
-    
-    return response_dict
 
 # GET ALL ENCOUNTERS FOR A PATIENT (BY PUBLIC ID) - For Patient Dashboard
 @router.get("/patient/{public_id}")
@@ -887,6 +492,7 @@ async def get_patient_encounters(
 
     stmt = (
         select(Encounter)
+        
         .where(Encounter.patient_id == patient.id)
         .order_by(Encounter.encounter_date.desc(), Encounter.created_at.desc())
         .options(
