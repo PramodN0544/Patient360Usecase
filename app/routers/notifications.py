@@ -25,7 +25,7 @@ async def get_my_notifications(
         .filter(Notification.user_id == current_user.id)
         .order_by(Notification.created_at.desc())
     )
-    notifications = result.scalars().all()
+    notifications = result.unique().scalars().all()
 
     # Include recent medication reminders (last 1 day)
     now = datetime.now(IST)
@@ -43,7 +43,7 @@ async def get_my_notifications(
             )
         )
     )
-    meds = med_result.all()
+    meds = med_result.unique().all()
 
     for med, patient in meds:
         notifications.append(Notification(

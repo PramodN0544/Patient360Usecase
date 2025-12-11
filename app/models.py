@@ -1,7 +1,7 @@
 from datetime import datetime
 from sqlalchemy import (
     Column, DateTime, String, Date, Integer, Boolean,
-    ForeignKey, Text, Numeric, Time, Table,JSON
+    ForeignKey, Text, Numeric, Time, Table, JSON, UniqueConstraint
 )
 from sqlalchemy.orm import relationship, backref
 from app.database import Base
@@ -172,16 +172,16 @@ class Patient(Base, TimestampMixin):
     diet = Column(String(200), nullable=True)                 
     exercise_frequency = Column(String(100), nullable=True)   
 
-    user = relationship("User", back_populates="patients")
-    appointments = relationship("Appointment", back_populates="patient", cascade="all, delete-orphan")
-    medications = relationship("Medication", back_populates="patient", cascade="all, delete-orphan")
-    vitals = relationship("Vitals", back_populates="patient", cascade="all, delete-orphan")
-    encounters = relationship("Encounter", back_populates="patient", cascade="all, delete-orphan")
-    patient_insurances = relationship("PatientInsurance", back_populates="patient", cascade="all, delete-orphan",lazy="joined")
-    pharmacy_insurances = relationship("PatientPharmacyInsurance", back_populates="patient", cascade="all, delete-orphan")
-    allergies = relationship("Allergy", back_populates="patient", cascade="all, delete-orphan")
-    consents = relationship("PatientConsent", back_populates="patient", cascade="all, delete-orphan", uselist=False)
-    assignments = relationship("Assignment", back_populates="patient", cascade="all, delete-orphan")
+    user = relationship("User", back_populates="patients", lazy="selectin")
+    appointments = relationship("Appointment", back_populates="patient", cascade="all, delete-orphan", lazy="selectin")
+    medications = relationship("Medication", back_populates="patient", cascade="all, delete-orphan", lazy="selectin")
+    vitals = relationship("Vitals", back_populates="patient", cascade="all, delete-orphan", lazy="selectin")
+    encounters = relationship("Encounter", back_populates="patient", cascade="all, delete-orphan", lazy="selectin")
+    patient_insurances = relationship("PatientInsurance", back_populates="patient", cascade="all, delete-orphan", lazy="selectin")
+    pharmacy_insurances = relationship("PatientPharmacyInsurance", back_populates="patient", cascade="all, delete-orphan", lazy="selectin")
+    allergies = relationship("Allergy", back_populates="patient", cascade="all, delete-orphan", lazy="selectin")
+    consents = relationship("PatientConsent", back_populates="patient", cascade="all, delete-orphan", lazy="selectin", uselist=False)
+    assignments = relationship("Assignment", back_populates="patient", cascade="all, delete-orphan", lazy="selectin")
     
 class Assignment(Base):
     __tablename__ = "assignments"
@@ -203,6 +203,7 @@ class Assignment(Base):
     
 # Allergy 
 class Allergy(Base, TimestampMixin):
+    
     __tablename__ = "allergies"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
@@ -262,7 +263,7 @@ class Medication(Base, TimestampMixin):
     appointment_id = Column(Integer, ForeignKey("appointments.id", ondelete="SET NULL"), nullable=True)
     encounter_id = Column(Integer, ForeignKey("encounters.id", ondelete="CASCADE"), nullable=True)
     assignment_id = Column(Integer, ForeignKey("assignments.id"), nullable=True)
-
+    icd_code_id = Column(Integer, ForeignKey("icd_code_master.id"), nullable=True)
     medication_name = Column(String(200), nullable=False)
     dosage = Column(String(100), nullable=False)
     frequency = Column(String(100), nullable=False)
@@ -280,6 +281,7 @@ class Medication(Base, TimestampMixin):
     doctor = relationship("Doctor", back_populates="medications")
     appointment = relationship("Appointment", back_populates="medications")
     encounter = relationship("Encounter", back_populates="medications")
+    icd_code = relationship("IcdCodeMaster", foreign_keys=[icd_code_id])
     
 # Vitals
 class Vitals(Base, TimestampMixin):
@@ -315,11 +317,12 @@ class Encounter(Base, TimestampMixin):
     hospital_id = Column(Integer, ForeignKey("hospitals.id", ondelete="SET NULL"), nullable=True)
     encounter_date = Column(Date, nullable=False)
     encounter_type = Column(String(50), nullable=False)
+    primary_icd_code_id = Column(Integer, ForeignKey("icd_code_master.id"), nullable=True)
     reason_for_visit = Column(String(255))
     diagnosis = Column(Text)
     notes = Column(Text)
     follow_up_date = Column(Date)
-    status = Column(String(20), default="open")
+    status = Column(String(20), default="pending")
     is_lab_test_required = Column(Boolean, default=False)
     documents = Column(ARRAY(String), nullable=True)  # <-- Add this
     patient = relationship("Patient", back_populates="encounters")
@@ -338,6 +341,20 @@ class Encounter(Base, TimestampMixin):
         backref="encounter",
         cascade="all, delete-orphan",
         lazy="joined"
+    )
+    # Update the ICD codes relationship
+    icd_codes = relationship(
+        "EncounterIcdCode", 
+        back_populates="encounter", 
+        cascade="all, delete-orphan",
+        lazy="selectin"  # Use selectin for better performance
+    )
+    
+    # Add relationship to primary ICD code
+    primary_icd_code = relationship(
+        "IcdCodeMaster", 
+        foreign_keys=[primary_icd_code_id],
+        lazy="joined"  # Join primary ICD code by default
     )
 
  # In your models.py, add:
@@ -752,3 +769,42 @@ class CarePlanAudit(Base):
    # Relationships
    care_plan = relationship("CarePlan", back_populates="audit_logs")
    actor = relationship("User")
+# Add this to your models.py file after the LabMaster model
+class IcdCodeMaster(Base):
+    __tablename__ = "icd_code_master"
+
+    id = Column(Integer, primary_key=True, index=True)
+    code = Column(String(20), unique=True, nullable=False)          # e.g. "J06.9", "I10", "E11.9"
+    name = Column(String(500), nullable=False)                      # e.g. "Acute upper respiratory infection", "Essential (primary) hypertension"
+    description = Column(Text, nullable=True)                       # Detailed description
+    category = Column(String(100), nullable=True)                   # e.g. "Infectious", "Cardiovascular", "Metabolic"
+    chapter = Column(String(200), nullable=True)                    # e.g. "Chapter X: Diseases of the respiratory system"
+    subcategory = Column(String(200), nullable=True)                # e.g. "Acute upper respiratory infections"
+    is_active = Column(Boolean, default=True)
+    version = Column(String(20), default="ICD-10")                  # ICD-10, ICD-11
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+    # Relationships
+    encounter_icd_codes = relationship("EncounterIcdCode", back_populates="icd_code", cascade="all, delete-orphan")
+
+
+# Add this after IcdCodeMaster model
+class EncounterIcdCode(Base):
+    __tablename__ = "encounter_icd_codes"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    encounter_id = Column(Integer, ForeignKey("encounters.id", ondelete="CASCADE"), nullable=False)
+    icd_code_id = Column(Integer, ForeignKey("icd_code_master.id", ondelete="CASCADE"), nullable=False)
+    is_primary = Column(Boolean, default=False)                     # Primary diagnosis flag
+    notes = Column(Text, nullable=True)                             # Additional notes for this specific diagnosis
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    
+    # Relationships
+    encounter = relationship("Encounter", back_populates="icd_codes")
+    icd_code = relationship("IcdCodeMaster", back_populates="encounter_icd_codes")
+    
+    # Unique constraint to prevent duplicate ICD codes for same encounter
+    __table_args__ = (
+        UniqueConstraint('encounter_id', 'icd_code_id', name='uq_encounter_icd_code'),
+    )

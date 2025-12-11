@@ -32,26 +32,21 @@ async def get_patient_chats(
         if not patient:
             raise HTTPException(status_code=404, detail="Patient record not found")
     except Exception as e:
-        # Log the error
         print(f"Error in get_patient_chats (initial checks): {str(e)}")
-        # Return a more informative error
         raise HTTPException(
             status_code=500,
             detail=f"An error occurred while fetching patient data: {str(e)}"
         )
     
     try:
-        # Get all chats for this patient
         chats_result = await db.execute(
             select(models.Chat).where(models.Chat.patient_id == patient.id)
         )
         chats = chats_result.scalars().all()
         
-        # Format the response
         chat_summaries = []
         for chat in chats:
             try:
-                # Get doctor info
                 doctor_result = await db.execute(
                     select(models.Doctor).where(models.Doctor.id == chat.doctor_id)
                 )
@@ -61,16 +56,14 @@ async def get_patient_chats(
                     print(f"Doctor not found for chat {chat.id}")
                     continue
                 
-                # Get the last message
                 last_message_result = await db.execute(
                     select(models.ChatMessage)
                     .where(models.ChatMessage.chat_id == chat.id)
-                    .order_by(models.ChatMessage.timestamp.desc())  # Changed from sent_at to timestamp
+                    .order_by(models.ChatMessage.timestamp.desc())
                     .limit(1)
                 )
                 last_message = last_message_result.scalars().first()
                 
-                # Get unread count
                 unread_count_result = await db.execute(
                     select(func.count())
                     .where(
@@ -83,21 +76,21 @@ async def get_patient_chats(
                 )
                 unread_count = unread_count_result.scalar()
                 
-                # Format doctor info
                 doctor_user_result = await db.execute(
                     select(models.User).where(models.User.id == doctor.user_id)
                 )
                 doctor_user = doctor_user_result.scalars().first()
                 
+                # 🔥 JUST ADDED specialty here
                 doctor_info = schemas.ChatParticipantInfo(
                     id=doctor.id,
                     public_id=doctor.public_id or "",
                     name=f"{doctor.first_name} {doctor.last_name}",
                     role="doctor",
-                    photo_url=doctor.license_url
+                    photo_url=doctor.license_url,
+                    specialty=doctor.specialty  # 👈 ADDED LINE
                 )
                 
-                # Format patient info
                 patient_info = schemas.ChatParticipantInfo(
                     id=patient.id,
                     public_id=patient.public_id,
@@ -118,15 +111,12 @@ async def get_patient_chats(
                 
                 chat_summaries.append(chat_summary)
             except Exception as e:
-                # Log the error but continue processing other chats
                 print(f"Error processing chat {chat.id}: {str(e)}")
                 continue
         
         return chat_summaries
     except Exception as e:
-        # Log the error
         print(f"Error in get_patient_chats (processing chats): {str(e)}")
-        # Return a more informative error
         raise HTTPException(
             status_code=500,
             detail=f"An error occurred while processing chats: {str(e)}"
