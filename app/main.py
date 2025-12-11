@@ -18,6 +18,7 @@ from app.routers import file_upload
 from app.routers import lab_routes
 from app.routers import hospitals
 from app.routers import chat_api
+from app.routers import icd_codes
 from fastapi import WebSocket, WebSocketDisconnect, Query
 from app.web_socket import chat_manager, get_user_from_token, check_chat_access, process_websocket_message
 from app.web_socket import socket_app, sio
@@ -26,8 +27,6 @@ from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from app.routers import tasks
 from app.routers import admin_users
-
-# SQLAlchemy utilities and models used in route handlers
 from app.routers import appointment,vitals,file_upload,assignments,insurance_master,pharmacy_insurance_master,doctors, tasks
 from app.schemas import PatientUpdate
 from app import crud as patient_crud
@@ -61,46 +60,79 @@ app.include_router(searchPatientInHospital.router)
 app.include_router(encounters.router)
 app.include_router(auth_router)
 app.include_router(hospitals.router)
-app.include_router(hospitals.router)
 app.include_router(chat_api.router)
 app.include_router(tasks.router)
 app.include_router(admin_users.router)
+app.include_router(icd_codes.router)
 
-# Auto-create tables
+scheduler = AsyncIOScheduler()
 
+@scheduler.scheduled_job("interval", minutes=30)
+async def reminder_job():
+    async with async_session() as db:
+        await send_appointment_reminders(db)
+        await send_medication_reminders(db)
+
+# SINGLE STARTUP EVENT - Combined all startup logic here
 @app.on_event("startup")
 async def startup():
+    print("🚀 Starting up CareIQ Patient 360 API...")
+    
+    # 1. Create tables if they don't exist
+    print("📊 Creating database tables...")
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-    print("Database schema synchronized successfully")
+    print("✅ Database tables created/verified")
+    
+    # 2. Sync schema (add missing columns to existing tables)
+    print("🔄 Syncing database schema...")
+    try:
+        from app.database import sync_schema
+        await sync_schema()  # This is where sync_schema() is called
+        print("✅ Database schema synchronized successfully")
+    except ImportError as e:
+        print(f"⚠️ Cannot import sync_schema: {e}")
+    except Exception as e:
+        print(f"⚠️ Schema sync warning (non-critical): {e}")
+        # Continue even if sync fails
+    
+    # 3. Start scheduler
+    print("⏰ Starting reminder scheduler...")
+    scheduler.start()
+    print("✅ Reminder scheduler started")
+    
+    print("🎉 CareIQ Patient 360 API is ready!")
+
+# STOP SCHEDULER ON SHUTDOWN
+@app.on_event("shutdown")
+async def shutdown_scheduler():
+    scheduler.shutdown()
+    print("Scheduler stopped.")
 
 # Add the WebSocket endpoint
-@app.websocket("/api/ws/chat/{chat_id}")  # Changed path to avoid conflict
+@app.websocket("/api/ws/chat/{chat_id}")
 async def websocket_endpoint(
     websocket: WebSocket,
     chat_id: int,
     token: str = Query(None)
 ):
     if not token:
-        await websocket.close(code=1008)  # Policy violation
+        await websocket.close(code=1008)
         return
     
     try:
-        # Validate the token
         user = await get_user_from_token(token)
         if not user:
             await websocket.close(code=1008)
             return
         
-        # Check if user has access to this chat
         has_access = await check_chat_access(chat_id, user.id)
         if not has_access:
             await websocket.close(code=1008)
             return
         
-        # Accept the connection - this was missing proper error handling
         try:
-            await websocket.accept()  # Ensure this happens before any other WebSocket operations
+            await websocket.accept()
             await chat_manager.connect(websocket, chat_id, user.id)
         except Exception as e:
             print(f"Error accepting WebSocket connection: {e}")
@@ -108,12 +140,10 @@ async def websocket_endpoint(
             return
         
         try:
-            # Keep the connection open and handle messages
             while True:
                 data = await websocket.receive_json()
                 await process_websocket_message(data, chat_id, user.id)
         except WebSocketDisconnect:
-            # Handle disconnection
             await chat_manager.disconnect(chat_id, user.id)
         except Exception as e:
             print(f"Error in WebSocket message handling: {e}")
@@ -121,10 +151,10 @@ async def websocket_endpoint(
     except Exception as e:
         print(f"WebSocket error: {e}")
         try:
-            await websocket.close(code=1011)  # Internal error
+            await websocket.close(code=1011)
         except:
-            pass  # Already closed
-        
+            pass
+
 ACCESS_TOKEN_EXPIRE_MINUTES = 60
 
 @app.post("/auth/login")
@@ -133,7 +163,6 @@ async def login_json(credentials: schemas.LoginRequest, db: AsyncSession = Depen
     if not user:
         raise HTTPException(status_code=401, detail="Incorrect username or password")
 
-    # Build JWT payload
     token_data = {
         "sub": user.email,
         "email": user.email,
@@ -142,10 +171,8 @@ async def login_json(credentials: schemas.LoginRequest, db: AsyncSession = Depen
         "hospital_id": user.hospital_id
     }
 
-    # Create access token
     access_token = create_access_token(token_data)
 
-    # RETURN FULL PROFILE DIRECTLY
     return {
         "access_token": access_token,
         "user": {
@@ -254,7 +281,7 @@ async def create_patient(
     return {
         "patient_id": str(patient.id),
         "message": "Patient created and login credentials sent via email",
-        "public_id": public_id  # <-- include public patient ID here
+        "public_id": public_id
     }
 
 @app.put("/patient/{public_id}")
@@ -364,7 +391,6 @@ async def health():
 
 @app.get("/config")
 async def get_config():
-    """Return runtime configuration useful for frontend diagnostics."""
     origins = get_frontend_origins()
     return {"cors_origins": origins}
 
@@ -388,7 +414,6 @@ async def get_my_doctor_profile(
 
     return doctor
 
-# For patient login — only their own data
 @app.get("/patient", response_model=schemas.PatientOut)
 async def get_my_profile(
     current_user=Depends(get_current_user),
@@ -400,32 +425,29 @@ async def get_my_profile(
     result = await db.execute(
         select(models.Patient)
         .where(models.Patient.user_id == current_user.id)
-        .options(
-            # BASIC DETAILS
-            selectinload(models.Patient.allergies),
-            selectinload(models.Patient.consents),
-            selectinload(models.Patient.patient_insurances)
-    .selectinload(models.PatientInsurance.insurance_master),
-
-            selectinload(models.Patient.pharmacy_insurances),
-
-            # ADD THESE TO PREVENT LAZY LOAD ERRORS
-            selectinload(models.Patient.encounters)
-                .selectinload(models.Encounter.vitals),
-            selectinload(models.Patient.encounters)
-                .selectinload(models.Encounter.medications),
-            selectinload(models.Patient.encounters)
-                .selectinload(models.Encounter.doctor),
-            selectinload(models.Patient.encounters)
-                .selectinload(models.Encounter.hospital),
-        )
     )
     patient = result.scalars().first()
 
     if not patient:
         raise HTTPException(status_code=404, detail="Patient record not found")
 
-    return patient
+    patient_dict = {
+        column.name: getattr(patient, column.name)
+        for column in patient.__table__.columns
+    }
+    
+    if patient_dict.get('weight'):
+        patient_dict['weight'] = float(patient_dict['weight'])
+    if patient_dict.get('height'):
+        patient_dict['height'] = float(patient_dict['height'])
+    
+    patient_dict['allergies'] = []
+    patient_dict['patient_insurances'] = []
+    patient_dict['pharmacy_insurances'] = []
+    patient_dict['encounters'] = []
+    patient_dict['consents'] = None
+    
+    return schemas.PatientOut(**patient_dict)
 
 # Admin Part – Get all patients
 @app.get("/patients", response_model=list[schemas.PatientOut])
@@ -444,17 +466,11 @@ async def get_patients(db: AsyncSession = Depends(get_db)):
 
 @app.post("/auth/logout")
 async def logout(current_user=Depends(get_current_user)):
-    """
-    Stateless logout – the frontend must delete the token.
-    """
     return {"message": "Logged out successfully"}
 
 # Add custom exception handlers
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request, exc):
-    """
-    Handle validation errors with more detailed information
-    """
     print(f"Validation error: {exc}")
     return JSONResponse(
         status_code=422,
@@ -467,42 +483,8 @@ async def validation_exception_handler(request, exc):
 
 @app.exception_handler(StarletteHTTPException)
 async def http_exception_handler(request, exc):
-    """
-    Handle HTTP exceptions with more information
-    """
     print(f"HTTP exception: {exc.detail} (status_code={exc.status_code})")
     return JSONResponse(
         status_code=exc.status_code,
         content={"detail": exc.detail},
     )
-# Create scheduler (global)
-scheduler = AsyncIOScheduler()
-
-@scheduler.scheduled_job("interval", minutes=30)
-async def reminder_job():
-    async with async_session() as db:
-        await send_appointment_reminders(db)
-        await send_medication_reminders(db)
-
-def start_scheduler():
-    scheduler.start()
-    
-
-# REGISTER REMINDER JOB (runs every 30 min)
-@scheduler.scheduled_job("interval", minutes=1)
-async def reminder_job():
-    async with async_session() as db:
-        await send_appointment_reminders(db)
-        await send_medication_reminders(db)
-
-# START SCHEDULER WHEN FASTAPI START
-@app.on_event("startup")
-async def start_scheduler():
-    scheduler.start()
-    print("Reminder scheduler started.")
-
-# STOP SCHEDULER ON SHUTDOWN
-@app.on_event("shutdown")
-async def shutdown_scheduler():
-    scheduler.shutdown()
-    print("Scheduler stopped.")
