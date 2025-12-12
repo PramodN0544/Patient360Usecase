@@ -253,7 +253,7 @@ class Appointment(Base, TimestampMixin):
     vitals = relationship("Vitals", back_populates="appointment", cascade="all, delete-orphan")
     medications = relationship("Medication", back_populates="appointment", cascade="all, delete-orphan")
 
-# Medications 
+
 class Medication(Base, TimestampMixin):
     __tablename__ = "medications"
 
@@ -263,7 +263,9 @@ class Medication(Base, TimestampMixin):
     appointment_id = Column(Integer, ForeignKey("appointments.id", ondelete="SET NULL"), nullable=True)
     encounter_id = Column(Integer, ForeignKey("encounters.id", ondelete="CASCADE"), nullable=True)
     assignment_id = Column(Integer, ForeignKey("assignments.id"), nullable=True)
+
     icd_code_id = Column(Integer, ForeignKey("icd_code_master.id"), nullable=True)
+
     medication_name = Column(String(200), nullable=False)
     dosage = Column(String(100), nullable=False)
     frequency = Column(String(100), nullable=False)
@@ -272,16 +274,22 @@ class Medication(Base, TimestampMixin):
     end_date = Column(Date, nullable=True)
     status = Column(String(50), default="active")
     notes = Column(Text, nullable=True)
+
+    # string fields
     icd_code = Column(String(20), nullable=True)
     ndc_code = Column(String(50), nullable=True)
-    reminder_times = Column(ARRAY(Time), nullable=True)  
 
-    assignment_id = Column(Integer, ForeignKey("assignments.id"))
+    reminder_times = Column(ARRAY(Time), nullable=True)
+    created_at = Column(DateTime)
+    updated_at = Column(DateTime)
+
+    # relationships
     patient = relationship("Patient", back_populates="medications")
     doctor = relationship("Doctor", back_populates="medications")
     appointment = relationship("Appointment", back_populates="medications")
     encounter = relationship("Encounter", back_populates="medications")
-    icd_code = relationship("IcdCodeMaster", foreign_keys=[icd_code_id])
+    icd_code_ref = relationship("IcdCodeMaster", foreign_keys=[icd_code_id])
+
     
 # Vitals
 class Vitals(Base, TimestampMixin):
@@ -523,8 +531,7 @@ class LabMaster(Base):
     price = Column(Float, nullable=False, default=0.0)# Active/inactive
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
-    
-# Lab Orders and Results Tables
+
 class LabOrder(Base):
     __tablename__ = "lab_orders"
     id = Column(Integer, primary_key=True, autoincrement=True)
@@ -536,6 +543,7 @@ class LabOrder(Base):
     sample_type = Column(String(50))
     status = Column(String(20), default="Pending")  # Pending, Completed
     created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 class LabResult(Base):
     __tablename__ = "lab_results"
@@ -543,9 +551,8 @@ class LabResult(Base):
     lab_order_id = Column(Integer, ForeignKey("lab_orders.id", ondelete="CASCADE"))
     result_value = Column(String(100), nullable=True)
     notes = Column(Text, nullable=True)
-    file_key = Column(String(512), nullable=True)  # S3 object key for the PDF result
+    file_key = Column(String(512), nullable=True)  
     created_at = Column(DateTime, default=datetime.utcnow)
-    # relationships (optional)
     lab_order = relationship("LabOrder", backref="lab_results", lazy="joined")
 
 class TreatmentPlanMaster(Base):
