@@ -13,6 +13,8 @@ class LabOrderResponse(BaseModel):
     test_name: Optional[str]
     sample_type: Optional[str]
     status: str
+    created_at: datetime   # NEW
+    updated_at: datetime 
 
     class Config:
         orm_mode = True
@@ -437,6 +439,8 @@ class MedicationOut(BaseModel):
     end_date: Optional[date] = None
     status: str
     notes: Optional[str] = None
+    created_at: datetime   # NEW
+    updated_at: datetime 
 
     class Config:
         orm_mode = True
@@ -539,18 +543,21 @@ class MedicationUpdate(BaseModel):
     notes: Optional[str]
     icd_code: Optional[str]
     ndc_code: Optional[str]
+    
 
 class LabOrderUpdate(BaseModel):
+    id: Optional[int] = None
     test_code: str
-    priority: Optional[str] = "Normal"
-    notes: Optional[str] = None
+    test_name:str
+    sample_type: Optional[str] = None
+    status: Optional[str] = "Ordered"
 
     class Config:
         orm_mode = True
 
 class EncounterCreate(BaseModel):
     patient_public_id: str
-
+    doctor_id: Optional[int] = None  
     encounter_type: str
     reason_for_visit: Optional[str] = None
     diagnosis: Optional[str] = None
@@ -635,6 +642,7 @@ class EncounterOut(BaseModel):
     is_continuation: bool = False
 
     primary_icd_code_id: Optional[int] = None
+    lab_orders: List[LabOrderResponse] = []  # ADD THIS LINE
 
     # Relationship fields
     doctor_name: Optional[str] = None
