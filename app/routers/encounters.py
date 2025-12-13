@@ -1444,9 +1444,11 @@ async def download_encounter_document(
 # Function to generate care plan for an encounter
 async def generate_care_plan_for_encounter(encounter_id: int, user_id: int, db: AsyncSession):
     """
-    Background task to generate a care plan for a completed encounter
+    Generate a care plan for a completed encounter
     """
     try:
+        print(f"🔄 Starting care plan generation for encounter {encounter_id}")
+        
         # Get the encounter with all related data
         result = await db.execute(
             select(Encounter)
@@ -1463,16 +1465,20 @@ async def generate_care_plan_for_encounter(encounter_id: int, user_id: int, db: 
         encounter = result.unique().scalar_one_or_none()
         
         if not encounter:
-            print(f"Encounter {encounter_id} not found for care plan generation")
+            print(f"❌ Encounter {encounter_id} not found for care plan generation")
             return
+        
+        print(f"✅ Found encounter {encounter_id} with {len(encounter.medications) if encounter.medications else 0} medications and {len(encounter.lab_orders) if encounter.lab_orders else 0} lab orders")
         
         # Get the user
         user_result = await db.execute(select(models.User).where(models.User.id == user_id))
         user = user_result.scalars().first()
         
         if not user:
-            print(f"User {user_id} not found for care plan generation")
+            print(f"❌ User {user_id} not found for care plan generation")
             return
+        
+        print(f"✅ Found user {user_id} for care plan generation")
         
         # Calculate patient age
         patient = encounter.patient
@@ -1481,25 +1487,27 @@ async def generate_care_plan_for_encounter(encounter_id: int, user_id: int, db: 
         if today.month < patient.dob.month or (today.month == patient.dob.month and today.day < patient.dob.day):
             age -= 1
         
+        print(f"📊 Patient age calculated: {age}")
+        
         # Prepare input data for care plan generation
         input_data = CarePlanGenerationInput(
             context_id=f"ctx_{encounter_id}",
             patient_profile=PatientProfile(
                 age=age,
                 gender=patient.gender,
-                smoking_status=patient.smoking_status,
-                alcohol_use=patient.alcohol_use,
+                smoking_status=patient.smoking_status or "unknown",
+                alcohol_use=patient.alcohol_use or "unknown",
                 pregnancy_status=False  # Default value, could be updated based on patient data
             ),
             current_encounter=CurrentEncounter(
                 encounter_id=str(encounter.id),
-                encounter_type=encounter.encounter_type,
-                reason_for_visit=encounter.reason_for_visit,
-                diagnosis_text=encounter.diagnosis,
+                encounter_type=encounter.encounter_type or "consultation",
+                reason_for_visit=encounter.reason_for_visit or "General checkup",
+                diagnosis_text=encounter.diagnosis or "",
                 icd_codes=[],  # Would need to extract from diagnosis if available
                 encounter_date=encounter.encounter_date,
                 follow_up_date=encounter.follow_up_date,
-                clinical_notes=encounter.notes
+                clinical_notes=encounter.notes or ""
             ),
             current_vitals=CurrentVitals(
                 blood_pressure=encounter.vitals[0].blood_pressure if encounter.vitals else None,
@@ -1535,7 +1543,7 @@ async def generate_care_plan_for_encounter(encounter_id: int, user_id: int, db: 
             medical_history=MedicalHistory(
                 chronic_conditions=[
                     ConditionInfo(
-                        condition_name=encounter.diagnosis,
+                        condition_name=encounter.diagnosis or "General checkup",
                         icd_code=None
                     )
                 ] if encounter.diagnosis else [],
@@ -1547,7 +1555,7 @@ async def generate_care_plan_for_encounter(encounter_id: int, user_id: int, db: 
                         severity=None
                     )
                     for allergy in patient.allergies
-                ] if patient.allergies else []
+                ] if hasattr(patient, 'allergies') and patient.allergies else []
             ),
             guideline_rules=GuidelineRulesInfo(
                 condition_group=encounter.diagnosis.split()[0] if encounter.diagnosis else "General",
@@ -1561,23 +1569,51 @@ async def generate_care_plan_for_encounter(encounter_id: int, user_id: int, db: 
             )
         )
         
+        print(f"📋 Prepared input data for care plan generation")
+        print(f"📡 Calling care plan API for encounter {encounter_id}")
+        
         # Call the care plan API
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                f"http://localhost:8000/api/care-plans/generate",
-                json=input_data.dict(),
-                headers={
-                    "Authorization": f"Bearer {user.token if hasattr(user, 'token') else ''}"
-                }
-            )
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            api_url = "http://localhost:8000/api/care-plans/generate"
+            print(f"🔗 API URL: {api_url}")
             
-            if response.status_code == 200:
-                print(f"Care plan generated successfully for encounter {encounter_id}")
-            else:
-                print(f"Failed to generate care plan for encounter {encounter_id}: {response.text}")
+            # Get token from user or use a default token
+            token = getattr(user, 'token', None)
+            if not token:
+                print("⚠️ User token not found, using empty token")
+                token = ""
+            
+            headers = {
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json"
+            }
+            
+            print(f"🔑 Using token: {token[:10]}... (truncated)")
+            
+            try:
+                response = await client.post(
+                    api_url,
+                    json=input_data.dict(),
+                    headers=headers
+                )
+                
+                print(f"📊 API Response Status: {response.status_code}")
+                
+                if response.status_code == 200:
+                    print(f"✅ Care plan generated successfully for encounter {encounter_id}")
+                    print(f"📄 Response: {response.text[:200]}... (truncated)")
+                else:
+                    print(f"❌ Failed to generate care plan for encounter {encounter_id}")
+                    print(f"📄 Error Response: {response.text}")
+            except httpx.TimeoutException:
+                print(f"⏱️ API request timed out after 60 seconds")
+            except httpx.RequestError as e:
+                print(f"🌐 Request error: {str(e)}")
     
     except Exception as e:
-        print(f"Error generating care plan for encounter {encounter_id}: {str(e)}")
+        print(f"❌ Error generating care plan for encounter {encounter_id}: {str(e)}")
+        import traceback
+        traceback.print_exc()
 
 # Endpoint to manually trigger care plan generation
 @router.post("/{encounter_id}/generate-care-plan", response_model=EncounterOut)
@@ -1590,6 +1626,8 @@ async def trigger_care_plan_generation(
     """
     Manually trigger care plan generation for an encounter
     """
+    print(f"🔄 Received request to generate care plan for encounter {encounter_id}")
+    
     # Get the encounter
     result = await db.execute(
         select(Encounter)
@@ -1598,14 +1636,18 @@ async def trigger_care_plan_generation(
             selectinload(Encounter.medications),
             selectinload(Encounter.doctor),
             selectinload(Encounter.hospital),
-            selectinload(Encounter.patient)
+            selectinload(Encounter.patient),
+            selectinload(Encounter.lab_orders)
         )
         .where(Encounter.id == encounter_id)
     )
     encounter = result.unique().scalar_one_or_none()
     
     if not encounter:
+        print(f"❌ Encounter {encounter_id} not found")
         raise HTTPException(404, "Encounter not found")
+    
+    print(f"✅ Found encounter {encounter_id} for patient {encounter.patient_id}")
     
     # Check permissions
     if current_user.role == "doctor":
@@ -1613,23 +1655,36 @@ async def trigger_care_plan_generation(
         doctor = doctor_result.unique().scalar_one_or_none()
         
         if not doctor or doctor.id != encounter.doctor_id:
+            print(f"❌ Doctor {current_user.id} not authorized for encounter {encounter_id}")
             raise HTTPException(403, "Not authorized to generate care plan for this encounter")
+        
+        print(f"✅ Doctor {doctor.id} authorized for encounter {encounter_id}")
     elif current_user.role != "admin":
+        print(f"❌ User role {current_user.role} not authorized to generate care plans")
         raise HTTPException(403, "Only doctors and admins can generate care plans")
     
-    # Schedule care plan generation
-    background_tasks.add_task(
-        generate_care_plan_for_encounter,
-        encounter_id=encounter.id,
-        user_id=current_user.id,
-        db=db
-    )
+    try:
+        # Try to generate care plan directly instead of using background task
+        print(f"🔄 Generating care plan for encounter {encounter_id} directly")
+        await generate_care_plan_for_encounter(
+            encounter_id=encounter.id,
+            user_id=current_user.id,
+            db=db
+        )
+        print(f"✅ Care plan generation completed for encounter {encounter_id}")
+    except Exception as e:
+        print(f"❌ Error generating care plan: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        # Continue execution even if care plan generation fails
+        # We'll still update the encounter status and return a response
     
     # Update encounter status if not already completed
     if encounter.status != "completed":
         encounter.status = "completed"
         await db.commit()
         await db.refresh(encounter)
+        print(f"✅ Updated encounter {encounter_id} status to completed")
     
     # Build response
     response = EncounterOut.from_orm(encounter)
@@ -1637,6 +1692,7 @@ async def trigger_care_plan_generation(
     response.hospital_name = encounter.hospital.name
     response.patient_public_id = encounter.patient.public_id
     
+    print(f"✅ Returning response for encounter {encounter_id}")
     return response
 
 # ===== ICD CODE ENDPOINTS =====

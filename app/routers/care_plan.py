@@ -58,12 +58,55 @@ async def generate_care_plan_with_llm(input_data: Dict[str, Any]) -> Dict[str, A
     """
     Generate a care plan using the LLM API
     """
+    print(f"🔄 Starting LLM care plan generation")
+    
+    # Check if API key is available
+    if not LLM_API_KEY:
+        print(f"⚠️ LLM_API_KEY is not set or empty")
+        # Create a fallback care plan if no API key is available
+        return {
+            "careplan_id": "fallback_001",
+            "status": "proposed",
+            "generated_at": datetime.utcnow().isoformat(),
+            "condition_group": input_data.get("guideline_rules", {}).get("condition_group", "General"),
+            "icd_codes": [],
+            "tasks": [
+                {
+                    "task_id": "task_001",
+                    "type": "follow_up",
+                    "title": "Schedule Follow-up Appointment",
+                    "description": "Please schedule a follow-up appointment with your doctor in 2 weeks.",
+                    "frequency": "once",
+                    "due_date": (datetime.now().date() + timedelta(days=14)).isoformat(),
+                    "assigned_to": "patient",
+                    "requires_clinician_review": False
+                }
+            ],
+            "patient_friendly_summary": "This is a basic care plan. Please follow the tasks and contact your doctor if you have any questions.",
+            "clinician_summary": "Basic care plan generated due to LLM API unavailability.",
+            "metadata": {
+                "guideline_used": "Basic Care",
+                "rules_version": "2025-01",
+                "llm_model": "fallback",
+                "created_by": "system"
+            }
+        }
+    
+    print(f"🔑 Using LLM API key: {LLM_API_KEY[:5]}... (truncated)")
+    print(f"🧠 Using LLM model: {LLM_MODEL}")
+    
     headers = {
         "Content-Type": "application/json",
         "Authorization": f"Bearer {LLM_API_KEY}"
     }
     
     # Prepare the prompt for the LLM
+    print(f"📝 Preparing LLM prompt")
+    
+    # Create a sanitized version of input_data for logging (remove sensitive info)
+    log_data = {k: "..." if k in ["patient_profile"] else v for k, v in input_data.items()}
+    print(f"📊 Input data summary: {json.dumps(log_data, default=str)[:200]}... (truncated)")
+    
     prompt = f"""
     You are a clinical decision support system that generates care plans based on patient data.
     Please analyze the following patient information and generate a comprehensive care plan.
@@ -118,59 +161,138 @@ async def generate_care_plan_with_llm(input_data: Dict[str, Any]) -> Dict[str, A
         "max_tokens": 2000
     }
     
+    print(f"📡 Sending request to LLM API: {LLM_API_URL}")
+    
     try:
         async with httpx.AsyncClient(timeout=60) as client:
+            print(f"🔄 Making API request...")
             response = await client.post(LLM_API_URL, json=payload, headers=headers)
-            print("RAW RESPONSE STATUS:", response.status_code)
-            print("RAW RESPONSE TEXT:", response.text[:500]) 
+            print(f"📊 API Response Status: {response.status_code}")
+            
+            # Log a truncated version of the response to avoid flooding logs
+            response_preview = response.text[:500] + "..." if len(response.text) > 500 else response.text
+            print(f"📄 Raw Response Preview: {response_preview}")
+            
             response.raise_for_status()
             
+            print(f"✅ API request successful, parsing response")
             result = response.json()
             llm_response = result["choices"][0]["message"]["content"]
             
+            # Log a truncated version of the LLM response
+            llm_preview = llm_response[:500] + "..." if len(llm_response) > 500 else llm_response
+            print(f"📄 LLM Response Preview: {llm_preview}")
+            
             # Parse the JSON response from the LLM
+            print(f"🔄 Extracting JSON from LLM response")
             care_plan_data = extract_json_from_llm(llm_response)
+            
+            # Validate the care plan data has required fields
+            required_fields = ["tasks", "patient_friendly_summary", "clinician_summary"]
+            for field in required_fields:
+                if field not in care_plan_data:
+                    print(f"⚠️ Missing required field in care plan data: {field}")
+                    care_plan_data[field] = "Not provided by LLM" if field.endswith("summary") else []
+            
+            print(f"✅ Successfully extracted care plan data with {len(care_plan_data.get('tasks', []))} tasks")
             return care_plan_data
+            
     except httpx.HTTPStatusError as e:
         error_detail = f"HTTP {e.response.status_code}: {e.response.text[:300]}"
         print(f"❌ HTTP Status Error: {error_detail}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=error_detail
-        )
+        
+        # Create a fallback care plan
+        print(f"⚠️ Creating fallback care plan due to API error")
+        return create_fallback_care_plan(input_data, f"API Error: {e.response.status_code}")
+        
     except httpx.TimeoutException as e:
         print(f"⏱️ Timeout Error: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="LLM API request timed out"
-        )
+        
+        # Create a fallback care plan
+        print(f"⚠️ Creating fallback care plan due to timeout")
+        return create_fallback_care_plan(input_data, "API Timeout")
+        
     except httpx.RequestError as e:
         print(f"🌐 Request Error: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to connect to LLM API: {str(e)}"
-        )
+        
+        # Create a fallback care plan
+        print(f"⚠️ Creating fallback care plan due to request error")
+        return create_fallback_care_plan(input_data, f"Request Error: {str(e)}")
+        
     except json.JSONDecodeError as e:
         print(f"📋 JSON Decode Error: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Invalid JSON response from LLM: {str(e)}"
-        )
+        print(f"📄 Response that caused error: {response.text[:500]}...")
+        
+        # Create a fallback care plan
+        print(f"⚠️ Creating fallback care plan due to JSON decode error")
+        return create_fallback_care_plan(input_data, "JSON Parse Error")
+        
     except KeyError as e:
         print(f"🔑 KeyError: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Unexpected LLM response format: missing key {str(e)}"
-        )
+        
+        # Create a fallback care plan
+        print(f"⚠️ Creating fallback care plan due to missing key: {str(e)}")
+        return create_fallback_care_plan(input_data, f"Missing Key: {str(e)}")
+        
     except Exception as e:
         # ✅ Generic exception LAST
         print(f"💥 Unexpected Error: {type(e).__name__}: {str(e)}")
         import traceback
         traceback.print_exc()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to generate care plan: {type(e).__name__}: {str(e)}"
-        )
+        
+        # Create a fallback care plan
+        print(f"⚠️ Creating fallback care plan due to unexpected error")
+        return create_fallback_care_plan(input_data, f"Error: {type(e).__name__}")
+
+def create_fallback_care_plan(input_data: Dict[str, Any], error_reason: str) -> Dict[str, Any]:
+    """Create a fallback care plan when the LLM API fails"""
+    print(f"🔄 Creating fallback care plan due to: {error_reason}")
+    
+    # Extract some basic info from input data
+    encounter_data = input_data.get("current_encounter", {})
+    encounter_id = encounter_data.get("encounter_id", "unknown")
+    diagnosis = encounter_data.get("diagnosis_text", "General checkup")
+    condition_group = input_data.get("guideline_rules", {}).get("condition_group", "General")
+    
+    # Create a basic care plan
+    return {
+        "careplan_id": f"fallback_{encounter_id}",
+        "status": "proposed",
+        "generated_at": datetime.utcnow().isoformat(),
+        "condition_group": condition_group,
+        "icd_codes": [],
+        "tasks": [
+            {
+                "task_id": "task_001",
+                "type": "follow_up",
+                "title": "Schedule Follow-up Appointment",
+                "description": "Please schedule a follow-up appointment with your doctor in 2 weeks.",
+                "frequency": "once",
+                "due_date": (datetime.now().date() + timedelta(days=14)).isoformat(),
+                "assigned_to": "patient",
+                "requires_clinician_review": False
+            },
+            {
+                "task_id": "task_002",
+                "type": "medication",
+                "title": "Continue Current Medications",
+                "description": "Continue taking your current medications as prescribed.",
+                "frequency": "daily",
+                "due_date": None,
+                "assigned_to": "patient",
+                "requires_clinician_review": False
+            }
+        ],
+        "patient_friendly_summary": f"This is a basic care plan for your {diagnosis}. Please follow the tasks and contact your doctor if you have any questions or if your symptoms worsen.",
+        "clinician_summary": f"Basic care plan generated due to LLM API error: {error_reason}. Please review and update as needed.",
+        "metadata": {
+            "guideline_used": "Basic Care",
+            "rules_version": "2025-01",
+            "llm_model": "fallback",
+            "created_by": "system",
+            "error_reason": error_reason
+        }
+    }
         
 async def send_care_plan_notification(user_id: int, care_plan_id: int, db: AsyncSession):
     """
@@ -231,28 +353,39 @@ async def generate_care_plan(
     """
     Generate a care plan for a patient based on encounter data
     """
+    print(f"🔄 Received request to generate care plan for encounter {input_data.current_encounter.encounter_id}")
+    
     # Check if user is authorized (doctor or admin)
     if current_user.role not in ["doctor", "admin"]:
+        print(f"❌ User role {current_user.role} not authorized to generate care plans")
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Only doctors and admins can generate care plans"
         )
     
+    print(f"✅ User {current_user.id} with role {current_user.role} is authorized")
+    
     # Get the encounter
     encounter_id = input_data.current_encounter.encounter_id
+    print(f"🔍 Looking up encounter with ID {encounter_id}")
+    
     encounter_result = await db.execute(
         select(models.Encounter).where(models.Encounter.id == encounter_id)
     )
     encounter = encounter_result.scalars().first()
     
     if not encounter:
+        print(f"❌ Encounter with ID {encounter_id} not found")
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Encounter with ID {encounter_id} not found"
         )
     
+    print(f"✅ Found encounter {encounter_id} for patient {encounter.patient_id}")
+    
     # Get or create condition group based on diagnosis
     condition_name = input_data.guideline_rules.condition_group if input_data.guideline_rules else "General"
+    print(f"🔍 Looking up condition group: {condition_name}")
     
     condition_group_result = await db.execute(
         select(models.ConditionGroup).where(models.ConditionGroup.name == condition_name)
@@ -260,6 +393,7 @@ async def generate_care_plan(
     condition_group = condition_group_result.scalars().first()
     
     if not condition_group:
+        print(f"🆕 Creating new condition group: {condition_name}")
         # Create new condition group
         condition_group = models.ConditionGroup(
             name=condition_name,
@@ -268,74 +402,103 @@ async def generate_care_plan(
         db.add(condition_group)
         await db.commit()
         await db.refresh(condition_group)
+        print(f"✅ Created condition group with ID {condition_group.condition_group_id}")
+    else:
+        print(f"✅ Found existing condition group with ID {condition_group.condition_group_id}")
     
-    # Generate care plan using LLM
-    care_plan_data = await generate_care_plan_with_llm(input_data.dict())
-    
-    # Create care plan in database
-    care_plan = models.CarePlan(
-        patient_id=encounter.patient_id,
-        encounter_id = int(input_data.current_encounter.encounter_id),
-        condition_group_id=condition_group.condition_group_id,
-        status="proposed",
-        patient_friendly_summary=care_plan_data.get("patient_friendly_summary", ""),
-        clinician_summary=care_plan_data.get("clinician_summary", ""),
-        plan_metadata=care_plan_data.get("metadata", {})
-    )
-    
-    db.add(care_plan)
-    await db.commit()
-    await db.refresh(care_plan)
-    
-    # Create tasks for the care plan
-    for task_data in care_plan_data.get("tasks", []):
-        task = models.CarePlanTask(
+    try:
+        # Generate care plan using LLM
+        print(f"🧠 Generating care plan using LLM for encounter {encounter_id}")
+        care_plan_data = await generate_care_plan_with_llm(input_data.dict())
+        print(f"✅ LLM generated care plan data successfully")
+        
+        # Create care plan in database
+        print(f"💾 Creating care plan in database for patient {encounter.patient_id}")
+        care_plan = models.CarePlan(
+            patient_id=encounter.patient_id,
+            encounter_id = int(input_data.current_encounter.encounter_id),
+            condition_group_id=condition_group.condition_group_id,
+            status="proposed",
+            patient_friendly_summary=care_plan_data.get("patient_friendly_summary", ""),
+            clinician_summary=care_plan_data.get("clinician_summary", ""),
+            plan_metadata=care_plan_data.get("metadata", {})
+        )
+        
+        db.add(care_plan)
+        await db.commit()
+        await db.refresh(care_plan)
+        print(f"✅ Created care plan with ID {care_plan.careplan_id}")
+        
+        # Create tasks for the care plan
+        tasks_count = len(care_plan_data.get("tasks", []))
+        print(f"🔄 Creating {tasks_count} tasks for care plan {care_plan.careplan_id}")
+        
+        for i, task_data in enumerate(care_plan_data.get("tasks", [])):
+            task = models.CarePlanTask(
+                careplan_id=care_plan.careplan_id,
+                type=task_data.get("type", "other"),
+                title=task_data.get("title", ""),
+                description=task_data.get("description", ""),
+                frequency=task_data.get("frequency", ""),
+                due_date=parse_iso_date(task_data.get("due_date")),
+                assigned_to=task_data.get("assigned_to", "patient"),
+                requires_clinician_review=task_data.get("requires_clinician_review", False),
+                status="pending"
+            )
+            db.add(task)
+            print(f"  ✅ Created task {i+1}/{tasks_count}: {task_data.get('title', '')}")
+        
+        # Create audit log
+        print(f"📝 Creating audit log for care plan {care_plan.careplan_id}")
+        audit = models.CarePlanAudit(
             careplan_id=care_plan.careplan_id,
-            type=task_data.get("type", "other"),
-            title=task_data.get("title", ""),
-            description=task_data.get("description", ""),
-            frequency=task_data.get("frequency", ""),
-            due_date=parse_iso_date(task_data.get("due_date")),
-            assigned_to=task_data.get("assigned_to", "patient"),
-            requires_clinician_review=task_data.get("requires_clinician_review", False),
-            status="pending"
+            action="created",
+            actor_id=current_user.id,
+            notes="Care plan generated automatically"
         )
-        db.add(task)
-    
-    # Create audit log
-    audit = models.CarePlanAudit(
-        careplan_id=care_plan.careplan_id,
-        action="created",
-        actor_id=current_user.id,
-        notes="Care plan generated automatically"
-    )
-    db.add(audit)
-    
-    await db.commit()
-    
-    # Get the patient's user ID for notification
-    patient_result = await db.execute(
-        select(models.Patient).where(models.Patient.id == encounter.patient_id)
-    )
-    patient = patient_result.scalars().first()
-    
-    if patient and patient.user_id:
-        # Schedule notification in background
-        background_tasks.add_task(
-            send_care_plan_notification,
-            patient.user_id,
-            care_plan.careplan_id,
-            db
+        db.add(audit)
+        
+        await db.commit()
+        print(f"✅ Committed all tasks and audit log to database")
+        
+        # Get the patient's user ID for notification
+        print(f"🔍 Looking up patient user ID for notifications")
+        patient_result = await db.execute(
+            select(models.Patient).where(models.Patient.id == encounter.patient_id)
         )
-    
-    result = await db.execute(
-    select(models.CarePlan)
-    .where(models.CarePlan.careplan_id == care_plan.careplan_id)
-    .options(selectinload(models.CarePlan.tasks))
-)
-    care_plan = result.scalars().first()
-    
-    return care_plan
+        patient = patient_result.scalars().first()
+        
+        if patient and patient.user_id:
+            print(f"📧 Scheduling notification for patient user {patient.user_id}")
+            # Schedule notification in background
+            background_tasks.add_task(
+                send_care_plan_notification,
+                patient.user_id,
+                care_plan.careplan_id,
+                db
+            )
+        else:
+            print(f"⚠️ Patient user ID not found, skipping notification")
+        
+        print(f"🔄 Loading care plan with tasks for response")
+        result = await db.execute(
+            select(models.CarePlan)
+            .where(models.CarePlan.careplan_id == care_plan.careplan_id)
+            .options(selectinload(models.CarePlan.tasks))
+        )
+        care_plan = result.scalars().first()
+        
+        print(f"✅ Care plan generation complete for encounter {encounter_id}")
+        return care_plan
+        
+    except Exception as e:
+        print(f"❌ Error generating care plan: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to generate care plan: {str(e)}"
+        )
 
 @router.get("/{careplan_id}", response_model=schemas.CarePlanOut)
 async def get_care_plan(
