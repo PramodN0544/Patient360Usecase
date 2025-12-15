@@ -883,15 +883,15 @@ async def generate_encounter_pdf(
     db: AsyncSession = Depends(get_db)
 ):
     try:
-        # Debug: Check if function is called
         print(f"🔄 PDF Generation called for encounter {encounter_id}")
         
-        # Fetch encounter with all relationships
+        # Fetch encounter with ALL necessary relationships including lab_tests
         result = await db.execute(
             select(Encounter)
             .options(
                 selectinload(Encounter.vitals),
                 selectinload(Encounter.medications),
+                selectinload(Encounter.lab_tests),  # ADD THIS for lab tests
                 selectinload(Encounter.doctor),
                 selectinload(Encounter.hospital),  
                 selectinload(Encounter.patient)
@@ -913,8 +913,11 @@ async def generate_encounter_pdf(
         hospital_name = encounter.hospital.name if encounter.hospital else "Medical Center"
         hospital_id = encounter.hospital.id if encounter.hospital else "N/A"
         hospital_address = getattr(encounter.hospital, 'address', 'Address not available')
+        hospital_phone = getattr(encounter.hospital, 'phone', 'Phone not available')
         
         print(f"🏥 Hospital: {hospital_name}, ID: {hospital_id}")
+        print(f"📋 Lab Tests Required: {encounter.is_lab_test_required}")
+        print(f"🔬 Lab Tests Count: {len(encounter.lab_tests) if encounter.lab_tests else 0}")
         
         buffer = BytesIO()
         doc = SimpleDocTemplate(
@@ -929,7 +932,7 @@ async def generate_encounter_pdf(
         # Define custom styles
         styles = getSampleStyleSheet()
         
-        # Custom styles for better appearance
+        # Custom styles
         styles.add(ParagraphStyle(
             name='CustomTitle',
             parent=styles['Heading1'],
@@ -948,13 +951,22 @@ async def generate_encounter_pdf(
             spaceBefore=12
         ))
         
-        # Add style for wrapping text in tables
         styles.add(ParagraphStyle(
             name='TableContent',
             parent=styles['Normal'],
             fontSize=9,
             textColor=colors.black,
-            wordWrap='CJK'  # This enables text wrapping
+            wordWrap='CJK'
+        ))
+        
+        styles.add(ParagraphStyle(
+            name='WarningText',
+            parent=styles['Normal'],
+            fontSize=9,
+            textColor=colors.red,
+            backColor=colors.yellow,
+            spaceBefore=6,
+            spaceAfter=6
         ))
         
         elements = []
@@ -967,7 +979,7 @@ async def generate_encounter_pdf(
         ]
         
         logo_path = None
-        logo_found = False  # Initialize before loop
+        logo_found = False
         for path in possible_paths:
             if os.path.exists(path):
                 logo_path = path
@@ -976,7 +988,7 @@ async def generate_encounter_pdf(
         
         print(f"🖼️ Logo found: {logo_found}, Path: {logo_path}")
         
-        # Create header table using actual hospital data
+        # Create header table
         if logo_found and logo_path:
             logo = Image(logo_path, width=120, height=50)
             header_data = [
@@ -995,13 +1007,13 @@ async def generate_encounter_pdf(
                 [Paragraph("Advanced Healthcare Solutions", styles['Italic']),
                  Paragraph(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}", ParagraphStyle(name='HospitalInfo', fontSize=9, alignment=2))]
             ]
-            col_widths = [4*inch, 2*inch]  # Adjust column widths
+            col_widths = [4*inch, 2*inch]
         
         header_table = Table(header_data, colWidths=col_widths)
         header_table.setStyle(TableStyle([
             ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
             ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
-            ('SPAN', (0, 1), (-1, 1)),  # Span the second row
+            ('SPAN', (0, 1), (-1, 1)),
         ]))
         
         elements.append(header_table)
@@ -1011,7 +1023,7 @@ async def generate_encounter_pdf(
         elements.append(Paragraph("PATIENT ENCOUNTER REPORT", styles['CustomTitle']))
         elements.append(Spacer(1, 12))
         
-        # Calculate age properly
+        # Calculate age
         def calculate_age(birth_date):
             today = datetime.now().date()
             age = today.year - birth_date.year
@@ -1028,19 +1040,23 @@ async def generate_encounter_pdf(
             ["Patient ID:", encounter.patient.public_id],
             ["Date of Birth:", encounter.patient.dob.strftime('%B %d, %Y')],
             ["Age:", f"{patient_age} years"],
-            ["Gender:", encounter.patient.gender.capitalize()]
+            ["Gender:", encounter.patient.gender.capitalize()],
+            ["Phone:", encounter.patient.phone or "Not provided"],
+            ["Email:", encounter.patient.email or "Not provided"]
         ]
         
         doctor_info = [
             ["DOCTOR INFORMATION", ""],
             ["Doctor Name:", f"Dr. {encounter.doctor.first_name} {encounter.doctor.last_name}"],
             ["Specialty:", encounter.doctor.specialty],
-            ["Doctor ID:", f"DR-{encounter.doctor.id:04d}"]
+            ["Doctor ID:", f"DR-{encounter.doctor.id:04d}"],
+            ["License No:", encounter.doctor.license_number or "Not available"],
+            ["Phone:", encounter.doctor.phone or "Not available"]
         ]
         
         # Create tables
-        patient_table = Table(patient_info, colWidths=[2*inch, 2*inch])
-        doctor_table = Table(doctor_info, colWidths=[2*inch, 2*inch])
+        patient_table = Table(patient_info, colWidths=[2*inch, 2.5*inch])
+        doctor_table = Table(doctor_info, colWidths=[2*inch, 2.5*inch])
         
         table_style = TableStyle([
             ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#2c3e50')),
@@ -1060,9 +1076,9 @@ async def generate_encounter_pdf(
         patient_table.setStyle(table_style)
         doctor_table.setStyle(table_style)
         
-        # Combine tables and keep together
+        # Combine tables
         combined_table = Table([[patient_table, Spacer(0.5*inch, 0), doctor_table]], 
-                              colWidths=[4*inch, 0.5*inch, 4*inch])
+                              colWidths=[4.5*inch, 0.5*inch, 4.5*inch])
         elements.append(KeepTogether([combined_table, Spacer(1, 20)]))
         
         # Encounter Details
@@ -1071,15 +1087,19 @@ async def generate_encounter_pdf(
         encounter_details = [
             ["Category", "Details"],
             ["Encounter ID:", f"ENC-{encounter.id:06d}"],
-            ["Encounter Date:", encounter.encounter_date.strftime('%B %d, %Y')],
+            ["Encounter Date:", encounter.encounter_date.strftime('%B %d, %Y %I:%M %p')],
             ["Encounter Type:", encounter.encounter_type],
+            ["Status:", encounter.status.upper()],
             ["Reason for Visit:", Paragraph(encounter.reason_for_visit or "Not specified", styles['TableContent'])],
             ["Diagnosis:", Paragraph(encounter.diagnosis or "Not specified", styles['TableContent'])],
-            ["Status:", encounter.status.upper()],
+            ["Clinical Notes:", Paragraph(encounter.notes or "No additional notes", styles['TableContent'])],
         ]
         
         if encounter.follow_up_date:
             encounter_details.append(["Follow-up Date:", encounter.follow_up_date.strftime('%B %d, %Y')])
+        
+        if encounter.next_appointment_date:
+            encounter_details.append(["Next Appointment:", encounter.next_appointment_date.strftime('%B %d, %Y')])
         
         encounter_table = Table(encounter_details, colWidths=[2*inch, 5*inch])
         encounter_table.setStyle(TableStyle([
@@ -1106,6 +1126,7 @@ async def generate_encounter_pdf(
             
             vitals = encounter.vitals[0]
             
+            # Determine status for each vital
             bp_status = "Normal" if vitals.blood_pressure and "120/80" in str(vitals.blood_pressure) else "Review"
             hr_status = "Normal" if vitals.heart_rate and 60 <= vitals.heart_rate <= 100 else "Review"
             temp_status = "Normal" if vitals.temperature and 97 <= vitals.temperature <= 99 else "Review"
@@ -1114,18 +1135,18 @@ async def generate_encounter_pdf(
             bmi_status = "Normal" if vitals.bmi and 18.5 <= vitals.bmi <= 24.9 else "Review"
             
             vitals_data = [
-                ["Measurement", "Value", "Status"],
-                ["Blood Pressure", vitals.blood_pressure or "Not recorded", bp_status],
-                ["Heart Rate", f"{vitals.heart_rate} bpm" if vitals.heart_rate else "Not recorded", hr_status],
-                ["Temperature", f"{vitals.temperature} °F" if vitals.temperature else "Not recorded", temp_status],
-                ["Oxygen Saturation", f"{vitals.oxygen_saturation}%" if vitals.oxygen_saturation else "Not recorded", oxy_status],
-                ["Respiration Rate", f"{vitals.respiration_rate} /min" if vitals.respiration_rate else "Not recorded", resp_status],
-                ["Height", f"{vitals.height} cm" if vitals.height else "Not recorded", ""],
-                ["Weight", f"{vitals.weight} kg" if vitals.weight else "Not recorded", ""],
-                ["BMI", f"{vitals.bmi:.1f}" if vitals.bmi else "Not calculated", bmi_status]
+                ["Measurement", "Value", "Status", "Normal Range"],
+                ["Blood Pressure", vitals.blood_pressure or "Not recorded", bp_status, "120/80 mmHg"],
+                ["Heart Rate", f"{vitals.heart_rate} bpm" if vitals.heart_rate else "Not recorded", hr_status, "60-100 bpm"],
+                ["Temperature", f"{vitals.temperature} °F" if vitals.temperature else "Not recorded", temp_status, "97-99 °F"],
+                ["Oxygen Saturation", f"{vitals.oxygen_saturation}%" if vitals.oxygen_saturation else "Not recorded", oxy_status, "95-100%"],
+                ["Respiration Rate", f"{vitals.respiration_rate} /min" if vitals.respiration_rate else "Not recorded", resp_status, "12-20 /min"],
+                ["Height", f"{vitals.height} cm" if vitals.height else "Not recorded", "", ""],
+                ["Weight", f"{vitals.weight} kg" if vitals.weight else "Not recorded", "", ""],
+                ["BMI", f"{vitals.bmi:.1f}" if vitals.bmi else "Not calculated", bmi_status, "18.5-24.9"]
             ]
             
-            vitals_table = Table(vitals_data, colWidths=[2*inch, 2*inch, 1.5*inch])
+            vitals_table = Table(vitals_data, colWidths=[1.8*inch, 1.5*inch, 1*inch, 1.2*inch])
             vitals_table.setStyle(TableStyle([
                 ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#28a745')),
                 ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
@@ -1145,12 +1166,12 @@ async def generate_encounter_pdf(
             vitals_section.append(Spacer(1, 20))
             elements.append(KeepTogether(vitals_section))
         
-        # Medications Section
+        # Medications Section - FIXED
         if encounter.medications:
             medications_section = []
             medications_section.append(Paragraph("PRESCRIBED MEDICATIONS", styles['CustomHeading2']))
             
-            med_data = [["Medication", "Dosage", "Frequency", "Route", "Duration"]]
+            med_data = [["Medication", "Dosage", "Frequency", "Route", "Duration", "Instructions"]]
             for med in encounter.medications:
                 duration = "Ongoing"
                 if med.start_date and med.end_date:
@@ -1159,15 +1180,23 @@ async def generate_encounter_pdf(
                 elif med.start_date:
                     duration = "From " + med.start_date.strftime('%m/%d/%Y')
                 
+                # Clean up any HTML tags in medication data
+                med_name = str(med.medication_name).replace('<b>', '').replace('</b>', '')
+                dosage = str(med.dosage).replace('<b>', '').replace('</b>', '') if med.dosage else ""
+                frequency = str(med.frequency).replace('<b>', '').replace('</b>', '') if med.frequency else ""
+                route = str(med.route).replace('<b>', '').replace('</b>', '') if med.route else ""
+                instructions = str(med.instructions).replace('<b>', '').replace('</b>', '') if med.instructions else ""
+                
                 med_data.append([
-                    med.medication_name,
-                    med.dosage or "",
-                    med.frequency or "",
-                    med.route or "",
-                    duration
+                    Paragraph(med_name, styles['TableContent']),
+                    Paragraph(dosage, styles['TableContent']),
+                    Paragraph(frequency, styles['TableContent']),
+                    Paragraph(route, styles['TableContent']),
+                    Paragraph(duration, styles['TableContent']),
+                    Paragraph(instructions, styles['TableContent'])
                 ])
             
-            med_table = Table(med_data, colWidths=[1.8*inch, 1.2*inch, 1.2*inch, 1*inch, 1.3*inch])
+            med_table = Table(med_data, colWidths=[1.5*inch, 1*inch, 1*inch, 0.8*inch, 1*inch, 1.2*inch])
             med_table.setStyle(TableStyle([
                 ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#6f42c1')),
                 ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
@@ -1177,20 +1206,56 @@ async def generate_encounter_pdf(
                 ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#e0cffc')),
                 ('PADDING', (0, 0), (-1, -1), 6),
                 ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#f5f0ff')]),
-                ('FONTSIZE', (0, 1), (-1, -1), 9),
+                ('FONTSIZE', (0, 1), (-1, -1), 8),
+                ('VALIGN', (0, 0), (-1, -1), 'TOP'),
             ]))
             
             medications_section.append(med_table)
             medications_section.append(Spacer(1, 20))
             elements.append(KeepTogether(medications_section))
+        else:
+            # Show message if no medications
+            elements.append(Paragraph("PRESCRIBED MEDICATIONS", styles['CustomHeading2']))
+            elements.append(Paragraph("No medications prescribed for this encounter.", styles['Normal']))
+            elements.append(Spacer(1, 20))
         
-        # Lab Tests if required
-        if encounter.is_lab_test_required:
-            lab_section = []
-            lab_section.append(Paragraph("LABORATORY TESTS", styles['CustomHeading2']))
+        # Lab Tests Section - FIXED and ENHANCED
+        lab_section = []
+        lab_section.append(Paragraph("LABORATORY TESTS", styles['CustomHeading2']))
+        
+        if encounter.lab_tests and len(encounter.lab_tests) > 0:
+            lab_data = [["Test Name", "Test Code", "Status", "Priority", "Order Date", "Instructions"]]
+            
+            for lab_test in encounter.lab_tests:
+                lab_data.append([
+                    Paragraph(lab_test.test_name or "Not specified", styles['TableContent']),
+                    Paragraph(lab_test.test_code or "N/A", styles['TableContent']),
+                    Paragraph(lab_test.status or "Pending", styles['TableContent']),
+                    Paragraph(lab_test.priority or "Routine", styles['TableContent']),
+                    Paragraph(lab_test.order_date.strftime('%Y-%m-%d') if lab_test.order_date else "N/A", styles['TableContent']),
+                    Paragraph(lab_test.instructions or "None", styles['TableContent'])
+                ])
+            
+            lab_table = Table(lab_data, colWidths=[1.5*inch, 1*inch, 1*inch, 0.8*inch, 1*inch, 1.2*inch])
+            lab_table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#fd7e14')),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('ALIGN', (0, 0), (-1, 0), 'CENTER'),
+                ('BOTTOMPADDING', (0, 0), (-1, 0), 10),
+                ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#ffe5d0')),
+                ('PADDING', (0, 0), (-1, -1), 6),
+                ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#fff5e6')]),
+                ('FONTSIZE', (0, 1), (-1, -1), 8),
+                ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+            ]))
+            
+            lab_section.append(lab_table)
+        elif encounter.is_lab_test_required:
+            # Show generic lab test requirement
             lab_data = [
                 ["Test Required", "Status", "Priority"],
-                ["Laboratory Analysis", "Ordered", "Routine"]
+                ["Laboratory Analysis Required", "Order Pending", "Routine"]
             ]
             
             lab_table = Table(lab_data, colWidths=[3*inch, 2*inch, 2*inch])
@@ -1206,17 +1271,44 @@ async def generate_encounter_pdf(
             ]))
             
             lab_section.append(lab_table)
-            lab_section.append(Spacer(1, 20))
-            elements.append(KeepTogether(lab_section))
+            lab_section.append(Paragraph("* Specific lab tests to be determined by the lab department.", styles['Italic']))
+        else:
+            lab_section.append(Paragraph("No laboratory tests required for this encounter.", styles['Normal']))
+        
+        lab_section.append(Spacer(1, 20))
+        elements.append(KeepTogether(lab_section))
+        
+        # Add Insurance/Verification Section
+        elements.append(Paragraph("INSURANCE VERIFICATION", styles['CustomHeading2']))
+        
+        insurance_data = [
+            ["Insurance Status", "Verified" if encounter.insurance_verified else "Pending"],
+            ["Prior Auth Required", "Yes" if encounter.prior_auth_required else "No"],
+            ["Prior Auth Status", encounter.prior_auth_status or "Not applicable"],
+            ["Estimated Patient Responsibility", f"${encounter.estimated_patient_responsibility:.2f}" if encounter.estimated_patient_responsibility else "Not calculated"]
+        ]
+        
+        insurance_table = Table(insurance_data, colWidths=[2.5*inch, 2.5*inch])
+        insurance_table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (0, -1), colors.HexColor('#e3f2fd')),
+            ('FONTNAME', (0, 0), (0, -1), 'Helvetica-Bold'),
+            ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#b3e0ff')),
+            ('PADDING', (0, 0), (-1, -1), 6),
+            ('ROWBACKGROUNDS', (0, 0), (-1, -1), [colors.white, colors.HexColor('#f9f9f9')]),
+        ]))
+        
+        elements.append(insurance_table)
+        elements.append(Spacer(1, 20))
         
         # Footer Section
         elements.append(Spacer(1, 30))
         footer_data = [
             [Paragraph(hospital_name, ParagraphStyle(name='Footer', fontSize=10, textColor=colors.HexColor('#7f8c8d'), alignment=1))],
             [Paragraph(hospital_address, ParagraphStyle(name='Footer', fontSize=9, textColor=colors.HexColor('#95a5a6'), alignment=1))],
+            [Paragraph(f"Phone: {hospital_phone}", ParagraphStyle(name='Footer', fontSize=9, textColor=colors.HexColor('#95a5a6'), alignment=1))],
             [Paragraph(f"Report ID: ENC-{encounter.id}-{datetime.now().strftime('%Y%m%d')}", ParagraphStyle(name='Footer', fontSize=8, textColor=colors.HexColor('#bdc3c7'), alignment=1))],
-            [Paragraph(f"Hospital ID: {hospital_id}", ParagraphStyle(name='Footer', fontSize=8, textColor=colors.HexColor('#bdc3c7'), alignment=1))],
             [Paragraph("CONFIDENTIAL - For Medical Use Only", ParagraphStyle(name='Footer', fontSize=8, textColor=colors.HexColor('#e74c3c'), alignment=1))],
+            [Paragraph("This document contains protected health information (PHI) under HIPAA regulations", ParagraphStyle(name='Footer', fontSize=7, textColor=colors.HexColor('#bdc3c7'), alignment=1))],
         ]
         
         footer_table = Table(footer_data, colWidths=[7.5*inch])
@@ -1235,6 +1327,7 @@ async def generate_encounter_pdf(
         # Get PDF data
         pdf_data = buffer.getvalue()
         buffer.close()
+        
         
         # Create a temporary file-like object for S3 upload
         pdf_file = BytesIO(pdf_data)
