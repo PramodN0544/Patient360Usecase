@@ -1,4 +1,3 @@
-# app/database.py - Fix the sync_schema function
 import os
 import ssl
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
@@ -95,12 +94,10 @@ def _sync_table_sync(conn, inspector, table_name, table):
         _add_column_sync(conn, table_name, table.columns[column_name])
 
 def _add_column_sync(conn, table_name, column):
-    """Add a column to an existing table (synchronous)"""
+    """Add a column to an existing table (SAFE for existing data)"""
     try:
-        # Build SQL for adding column
         column_type = str(column.type)
-        
-        # Handle special cases
+
         if 'VARCHAR' in column_type and hasattr(column.type, 'length'):
             column_type = f"VARCHAR({column.type.length})"
         elif 'INTEGER' in column_type:
@@ -111,34 +108,30 @@ def _add_column_sync(conn, table_name, column):
             column_type = "TEXT"
         elif 'TIMESTAMP' in column_type.upper():
             column_type = "TIMESTAMP"
-        
+        elif 'DATE' in column_type.upper():
+            column_type = "DATE"
+        elif 'NUMERIC' in column_type.upper():
+            column_type = "NUMERIC"
+
+        # ✅ ALWAYS add column as NULLABLE first
         sql = f'ALTER TABLE "{table_name}" ADD COLUMN "{column.name}" {column_type}'
-        
-        # Add NOT NULL if specified
-        if not column.nullable and column.server_default is None:
-            sql += " NOT NULL"
-        
-        # Add default if specified
+
+        # ✅ Only add DEFAULT (safe)
         if column.server_default is not None:
             default_value = str(column.server_default.arg)
-            # Handle boolean defaults
             if column.type.python_type == bool:
                 default_value = default_value.upper()
-            # Handle string defaults
             elif column.type.python_type == str:
                 default_value = f"'{default_value}'"
             sql += f" DEFAULT {default_value}"
-        
-        logger.info(f"Adding column: {sql}")
-        
-        # Execute the SQL
+
+        logger.info(f"Adding column safely: {sql}")
         conn.execute(text(sql))
-            
-        logger.info(f"Column '{column.name}' added to table '{table_name}'")
-        
+
+        logger.info(f"Column '{column.name}' added to table '{table_name}' safely")
+
     except SQLAlchemyError as e:
         logger.error(f"Failed to add column '{column.name}' to '{table_name}': {e}")
-        # Don't raise, just log - we want to continue with other columns
 
 # Export everything
 __all__ = [
