@@ -776,6 +776,9 @@ class LabResultCreate(BaseModel):
 
 class LabResultResponse(BaseModel):
     lab_order_id: int
+    patient_public_id: str
+    patient_name: str
+    test_name: Optional[str]
     result_value: Optional[str]
     notes: Optional[str]
     view_url: Optional[str]
