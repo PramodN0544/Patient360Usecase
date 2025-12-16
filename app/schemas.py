@@ -189,8 +189,8 @@ class PatientPharmacyInsuranceOut(BaseModel):
     effective_date: date
     expiry_date: date
 
-    status: str
-    priority: str
+    status: Optional[str] = None             
+    insurance_type: Optional[str] = None
     pharmacy_name: Optional[str] = None
     pharmacy_phone: Optional[str] = None
     pharmacy_address: Optional[str] = None
@@ -214,8 +214,8 @@ class PatientInsuranceOut(BaseModel):
     out_of_pocket_max: Optional[float]
     effective_date: date
     expiry_date: date
-    status: str
-    priority: str
+    status: Optional[str] = None           
+    insurance_type: Optional[str] = None
     created_at: datetime
 
     class Config:
