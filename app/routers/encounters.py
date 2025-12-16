@@ -623,6 +623,7 @@ async def get_doctor_patient_encounters(
             selectinload(Encounter.medications),
             selectinload(Encounter.doctor),
             selectinload(Encounter.hospital),
+            selectinload(Encounter.lab_orders)
         )
     )
 
@@ -915,7 +916,7 @@ async def generate_encounter_pdf(
             .options(
                 selectinload(Encounter.vitals),
                 selectinload(Encounter.medications),
-                selectinload(Encounter.lab_tests),  # ADD THIS for lab tests
+                selectinload(Encounter.lab_orders),  # ADD THIS for lab tests
                 selectinload(Encounter.doctor),
                 selectinload(Encounter.hospital),  
                 selectinload(Encounter.patient)
@@ -941,16 +942,17 @@ async def generate_encounter_pdf(
         
         print(f"🏥 Hospital: {hospital_name}, ID: {hospital_id}")
         print(f"📋 Lab Tests Required: {encounter.is_lab_test_required}")
-        print(f"🔬 Lab Tests Count: {len(encounter.lab_tests) if encounter.lab_tests else 0}")
+        print(f"🔬 Lab Orders Count: {len(encounter.lab_orders) if encounter.lab_orders else 0}")
         
         buffer = BytesIO()
+        # Reduce margins to create more space
         doc = SimpleDocTemplate(
             buffer,
             pagesize=letter,
-            rightMargin=72,
-            leftMargin=72,
-            topMargin=72,
-            bottomMargin=72
+            rightMargin=50,  # Reduced from 72
+            leftMargin=50,   # Reduced from 72
+            topMargin=60,    # Reduced from 72
+            bottomMargin=60  # Reduced from 72
         )
         
         # Define custom styles
@@ -960,37 +962,35 @@ async def generate_encounter_pdf(
         styles.add(ParagraphStyle(
             name='CustomTitle',
             parent=styles['Heading1'],
-            fontSize=20,
+            fontSize=18,  # Reduced from 20
             textColor=colors.HexColor('#2c3e50'),
-            spaceAfter=12,
+            spaceAfter=10,
             alignment=1
         ))
         
         styles.add(ParagraphStyle(
             name='CustomHeading2',
             parent=styles['Heading2'],
-            fontSize=14,
+            fontSize=12,  # Reduced from 14
             textColor=colors.HexColor('#2980b9'),
-            spaceAfter=6,
-            spaceBefore=12
+            spaceAfter=4,
+            spaceBefore=8
         ))
         
         styles.add(ParagraphStyle(
             name='TableContent',
             parent=styles['Normal'],
-            fontSize=9,
+            fontSize=8,  # Reduced from 9
             textColor=colors.black,
             wordWrap='CJK'
         ))
         
         styles.add(ParagraphStyle(
-            name='WarningText',
+            name='SmallTableContent',
             parent=styles['Normal'],
-            fontSize=9,
-            textColor=colors.red,
-            backColor=colors.yellow,
-            spaceBefore=6,
-            spaceAfter=6
+            fontSize=7,  # Smaller font for tables
+            textColor=colors.black,
+            wordWrap='CJK'
         ))
         
         elements = []
@@ -1014,38 +1014,38 @@ async def generate_encounter_pdf(
         
         # Create header table
         if logo_found and logo_path:
-            logo = Image(logo_path, width=120, height=50)
+            logo = Image(logo_path, width=100, height=40)  # Reduced size
             header_data = [
                 [logo, 
-                 Paragraph(hospital_name, styles['Heading2']),
-                 Paragraph(f"Hospital ID: {hospital_id}", ParagraphStyle(name='HospitalInfo', fontSize=9, alignment=2))],
+                 Paragraph(hospital_name, ParagraphStyle(name='HospitalTitle', fontSize=14, alignment=0)),  # Reduced font
+                 Paragraph(f"Hospital ID: {hospital_id}", ParagraphStyle(name='HospitalInfo', fontSize=8, alignment=2))],
                 ['', 
-                 Paragraph("Advanced Healthcare Solutions", styles['Italic']),
-                 Paragraph(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}", ParagraphStyle(name='HospitalInfo', fontSize=9, alignment=2))]
+                 Paragraph("Advanced Healthcare Solutions", ParagraphStyle(name='HospitalSub', fontSize=10, alignment=0, fontName='Helvetica-Oblique')),
+                 Paragraph(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}", ParagraphStyle(name='HospitalInfo', fontSize=8, alignment=2))]
             ]
-            col_widths = [2*inch, 3*inch, 2*inch]
+            col_widths = [1.5*inch, 3.5*inch, 2*inch]  # Adjusted widths
         else:
             header_data = [
-                [Paragraph(hospital_name, styles['Heading1']),
-                 Paragraph(f"Hospital ID: {hospital_id}", ParagraphStyle(name='HospitalInfo', fontSize=9, alignment=2))],
-                [Paragraph("Advanced Healthcare Solutions", styles['Italic']),
-                 Paragraph(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}", ParagraphStyle(name='HospitalInfo', fontSize=9, alignment=2))]
+                [Paragraph(hospital_name, ParagraphStyle(name='HospitalTitle', fontSize=16, alignment=0)),
+                 Paragraph(f"Hospital ID: {hospital_id}", ParagraphStyle(name='HospitalInfo', fontSize=8, alignment=2))],
+                [Paragraph("Advanced Healthcare Solutions", ParagraphStyle(name='HospitalSub', fontSize=10, alignment=0, fontName='Helvetica-Oblique')),
+                 Paragraph(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}", ParagraphStyle(name='HospitalInfo', fontSize=8, alignment=2))]
             ]
-            col_widths = [4*inch, 2*inch]
+            col_widths = [4.5*inch, 2*inch]
         
         header_table = Table(header_data, colWidths=col_widths)
         header_table.setStyle(TableStyle([
             ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-            ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
             ('SPAN', (0, 1), (-1, 1)),
         ]))
         
         elements.append(header_table)
-        elements.append(Spacer(1, 24))
+        elements.append(Spacer(1, 16))  # Reduced space
         
         # Main Title
         elements.append(Paragraph("PATIENT ENCOUNTER REPORT", styles['CustomTitle']))
-        elements.append(Spacer(1, 12))
+        elements.append(Spacer(1, 8))  # Reduced space
         
         # Calculate age
         def calculate_age(birth_date):
@@ -1057,16 +1057,16 @@ async def generate_encounter_pdf(
         
         patient_age = calculate_age(encounter.patient.dob)
         
-        # Patient and Doctor Information
+        # Patient and Doctor Information - Fixed to fit within page
         patient_info = [
             ["PATIENT INFORMATION", ""],
             ["Patient Name:", f"{encounter.patient.first_name} {encounter.patient.last_name}"],
             ["Patient ID:", encounter.patient.public_id],
-            ["Date of Birth:", encounter.patient.dob.strftime('%B %d, %Y')],
+            ["Date of Birth:", encounter.patient.dob.strftime('%Y-%m-%d')],  # Shorter date format
             ["Age:", f"{patient_age} years"],
             ["Gender:", encounter.patient.gender.capitalize()],
-            ["Phone:", encounter.patient.phone or "Not provided"],
-            ["Email:", encounter.patient.email or "Not provided"]
+            ["Phone:", encounter.patient.phone or "N/A"],
+            ["Email:", Paragraph(encounter.patient.email or "N/A", ParagraphStyle(name='WrappedText', fontSize=8))]
         ]
         
         doctor_info = [
@@ -1074,36 +1074,39 @@ async def generate_encounter_pdf(
             ["Doctor Name:", f"Dr. {encounter.doctor.first_name} {encounter.doctor.last_name}"],
             ["Specialty:", encounter.doctor.specialty],
             ["Doctor ID:", f"DR-{encounter.doctor.id:04d}"],
-            ["License No:", encounter.doctor.license_number or "Not available"],
-            ["Phone:", encounter.doctor.phone or "Not available"]
+            ["License No:", Paragraph(encounter.doctor.license_number or "N/A", ParagraphStyle(name='WrappedText', fontSize=8))],
+            ["Phone:", encounter.doctor.phone or "N/A"]
         ]
         
-        # Create tables
-        patient_table = Table(patient_info, colWidths=[2*inch, 2.5*inch])
-        doctor_table = Table(doctor_info, colWidths=[2*inch, 2.5*inch])
+        # Create tables with adjusted widths
+        patient_table = Table(patient_info, colWidths=[2*inch, 2*inch])  # Reduced widths
+        doctor_table = Table(doctor_info, colWidths=[2*inch, 2*inch])  # Reduced widths
         
         table_style = TableStyle([
             ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#2c3e50')),
             ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
             ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
             ('ALIGN', (0, 0), (-1, 0), 'CENTER'),
-            ('BOTTOMPADDING', (0, 0), (-1, 0), 10),
+            ('FONTSIZE', (0, 0), (-1, 0), 9),
+            ('BOTTOMPADDING', (0, 0), (-1, 0), 6),
             ('BACKGROUND', (0, 1), (0, -1), colors.HexColor('#ecf0f1')),
             ('FONTNAME', (0, 1), (0, -1), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 1), (-1, -1), 8),
             ('TEXTCOLOR', (0, 1), (0, -1), colors.HexColor('#495057')),
-            ('FONTNAME', (1, 1), (1, -1), 'Helvetica-Bold'),
+            ('FONTNAME', (1, 1), (1, -1), 'Helvetica'),
             ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
             ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#dee2e6')),
-            ('PADDING', (0, 0), (-1, -1), 6),
+            ('PADDING', (0, 0), (-1, -1), 4),
         ])
         
         patient_table.setStyle(table_style)
         doctor_table.setStyle(table_style)
         
-        # Combine tables
-        combined_table = Table([[patient_table, Spacer(0.5*inch, 0), doctor_table]], 
-                              colWidths=[4.5*inch, 0.5*inch, 4.5*inch])
-        elements.append(KeepTogether([combined_table, Spacer(1, 20)]))
+        # Stack tables vertically instead of side by side for better fit
+        elements.append(patient_table)
+        elements.append(Spacer(1, 12))
+        elements.append(doctor_table)
+        elements.append(Spacer(1, 16))
         
         # Encounter Details
         elements.append(Paragraph("ENCOUNTER DETAILS", styles['CustomHeading2']))
@@ -1111,37 +1114,36 @@ async def generate_encounter_pdf(
         encounter_details = [
             ["Category", "Details"],
             ["Encounter ID:", f"ENC-{encounter.id:06d}"],
-            ["Encounter Date:", encounter.encounter_date.strftime('%B %d, %Y %I:%M %p')],
+            ["Encounter Date:", encounter.encounter_date.strftime('%Y-%m-%d %H:%M')],  # Shorter format
             ["Encounter Type:", encounter.encounter_type],
             ["Status:", encounter.status.upper()],
-            ["Reason for Visit:", Paragraph(encounter.reason_for_visit or "Not specified", styles['TableContent'])],
-            ["Diagnosis:", Paragraph(encounter.diagnosis or "Not specified", styles['TableContent'])],
-            ["Clinical Notes:", Paragraph(encounter.notes or "No additional notes", styles['TableContent'])],
+            ["Reason for Visit:", Paragraph(encounter.reason_for_visit or "Not specified", styles['SmallTableContent'])],
+            ["Diagnosis:", Paragraph(encounter.diagnosis or "Not specified", styles['SmallTableContent'])],
+            ["Clinical Notes:", Paragraph(encounter.notes or "No additional notes", styles['SmallTableContent'])],
         ]
         
         if encounter.follow_up_date:
-            encounter_details.append(["Follow-up Date:", encounter.follow_up_date.strftime('%B %d, %Y')])
+            encounter_details.append(["Follow-up Date:", encounter.follow_up_date.strftime('%Y-%m-%d')])
         
-        if encounter.next_appointment_date:
-            encounter_details.append(["Next Appointment:", encounter.next_appointment_date.strftime('%B %d, %Y')])
-        
-        encounter_table = Table(encounter_details, colWidths=[2*inch, 5*inch])
+        encounter_table = Table(encounter_details, colWidths=[1.5*inch, 4.5*inch])  # Adjusted widths
         encounter_table.setStyle(TableStyle([
             ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#17a2b8')),
             ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
             ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, 0), 9),
             ('ALIGN', (0, 0), (-1, 0), 'CENTER'),
-            ('BOTTOMPADDING', (0, 0), (-1, 0), 8),
+            ('BOTTOMPADDING', (0, 0), (-1, 0), 6),
             ('BACKGROUND', (0, 1), (0, -1), colors.HexColor('#e3f2fd')),
             ('FONTNAME', (0, 1), (0, -1), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 1), (-1, -1), 8),
             ('VALIGN', (0, 0), (-1, -1), 'TOP'),
             ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#b3e0ff')),
-            ('PADDING', (0, 0), (-1, -1), 6),
+            ('PADDING', (0, 0), (-1, -1), 4),
             ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#f9f9f9')]),
         ]))
         
         elements.append(encounter_table)
-        elements.append(Spacer(1, 20))
+        elements.append(Spacer(1, 16))
         
         # Vitals Section
         if encounter.vitals:
@@ -1160,117 +1162,119 @@ async def generate_encounter_pdf(
             
             vitals_data = [
                 ["Measurement", "Value", "Status", "Normal Range"],
-                ["Blood Pressure", vitals.blood_pressure or "Not recorded", bp_status, "120/80 mmHg"],
-                ["Heart Rate", f"{vitals.heart_rate} bpm" if vitals.heart_rate else "Not recorded", hr_status, "60-100 bpm"],
-                ["Temperature", f"{vitals.temperature} °F" if vitals.temperature else "Not recorded", temp_status, "97-99 °F"],
-                ["Oxygen Saturation", f"{vitals.oxygen_saturation}%" if vitals.oxygen_saturation else "Not recorded", oxy_status, "95-100%"],
-                ["Respiration Rate", f"{vitals.respiration_rate} /min" if vitals.respiration_rate else "Not recorded", resp_status, "12-20 /min"],
-                ["Height", f"{vitals.height} cm" if vitals.height else "Not recorded", "", ""],
-                ["Weight", f"{vitals.weight} kg" if vitals.weight else "Not recorded", "", ""],
-                ["BMI", f"{vitals.bmi:.1f}" if vitals.bmi else "Not calculated", bmi_status, "18.5-24.9"]
+                ["Blood Pressure", vitals.blood_pressure or "N/A", bp_status, "120/80 mmHg"],
+                ["Heart Rate", f"{vitals.heart_rate} bpm" if vitals.heart_rate else "N/A", hr_status, "60-100 bpm"],
+                ["Temperature", f"{vitals.temperature} °F" if vitals.temperature else "N/A", temp_status, "97-99 °F"],
+                ["Oxygen Saturation", f"{vitals.oxygen_saturation}%" if vitals.oxygen_saturation else "N/A", oxy_status, "95-100%"],
+                ["Respiration Rate", f"{vitals.respiration_rate} /min" if vitals.respiration_rate else "N/A", resp_status, "12-20 /min"],
+                ["Height", f"{vitals.height} cm" if vitals.height else "N/A", "", ""],
+                ["Weight", f"{vitals.weight} kg" if vitals.weight else "N/A", "", ""],
+                ["BMI", f"{vitals.bmi:.1f}" if vitals.bmi else "N/A", bmi_status, "18.5-24.9"]
             ]
             
-            vitals_table = Table(vitals_data, colWidths=[1.8*inch, 1.5*inch, 1*inch, 1.2*inch])
+            vitals_table = Table(vitals_data, colWidths=[1.5*inch, 1.2*inch, 0.8*inch, 1.5*inch])  # Adjusted widths
             vitals_table.setStyle(TableStyle([
                 ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#28a745')),
                 ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
                 ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, 0), 8),
                 ('ALIGN', (0, 0), (-1, 0), 'CENTER'),
-                ('BOTTOMPADDING', (0, 0), (-1, 0), 10),
+                ('BOTTOMPADDING', (0, 0), (-1, 0), 6),
                 ('BACKGROUND', (0, 1), (0, -1), colors.HexColor('#f1f8e9')),
                 ('FONTNAME', (0, 1), (0, -1), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 1), (-1, -1), 7),
                 ('ALIGN', (2, 1), (2, -1), 'CENTER'),
                 ('TEXTCOLOR', (2, 1), (2, -1), colors.green if bp_status == "Normal" else colors.red),
                 ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#c8e6c9')),
-                ('PADDING', (0, 0), (-1, -1), 6),
+                ('PADDING', (0, 0), (-1, -1), 3),
                 ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#f8f9fa')]),
             ]))
             
             vitals_section.append(vitals_table)
-            vitals_section.append(Spacer(1, 20))
+            vitals_section.append(Spacer(1, 16))
             elements.append(KeepTogether(vitals_section))
         
-        # Medications Section - FIXED
+        # Medications Section
         if encounter.medications:
             medications_section = []
             medications_section.append(Paragraph("PRESCRIBED MEDICATIONS", styles['CustomHeading2']))
             
-            med_data = [["Medication", "Dosage", "Frequency", "Route", "Duration", "Instructions"]]
+            # Modified table - removed instructions column for more space
+            med_data = [["Medication", "Dosage", "Frequency", "Route", "Duration"]]
             for med in encounter.medications:
                 duration = "Ongoing"
                 if med.start_date and med.end_date:
                     days = (med.end_date - med.start_date).days
                     duration = f"{days} days"
                 elif med.start_date:
-                    duration = "From " + med.start_date.strftime('%m/%d/%Y')
+                    duration = "From " + med.start_date.strftime('%Y-%m-%d')
                 
                 # Clean up any HTML tags in medication data
                 med_name = str(med.medication_name).replace('<b>', '').replace('</b>', '')
                 dosage = str(med.dosage).replace('<b>', '').replace('</b>', '') if med.dosage else ""
                 frequency = str(med.frequency).replace('<b>', '').replace('</b>', '') if med.frequency else ""
                 route = str(med.route).replace('<b>', '').replace('</b>', '') if med.route else ""
-                instructions = str(med.instructions).replace('<b>', '').replace('</b>', '') if med.instructions else ""
                 
                 med_data.append([
-                    Paragraph(med_name, styles['TableContent']),
-                    Paragraph(dosage, styles['TableContent']),
-                    Paragraph(frequency, styles['TableContent']),
-                    Paragraph(route, styles['TableContent']),
-                    Paragraph(duration, styles['TableContent']),
-                    Paragraph(instructions, styles['TableContent'])
+                    Paragraph(med_name[:30] + "..." if len(med_name) > 30 else med_name, styles['SmallTableContent']),
+                    Paragraph(dosage[:15] if dosage else "", styles['SmallTableContent']),
+                    Paragraph(frequency[:15] if frequency else "", styles['SmallTableContent']),
+                    Paragraph(route[:10] if route else "", styles['SmallTableContent']),
+                    Paragraph(duration, styles['SmallTableContent'])
                 ])
             
-            med_table = Table(med_data, colWidths=[1.5*inch, 1*inch, 1*inch, 0.8*inch, 1*inch, 1.2*inch])
+            med_table = Table(med_data, colWidths=[1.8*inch, 1*inch, 1.2*inch, 0.8*inch, 1.2*inch])  # Adjusted widths
             med_table.setStyle(TableStyle([
                 ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#6f42c1')),
                 ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
                 ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, 0), 8),
                 ('ALIGN', (0, 0), (-1, 0), 'CENTER'),
-                ('BOTTOMPADDING', (0, 0), (-1, 0), 10),
+                ('BOTTOMPADDING', (0, 0), (-1, 0), 6),
                 ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#e0cffc')),
-                ('PADDING', (0, 0), (-1, -1), 6),
+                ('PADDING', (0, 0), (-1, -1), 3),
                 ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#f5f0ff')]),
-                ('FONTSIZE', (0, 1), (-1, -1), 8),
+                ('FONTSIZE', (0, 1), (-1, -1), 7),
                 ('VALIGN', (0, 0), (-1, -1), 'TOP'),
             ]))
             
             medications_section.append(med_table)
-            medications_section.append(Spacer(1, 20))
+            medications_section.append(Spacer(1, 16))
             elements.append(KeepTogether(medications_section))
         else:
             # Show message if no medications
             elements.append(Paragraph("PRESCRIBED MEDICATIONS", styles['CustomHeading2']))
-            elements.append(Paragraph("No medications prescribed for this encounter.", styles['Normal']))
-            elements.append(Spacer(1, 20))
+            elements.append(Paragraph("No medications prescribed for this encounter.", styles['SmallTableContent']))
+            elements.append(Spacer(1, 16))
         
-        # Lab Tests Section - FIXED and ENHANCED
+        # Lab Tests Section - FIXED: Removed Order Date and Instructions columns
         lab_section = []
         lab_section.append(Paragraph("LABORATORY TESTS", styles['CustomHeading2']))
         
-        if encounter.lab_tests and len(encounter.lab_tests) > 0:
-            lab_data = [["Test Name", "Test Code", "Status", "Priority", "Order Date", "Instructions"]]
+        if encounter.lab_orders and len(encounter.lab_orders) > 0:
+            # Modified table - only 4 columns now
+            lab_data = [["Test Name", "Test Code", "Status", "Sample Type"]]
             
-            for lab_test in encounter.lab_tests:
+            for lab_order in encounter.lab_orders:
                 lab_data.append([
-                    Paragraph(lab_test.test_name or "Not specified", styles['TableContent']),
-                    Paragraph(lab_test.test_code or "N/A", styles['TableContent']),
-                    Paragraph(lab_test.status or "Pending", styles['TableContent']),
-                    Paragraph(lab_test.priority or "Routine", styles['TableContent']),
-                    Paragraph(lab_test.order_date.strftime('%Y-%m-%d') if lab_test.order_date else "N/A", styles['TableContent']),
-                    Paragraph(lab_test.instructions or "None", styles['TableContent'])
+                    Paragraph(lab_order.test_name or "Not specified", styles['SmallTableContent']),
+                    Paragraph(lab_order.test_code or "N/A", styles['SmallTableContent']),
+                    Paragraph(lab_order.status or "Pending", styles['SmallTableContent']),
+                    Paragraph(lab_order.sample_type or "N/A", styles['SmallTableContent']),
                 ])
             
-            lab_table = Table(lab_data, colWidths=[1.5*inch, 1*inch, 1*inch, 0.8*inch, 1*inch, 1.2*inch])
+            lab_table = Table(lab_data, colWidths=[2.5*inch, 1.2*inch, 1.2*inch, 1.1*inch])  # Adjusted for 4 columns
             lab_table.setStyle(TableStyle([
                 ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#fd7e14')),
                 ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
                 ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, 0), 8),
                 ('ALIGN', (0, 0), (-1, 0), 'CENTER'),
-                ('BOTTOMPADDING', (0, 0), (-1, 0), 10),
+                ('BOTTOMPADDING', (0, 0), (-1, 0), 6),
                 ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#ffe5d0')),
-                ('PADDING', (0, 0), (-1, -1), 6),
+                ('PADDING', (0, 0), (-1, -1), 3),
                 ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#fff5e6')]),
-                ('FONTSIZE', (0, 1), (-1, -1), 8),
+                ('FONTSIZE', (0, 1), (-1, -1), 7),
                 ('VALIGN', (0, 0), (-1, -1), 'TOP'),
             ]))
             
@@ -1282,64 +1286,46 @@ async def generate_encounter_pdf(
                 ["Laboratory Analysis Required", "Order Pending", "Routine"]
             ]
             
-            lab_table = Table(lab_data, colWidths=[3*inch, 2*inch, 2*inch])
+            lab_table = Table(lab_data, colWidths=[2.5*inch, 1.5*inch, 1*inch])
             lab_table.setStyle(TableStyle([
                 ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#fd7e14')),
                 ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
                 ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, 0), 8),
                 ('ALIGN', (0, 0), (-1, 0), 'CENTER'),
-                ('BOTTOMPADDING', (0, 0), (-1, 0), 10),
+                ('BOTTOMPADDING', (0, 0), (-1, 0), 6),
                 ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#ffe5d0')),
-                ('PADDING', (0, 0), (-1, -1), 8),
+                ('PADDING', (0, 0), (-1, -1), 4),
                 ('BACKGROUND', (0, 1), (-1, -1), colors.HexColor('#fff5e6')),
+                ('FONTSIZE', (0, 1), (-1, -1), 7),
             ]))
             
             lab_section.append(lab_table)
-            lab_section.append(Paragraph("* Specific lab tests to be determined by the lab department.", styles['Italic']))
+            lab_section.append(Paragraph("* Specific lab tests to be determined by the lab department.", 
+                                         ParagraphStyle(name='ItalicNote', fontSize=7, fontName='Helvetica-Oblique')))
         else:
-            lab_section.append(Paragraph("No laboratory tests required for this encounter.", styles['Normal']))
+            lab_section.append(Paragraph("No laboratory tests required for this encounter.", styles['SmallTableContent']))
         
-        lab_section.append(Spacer(1, 20))
+        lab_section.append(Spacer(1, 16))
         elements.append(KeepTogether(lab_section))
         
-        # Add Insurance/Verification Section
-        elements.append(Paragraph("INSURANCE VERIFICATION", styles['CustomHeading2']))
-        
-        insurance_data = [
-            ["Insurance Status", "Verified" if encounter.insurance_verified else "Pending"],
-            ["Prior Auth Required", "Yes" if encounter.prior_auth_required else "No"],
-            ["Prior Auth Status", encounter.prior_auth_status or "Not applicable"],
-            ["Estimated Patient Responsibility", f"${encounter.estimated_patient_responsibility:.2f}" if encounter.estimated_patient_responsibility else "Not calculated"]
-        ]
-        
-        insurance_table = Table(insurance_data, colWidths=[2.5*inch, 2.5*inch])
-        insurance_table.setStyle(TableStyle([
-            ('BACKGROUND', (0, 0), (0, -1), colors.HexColor('#e3f2fd')),
-            ('FONTNAME', (0, 0), (0, -1), 'Helvetica-Bold'),
-            ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#b3e0ff')),
-            ('PADDING', (0, 0), (-1, -1), 6),
-            ('ROWBACKGROUNDS', (0, 0), (-1, -1), [colors.white, colors.HexColor('#f9f9f9')]),
-        ]))
-        
-        elements.append(insurance_table)
-        elements.append(Spacer(1, 20))
-        
         # Footer Section
-        elements.append(Spacer(1, 30))
+        elements.append(Spacer(1, 20))
         footer_data = [
-            [Paragraph(hospital_name, ParagraphStyle(name='Footer', fontSize=10, textColor=colors.HexColor('#7f8c8d'), alignment=1))],
-            [Paragraph(hospital_address, ParagraphStyle(name='Footer', fontSize=9, textColor=colors.HexColor('#95a5a6'), alignment=1))],
-            [Paragraph(f"Phone: {hospital_phone}", ParagraphStyle(name='Footer', fontSize=9, textColor=colors.HexColor('#95a5a6'), alignment=1))],
-            [Paragraph(f"Report ID: ENC-{encounter.id}-{datetime.now().strftime('%Y%m%d')}", ParagraphStyle(name='Footer', fontSize=8, textColor=colors.HexColor('#bdc3c7'), alignment=1))],
-            [Paragraph("CONFIDENTIAL - For Medical Use Only", ParagraphStyle(name='Footer', fontSize=8, textColor=colors.HexColor('#e74c3c'), alignment=1))],
-            [Paragraph("This document contains protected health information (PHI) under HIPAA regulations", ParagraphStyle(name='Footer', fontSize=7, textColor=colors.HexColor('#bdc3c7'), alignment=1))],
+            [Paragraph(hospital_name, ParagraphStyle(name='Footer', fontSize=9, textColor=colors.HexColor('#7f8c8d'), alignment=1))],
+            [Paragraph(hospital_address, ParagraphStyle(name='Footer', fontSize=8, textColor=colors.HexColor('#95a5a6'), alignment=1))],
+            [Paragraph(f"Phone: {hospital_phone}", ParagraphStyle(name='Footer', fontSize=8, textColor=colors.HexColor('#95a5a6'), alignment=1))],
+            [Paragraph(f"Report ID: ENC-{encounter.id}-{datetime.now().strftime('%Y%m%d')}", ParagraphStyle(name='Footer', fontSize=7, textColor=colors.HexColor('#bdc3c7'), alignment=1))],
+            [Paragraph("CONFIDENTIAL - For Medical Use Only", ParagraphStyle(name='Footer', fontSize=7, textColor=colors.HexColor('#e74c3c'), alignment=1))],
+            [Paragraph("This document contains protected health information (PHI) under HIPAA regulations", 
+                       ParagraphStyle(name='Footer', fontSize=6, textColor=colors.HexColor('#bdc3c7'), alignment=1))],
         ]
         
-        footer_table = Table(footer_data, colWidths=[7.5*inch])
+        footer_table = Table(footer_data, colWidths=[6*inch])  # Reduced width
         footer_table.setStyle(TableStyle([
             ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-            ('TOPPADDING', (0, 0), (-1, -1), 10),
-            ('BOTTOMPADDING', (0, 0), (-1, -1), 5),
+            ('TOPPADDING', (0, 0), (-1, -1), 6),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 3),
         ]))
         
         elements.append(footer_table)
@@ -1433,44 +1419,39 @@ async def view_encounter_document(
     current_user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-
     # Fetch encounter
     q = await db.execute(select(Encounter).where(Encounter.id == encounter_id))
-    
     encounter = q.unique().scalar_one_or_none()
 
     if not encounter:
-        raise HTTPException(404, "Encounter not found")
+        raise HTTPException(status_code=404, detail="Encounter not found")
 
     # RBAC
     await check_encounter_access(encounter, current_user, db)
 
-    # Validate index
+    # Validate document index
     if not encounter.documents or doc_index >= len(encounter.documents):
-        raise HTTPException(404, "Document not found")
+        raise HTTPException(status_code=404, detail="Document not found")
 
     file_key = encounter.documents[doc_index]
-
-    # Create presigned URL for INLINE view
-    presigned_url = generate_presigned_url(file_key, disposition="inline")
-
-    # Fetch from S3
-    async with aiohttp.ClientSession() as session:
-        async with session.get(presigned_url) as resp:
-            if resp.status != 200:
-                raise HTTPException(resp.status, "Failed to fetch file from S3")
-            file_data = BytesIO(await resp.read())
-
     filename = file_key.split("/")[-1]
 
-    return StreamingResponse(
-        file_data,
-        media_type="application/pdf",
-        headers={"Content-Disposition": f'inline; filename="{filename}"'}
+    # Generate presigned URL (INLINE view)
+    presigned_url = generate_presigned_url(
+        file_key=file_key,
+        disposition="inline",
+        expiration=3600
     )
 
+    return {
+        "url": presigned_url,
+        "filename": filename,
+        "expires_in": 3600
+    }
+
+
 # Download PDF securely (attachment)
-@router.get("{encounter_id}/download/{doc_index}")
+@router.get("/{encounter_id}/download/{doc_index}")
 async def download_encounter_document(
     encounter_id: int,
     doc_index: int,
