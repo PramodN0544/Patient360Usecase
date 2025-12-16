@@ -1419,44 +1419,39 @@ async def view_encounter_document(
     current_user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-
     # Fetch encounter
     q = await db.execute(select(Encounter).where(Encounter.id == encounter_id))
-    
     encounter = q.unique().scalar_one_or_none()
 
     if not encounter:
-        raise HTTPException(404, "Encounter not found")
+        raise HTTPException(status_code=404, detail="Encounter not found")
 
     # RBAC
     await check_encounter_access(encounter, current_user, db)
 
-    # Validate index
+    # Validate document index
     if not encounter.documents or doc_index >= len(encounter.documents):
-        raise HTTPException(404, "Document not found")
+        raise HTTPException(status_code=404, detail="Document not found")
 
     file_key = encounter.documents[doc_index]
-
-    # Create presigned URL for INLINE view
-    presigned_url = generate_presigned_url(file_key, disposition="inline")
-
-    # Fetch from S3
-    async with aiohttp.ClientSession() as session:
-        async with session.get(presigned_url) as resp:
-            if resp.status != 200:
-                raise HTTPException(resp.status, "Failed to fetch file from S3")
-            file_data = BytesIO(await resp.read())
-
     filename = file_key.split("/")[-1]
 
-    return StreamingResponse(
-        file_data,
-        media_type="application/pdf",
-        headers={"Content-Disposition": f'inline; filename="{filename}"'}
+    # Generate presigned URL (INLINE view)
+    presigned_url = generate_presigned_url(
+        file_key=file_key,
+        disposition="inline",
+        expiration=3600
     )
 
+    return {
+        "url": presigned_url,
+        "filename": filename,
+        "expires_in": 3600
+    }
+
+
 # Download PDF securely (attachment)
-@router.get("{encounter_id}/download/{doc_index}")
+@router.get("/{encounter_id}/download/{doc_index}")
 async def download_encounter_document(
     encounter_id: int,
     doc_index: int,
