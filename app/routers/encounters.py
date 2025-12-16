@@ -341,24 +341,12 @@ async def update_encounter(
     if encounter.status == "completed":
         raise HTTPException(400, "Completed encounters cannot be modified")
 
-    # -------------------------------
-    # UPDATE BASIC FIELDS (safe)
-    # -------------------------------
-    # Only set simple scalar fields here; skip relationships/collections explicitly
     scalar_exclude = {"vitals", "medications", "lab_orders"}
     for field, value in encounter_update.dict(exclude_none=True).items():
         if field in scalar_exclude:
             continue
-        # Explicitly set follow_up_date on encounter (we handled conversion above)
         setattr(encounter, field, value)
 
-    # -------------------------------
-    # STATUS + CONTINUATION LOGIC (STRICT)
-    # -------------------------------
-    # Enforce rule:
-    # - If follow_up_date is None => completed
-    # - If follow_up_date is not None => in-progress
-    # Use the value stored on the SQLAlchemy model (encounter.follow_up_date)
     encounter.follow_up_date = encounter_update.follow_up_date  # ensure model has the parsed date or None
     encounter.is_continuation = encounter.follow_up_date is not None
 
@@ -367,9 +355,6 @@ async def update_encounter(
     else:
         encounter.status = "in-progress"
 
-    # -------------------------------
-    # UPDATE VITALS
-    # -------------------------------
     if encounter_update.vitals:
         vitals_result = await db.execute(select(Vitals).where(Vitals.encounter_id == encounter.id))
         vitals = vitals_result.scalar_one_or_none()
@@ -386,9 +371,6 @@ async def update_encounter(
             except Exception:
                 vitals.bmi = None
 
-    # -------------------------------
-    # UPDATE + ADD MEDICATIONS (safe)
-    # -------------------------------
     if encounter_update.medications is not None:
         existing_meds_result = await db.execute(select(Medication).where(Medication.encounter_id == encounter.id))
         existing_meds = {m.id: m for m in existing_meds_result.scalars().all()}
@@ -421,9 +403,6 @@ async def update_encounter(
                 )
                 db.add(new_med)
 
-    # -------------------------------
-    # UPDATE + ADD LAB ORDERS (safe)
-    # -------------------------------
     if encounter_update.lab_orders is not None:
         existing_orders_result = await db.execute(select(LabOrder).where(LabOrder.encounter_id == encounter.id))
         existing_orders = {o.id: o for o in existing_orders_result.scalars().all()}

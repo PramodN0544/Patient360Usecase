@@ -237,7 +237,8 @@ async def update_hospital_profile(
     if current_user.role != "hospital":
         raise HTTPException(status_code=403, detail="Not authorized")
 
-    hospital = await db.get(Hospital, current_user.id)
+    # CORRECTED: Use hospital_id from current_user
+    hospital = await db.get(Hospital, current_user.hospital_id)  # Changed from current_user.id
 
     if not hospital:
         raise HTTPException(status_code=404, detail="Hospital not found")
