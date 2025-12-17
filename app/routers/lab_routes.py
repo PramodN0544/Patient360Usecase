@@ -1,8 +1,9 @@
 # app/routers/labs.py
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from typing import List, Optional
+from sqlalchemy import func, or_
 from app.database import get_db
 from app.models import LabMaster, LabOrder, LabResult, Patient, Doctor
 from app.schemas import (
@@ -162,7 +163,6 @@ async def get_lab_orders(encounter_id: int, current_user=Depends(get_current_use
     r = await db.execute(select(LabOrder).where(LabOrder.encounter_id == encounter_id))
     lab_orders = r.scalars().all()
     return lab_orders
-
 
 @router.get("/my-results", response_model=List[LabResultResponse])
 async def get_my_lab_results(current_user=Depends(get_current_user), db: AsyncSession = Depends(get_db)):
@@ -400,4 +400,74 @@ async def search_hospital_lab_results(
         })
 
     return out
+
+
+@router.get("/doctor-results/filter", response_model=List[LabResultResponse])
+async def get_doctor_lab_results_filtered(
+    patient_public_id: Optional[str] = Query(None),
+    search: Optional[str] = Query(None),
+    current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    if current_user.role != "doctor":
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    r = await db.execute(
+        select(Doctor).where(Doctor.user_id == current_user.id)
+    )
+    doctor = r.scalar_one_or_none()
+    if not doctor:
+        raise HTTPException(status_code=404, detail="Doctor profile not found")
+
+    query = (
+        select(LabOrder, LabResult, Patient)
+        .join(Patient, Patient.id == LabOrder.patient_id)
+        .outerjoin(LabResult, LabResult.lab_order_id == LabOrder.id)
+        .where(LabOrder.doctor_id == doctor.id)
+    )
+
+    if patient_public_id:
+        query = query.where(Patient.public_id == patient_public_id)
+
+    if search:
+        like = f"%{search.lower()}%"
+        query = query.where(
+            or_(
+                func.lower(LabOrder.test_name).ilike(like),
+                func.lower(LabResult.result_value).ilike(like),
+                func.lower(LabResult.notes).ilike(like),
+                func.lower(Patient.first_name).ilike(like),
+                func.lower(Patient.last_name).ilike(like),
+            )
+        )
+
+    result = await db.execute(
+        query.order_by(LabOrder.created_at.desc())
+    )
+
+    rows = result.unique().all()
+
+    out = []
+    for lab_order, lab_result, patient in rows:
+        if lab_result and lab_result.file_key:
+            view_url = generate_presigned_url(lab_result.file_key, "inline")
+            download_url = generate_presigned_url(lab_result.file_key, "attachment")
+        else:
+            view_url = download_url = None
+
+        out.append({
+            "lab_order_id": lab_order.id,
+            "patient_public_id": patient.public_id,
+            "patient_name": f"{patient.first_name} {patient.last_name}",
+            "test_name": lab_order.test_name,
+            "result_value": lab_result.result_value if lab_result else None,
+            "notes": lab_result.notes if lab_result else None,
+            "view_url": view_url,
+            "download_url": download_url,
+            "file_key": lab_result.file_key if lab_result else None,
+            "created_at": lab_result.created_at if lab_result else None,
+        })
+
+    return out
+
 

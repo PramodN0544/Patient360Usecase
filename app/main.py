@@ -226,6 +226,28 @@ async def hospital_signup(
     hospital=hospital 
 )
 
+@app.get("/hospitals/profile", response_model=schemas.HospitalOut)
+async def get_hospital_profile(
+    current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Get the hospital profile for the current hospital user."""
+    if current_user.role != "hospital":
+        raise HTTPException(status_code=403, detail="Only hospital users can access this endpoint")
+    
+    if not current_user.hospital_id:
+        raise HTTPException(status_code=404, detail="Hospital not found")
+    
+    result = await db.execute(
+        select(models.Hospital).where(models.Hospital.id == current_user.hospital_id)
+    )
+    hospital = result.scalars().first()
+    
+    if not hospital:
+        raise HTTPException(status_code=404, detail="Hospital not found")
+    
+    return hospital
+
 @app.post("/doctors")
 async def create_doctor(
     doctor_in: schemas.DoctorCreate,
@@ -450,30 +472,21 @@ async def get_my_profile(
 
     result = await db.execute(
         select(models.Patient)
+        .options(
+            selectinload(models.Patient.patient_insurances),
+            selectinload(models.Patient.pharmacy_insurances),
+            selectinload(models.Patient.allergies),
+            selectinload(models.Patient.consents),
+        )
         .where(models.Patient.user_id == current_user.id)
     )
+
     patient = result.scalars().first()
 
     if not patient:
         raise HTTPException(status_code=404, detail="Patient record not found")
 
-    patient_dict = {
-        column.name: getattr(patient, column.name)
-        for column in patient.__table__.columns
-    }
-    
-    if patient_dict.get('weight'):
-        patient_dict['weight'] = float(patient_dict['weight'])
-    if patient_dict.get('height'):
-        patient_dict['height'] = float(patient_dict['height'])
-    
-    patient_dict['allergies'] = []
-    patient_dict['patient_insurances'] = []
-    patient_dict['pharmacy_insurances'] = []
-    patient_dict['encounters'] = []
-    patient_dict['consents'] = None
-    
-    return schemas.PatientOut(**patient_dict)
+    return patient
 
 # Admin Part – Get all patients
 @app.get("/patients", response_model=list[schemas.PatientOut])

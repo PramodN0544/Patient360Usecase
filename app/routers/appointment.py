@@ -119,7 +119,6 @@ async def get_doctors_by_specialty(
             "phone": doc.phone,
             "email": doc.email
         })
-
     return doctors_list
 
 # GET /appointments/hospitals

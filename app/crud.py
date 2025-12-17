@@ -87,36 +87,39 @@ async def create_doctor(db: AsyncSession, data: dict, hospital_id: UUID):
     return doctor, default_password, user.email
 
 async def create_patient(db: AsyncSession, data: schemas.PatientCreate):
-    # Unique validations
-    if data.email:
-        result = await db.execute(select(models.Patient).where(models.Patient.email == data.email))
-        if result.scalars().first():
-            raise HTTPException(status_code=400, detail="Email already exists")
 
-    if data.phone:
-        result = await db.execute(select(models.Patient).where(models.Patient.phone == data.phone))
-        if result.scalars().first():
-            raise HTTPException(status_code=400, detail="Phone already exists")
-
-    if data.ssn:
-        result = await db.execute(select(models.Patient).where(models.Patient.ssn == data.ssn))
-        if result.scalars().first():
-            raise HTTPException(status_code=400, detail="SSN already exists")
-
-    # Create associated User
+    # ----------------------------
+    # Create user
+    # ----------------------------
     default_password = utils.generate_default_password()
-    full_name = f"{data.first_name} {data.last_name}"
-
     user = await create_user(
         db=db,
         email=data.email,
         password=default_password,
-        full_name=full_name,
+        full_name=f"{data.first_name} {data.last_name}",
         role="patient"
     )
 
-    # Create Patient
-    patient_dict = data.dict(exclude={"allergies", "consents", "patient_insurances", "pharmacy_insurances"})
+    # ----------------------------
+    # Determine insurance status
+    # ----------------------------
+    has_medical = bool(data.patient_insurances)
+    has_pharmacy = bool(data.pharmacy_insurances)
+
+    insurance_status = "Insured" if (has_medical or has_pharmacy) else "Self-Pay"
+
+    # ----------------------------
+    # Create patient
+    # ----------------------------
+    patient_dict = data.dict(
+        exclude={
+            "allergies",
+            "consents",
+            "patient_insurances",
+            "pharmacy_insurances"
+        }
+    )
+
     patient_dict["user_id"] = user.id
     
     # Calculate and store patient age if DOB is provided
@@ -138,85 +141,75 @@ async def create_patient(db: AsyncSession, data: schemas.PatientCreate):
    
     patient = models.Patient(**patient_dict)
     db.add(patient)
-    await db.flush()  
+    await db.flush()   # 🔑 get patient.id
 
-    # Add Allergies
-    if data.allergies:
-        for allergy_data in data.allergies:
-            allergy = models.Allergy(**allergy_data.dict(), patient_id=patient.id)
-            db.add(allergy)
+    # ----------------------------
+    # Allergies
+    # ----------------------------
+    for allergy in data.allergies or []:
+        db.add(models.Allergy(**allergy.dict(), patient_id=patient.id))
 
-    # Add PatientConsent 
-    if not data.consents:
-        raise HTTPException(status_code=400, detail="Consent is required")
-    
-    consent_data = data.consents.dict()
-    mandatory_fields = ["hipaa", "text_messaging", "financial"]
-    for field in mandatory_fields:
-        if consent_data.get(field) is None:
-            raise HTTPException(status_code=400, detail=f"{field} consent is mandatory")
+    # ----------------------------
+    # Consents
+    # ----------------------------
+    db.add(models.PatientConsent(**data.consents.dict(), patient_id=patient.id))
 
-    consent = models.PatientConsent(**consent_data, patient_id=patient.id)
-    db.add(consent)
+    # ----------------------------
+    # Medical Insurance
+    # ----------------------------
+    for insurance_data in data.patient_insurances or []:
 
-    # Add Patient Insurances
-    if getattr(data, "patient_insurances", None):
-        for insurance_data in data.patient_insurances:
-            # Fetch master insurance details
-            result = await db.execute(
-                select(models.InsuranceMaster).where(models.InsuranceMaster.id == insurance_data.insurance_id)
-            )
-            master = result.scalars().first()
+        master = await db.get(models.InsuranceMaster, insurance_data.id)
+        if not master:
+            raise HTTPException(404, "Insurance master not found")
 
-            if not master:
-                raise HTTPException(status_code=404, detail=f"Insurance master with ID {insurance_data.insurance_id} not found")
+        db.add(models.PatientInsurance(
+            patient_id=patient.id,
+            insurance_id=master.id,
+            provider_name=master.provider_name,
+            plan_name=master.plan_name,
+            plan_type=master.plan_type,
+            coverage_percent=master.coverage_percent,
+            policy_number=insurance_data.policy_number,
+            group_number=insurance_data.group_number,
+            subscriber_name=insurance_data.subscriber_name,
+            subscriber_relationship=insurance_data.subscriber_relationship,
+            subscriber_dob=insurance_data.subscriber_dob,
+            payer_phone=insurance_data.payer_phone,
+            effective_date=insurance_data.effective_date,
+            expiry_date=insurance_data.expiry_date,
+            insurance_type=insurance_data.insurance_type or "primary",
+            benefits_verified=insurance_data.benefits_verified or False
+        ))
 
-            insurance = models.PatientInsurance(
-                patient_id=patient.id,
-                insurance_id=insurance_data.insurance_id,
-                policy_number=insurance_data.policy_number,
-                effective_date=insurance_data.effective_date,
-                expiry_date=insurance_data.expiry_date,
-                priority=insurance_data.priority,
-                provider_name=master.provider_name,
-                plan_name=master.plan_name,
-                plan_type=master.plan_type,
-                coverage_percent=master.coverage_percent,
-                copay_amount=master.copay_amount,
-                deductible_amount=master.deductible_amount,
-                out_of_pocket_max=master.out_of_pocket_max
-            )
-            db.add(insurance)
+    # ----------------------------
+    # Pharmacy Insurance
+    # ----------------------------
+    for pharm_data in data.pharmacy_insurances or []:
 
-    # Add Pharmacy Insurances
-    if getattr(data, "pharmacy_insurances", None):
-        for pharm_data in data.pharmacy_insurances:
-            # Fetch master pharmacy insurance details
-            result = await db.execute(
-                select(models.PharmacyInsuranceMaster).where(models.PharmacyInsuranceMaster.id == pharm_data.pharmacy_insurance_id)
-            )
-            master = result.scalars().first()
+        master = await db.get(models.PharmacyInsuranceMaster, pharm_data.id)
+        if not master:
+            raise HTTPException(404, "Pharmacy insurance master not found")
 
-            if not master:
-                raise HTTPException(status_code=404, detail=f"Pharmacy insurance master with ID {pharm_data.pharmacy_insurance_id} not found")
+        db.add(models.PatientPharmacyInsurance(
+            patient_id=patient.id,
+            pharmacy_insurance_id=master.id,
+            provider_name=master.provider_name,
+            plan_name=master.plan_name,
+            policy_number=pharm_data.policy_number,
+            bin_number=pharm_data.bin_number,
+            pcn_number=pharm_data.pcn_number,
+            effective_date=pharm_data.effective_date,
+            expiry_date=pharm_data.expiry_date,
+            insurance_type=pharm_data.insurance_type or "primary",
+            benefits_verified=pharm_data.benefits_verified or False,
+            pharmacy_name=pharm_data.pharmacy_name,
+            pharmacy_phone=pharm_data.pharmacy_phone,
+            pharmacy_address=pharm_data.pharmacy_address,
+            is_preferred=pharm_data.is_preferred
+        ))
 
-            pharmacy_ins = models.PatientPharmacyInsurance(
-                patient_id=patient.id,
-                pharmacy_insurance_id=pharm_data.pharmacy_insurance_id,
-                policy_number=pharm_data.policy_number,
-                effective_date=pharm_data.effective_date,
-                expiry_date=pharm_data.expiry_date,
-                priority=pharm_data.priority,
-                provider_name=master.provider_name,
-                plan_name=master.plan_name,
-                group_number=master.group_number,
-                formulary_type=master.formulary_type,
-                prior_auth_required=master.prior_auth_required,
-                standard_copay=master.standard_copay,
-                deductible_amount=master.deductible_amount
-            )
-            db.add(pharmacy_ins)
-
+    # ----------------------------
     await db.commit()
     await db.refresh(patient)
 
@@ -242,8 +235,13 @@ async def update_patient_by_public_id(
     data = patient_in.dict(exclude_unset=True)
 
     ALLOWED_UPDATE_FIELDS = {
+        # Contact
         "phone",
+        "alternate_phone",
         "email",
+        "preferred_contact",
+
+        # Address
         "address",
         "city",
         "state",
@@ -253,21 +251,38 @@ async def update_patient_by_public_id(
         "preferred_contact",
         "dob",  # Allow updating date of birth
 
+        # Demographics
+        "marital_status",
+        "preferred_language",
+        "race",
+        "ethnicity",
+        "interpreter_required",
+
+        # PCP
+        "pcp_name",
+        "pcp_npi",
+        "pcp_phone",
+
+        # Physical
         "weight",
         "height",
 
+        # Lifestyle
         "smoking_status",
         "alcohol_use",
         "diet",
         "exercise_frequency",
 
+        # Caregiver
         "has_caregiver",
         "caregiver_name",
         "caregiver_relationship",
         "caregiver_phone",
         "caregiver_email",
-    }
 
+        # Profile
+        "photo_url",
+    }
     # Only update allowed fields
     for field in ALLOWED_UPDATE_FIELDS:
         if field in data:
