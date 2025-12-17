@@ -1511,7 +1511,7 @@ async def generate_care_plan_for_encounter(encounter_id: int, user_id: int, db: 
     try:
         print(f"🔄 Starting care plan generation for encounter {encounter_id}")
         
-        # Get the encounter with all related data
+        # Get the encounter with all related data including ICD codes
         result = await db.execute(
             select(Encounter)
             .options(
@@ -1520,7 +1520,9 @@ async def generate_care_plan_for_encounter(encounter_id: int, user_id: int, db: 
                 selectinload(Encounter.doctor),
                 selectinload(Encounter.hospital),
                 selectinload(Encounter.patient),
-                selectinload(Encounter.lab_orders)
+                selectinload(Encounter.lab_orders),
+                selectinload(Encounter.icd_codes).selectinload(EncounterIcdCode.icd_code),
+                selectinload(Encounter.primary_icd_code)
             )
             .where(Encounter.id == encounter_id)
         )
@@ -1560,6 +1562,55 @@ async def generate_care_plan_for_encounter(encounter_id: int, user_id: int, db: 
             patient.age = age
             await db.commit()
             print(f"📊 Patient age calculated and stored in database: {age}")
+            
+        # Extract ICD codes from the encounter
+        icd_codes = []
+        condition_group = "General"  # Default condition group
+        
+        if encounter.icd_codes:
+            print(f"🔍 Found {len(encounter.icd_codes)} ICD codes for encounter {encounter_id}")
+            
+            # Get primary ICD code first
+            primary_icd = next((icd for icd in encounter.icd_codes if icd.is_primary), None)
+            
+            for icd in encounter.icd_codes:
+                if icd.icd_code:
+                    icd_codes.append({
+                        "code": icd.icd_code.code,
+                        "name": icd.icd_code.name,
+                        "description": icd.icd_code.description if hasattr(icd.icd_code, 'description') else None,
+                        "is_primary": icd.is_primary
+                    })
+                    
+                    # If this is the primary ICD code, use it for condition group mapping
+                    if icd.is_primary and icd.icd_code:
+                        print(f"✅ Using primary ICD code for condition group: {icd.icd_code.code} - {icd.icd_code.name}")
+                        
+                        # Look up condition group mapping for this ICD code
+                        icd_mapping_result = await db.execute(
+                            select(models.ICDConditionMap)
+                            .where(
+                                or_(
+                                    models.ICDConditionMap.icd_code == icd.icd_code.code,
+                                    # Also check for pattern matches if is_pattern is True
+                                    and_(
+                                        models.ICDConditionMap.is_pattern == True,
+                                        func.substring(icd.icd_code.code, 1, func.length(models.ICDConditionMap.icd_code)) == models.ICDConditionMap.icd_code
+                                    )
+                                )
+                            )
+                            .options(selectinload(models.ICDConditionMap.condition_group))
+                        )
+                        icd_mapping = icd_mapping_result.scalars().first()
+                        
+                        if icd_mapping and icd_mapping.condition_group:
+                            print(f"✅ Found condition group mapping: {icd_mapping.condition_group.name}")
+                            condition_group = icd_mapping.condition_group.name
+                        else:
+                            # If no mapping found, use the first part of the ICD code as a generic condition group
+                            code_prefix = icd.icd_code.code.split('.')[0]
+                            condition_group = f"ICD-{code_prefix}"
+                            print(f"⚠️ No condition group mapping found, using generic: {condition_group}")
         
         # Prepare input data for care plan generation
         input_data = CarePlanGenerationInput(
@@ -1576,7 +1627,7 @@ async def generate_care_plan_for_encounter(encounter_id: int, user_id: int, db: 
                 encounter_type=encounter.encounter_type or "consultation",
                 reason_for_visit=encounter.reason_for_visit or "General checkup",
                 diagnosis_text=encounter.diagnosis or "",
-                icd_codes=[],  # Would need to extract from diagnosis if available
+                icd_codes=icd_codes,  # Use the extracted ICD codes
                 encounter_date=encounter.encounter_date,
                 follow_up_date=encounter.follow_up_date,
                 clinical_notes=encounter.notes or ""
@@ -1630,7 +1681,7 @@ async def generate_care_plan_for_encounter(encounter_id: int, user_id: int, db: 
                 ] if hasattr(patient, 'allergies') and patient.allergies else []
             ),
             guideline_rules=GuidelineRulesInfo(
-                condition_group=encounter.diagnosis.split()[0] if encounter.diagnosis else "General",
+                condition_group=condition_group,  # Use the condition group determined from ICD codes
                 guideline_source="Standard of Care",
                 rules_version="2025-01",
                 rules_json={

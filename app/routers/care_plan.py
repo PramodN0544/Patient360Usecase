@@ -705,6 +705,9 @@ async def get_patient_care_plans(
     """
     Get all care plans for a patient
     """
+    print(f"🔍 Looking up care plans for patient {patient_id}")
+    print(f"👤 User: {current_user.id}, Role: {current_user.role}")
+    
     # Check if user is authorized to view this patient's care plans
     if current_user.role == "patient":
         # Check if patient_id matches the current user's patient ID
@@ -713,11 +716,22 @@ async def get_patient_care_plans(
         )
         patient = patient_result.scalars().first()
         
-        if not patient or patient.id != patient_id:
+        if not patient:
+            print(f"❌ Patient record not found for user {current_user.id}")
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Patient record not found for current user"
+            )
+            
+        if patient.id != patient_id:
+            print(f"❌ User {current_user.id} attempted to access care plans for patient {patient_id} but is associated with patient {patient.id}")
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="You are not authorized to view this patient's care plans"
             )
+            
+        print(f"✅ Patient {current_user.id} authorized to view their own care plans")
+        
     elif current_user.role == "doctor":
         # Check if doctor has treated this patient
         doctor_result = await db.execute(
@@ -726,8 +740,9 @@ async def get_patient_care_plans(
         doctor = doctor_result.scalars().first()
         
         if not doctor:
+            print(f"❌ Doctor record not found for user {current_user.id}")
             raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
+                status_code=status.HTTP_404_NOT_FOUND,
                 detail="Doctor record not found"
             )
         
@@ -743,23 +758,30 @@ async def get_patient_care_plans(
         encounters = encounter_result.scalars().all()
         
         if not encounters:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="You are not authorized to view this patient's care plans"
-            )
+            print(f"❌ Doctor {doctor.id} has no encounters with patient {patient_id}")
+            # Instead of returning 403, return empty list for better UX
+            print(f"ℹ️ Returning empty care plan list instead of 403 error")
+            return []
+            
+        print(f"✅ Doctor {doctor.id} authorized to view care plans for patient {patient_id}")
+    elif current_user.role != "admin":
+        print(f"❌ User role {current_user.role} not authorized to view care plans")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not authorized to view care plans"
+        )
     
-    # Get all care plans for the patient
-    care_plans_result = await db.execute(
-        select(models.CarePlan).where(models.CarePlan.patient_id == patient_id)
-    )
-    care_plans = care_plans_result.scalars().all()
-    
+    # Get all care plans for the patient with eager loading of tasks
+    print(f"🔍 Querying care plans for patient {patient_id}")
     result = await db.execute(
-    select(models.CarePlan)
-    .where(models.CarePlan.patient_id == patient_id)
-    .options(selectinload(models.CarePlan.tasks))
-)
-    return result.scalars().all()
+        select(models.CarePlan)
+        .where(models.CarePlan.patient_id == patient_id)
+        .options(selectinload(models.CarePlan.tasks))
+    )
+    care_plans = result.scalars().all()
+    
+    print(f"✅ Found {len(care_plans)} care plans for patient {patient_id}")
+    return care_plans
 
 @router.get("/encounter/{encounter_id}", response_model=schemas.CarePlanOut)
 async def get_care_plan_by_encounter(
@@ -857,10 +879,12 @@ async def update_care_plan(
             detail="Only doctors and admins can update care plans"
         )
     
-    # Get the care plan
+    # Get the care plan with eager loading of tasks to avoid lazy loading issues
     print(f"🔍 Looking up care plan with ID {careplan_id}")
     care_plan_result = await db.execute(
-        select(models.CarePlan).where(models.CarePlan.careplan_id == careplan_id)
+        select(models.CarePlan)
+        .options(selectinload(models.CarePlan.tasks))
+        .where(models.CarePlan.careplan_id == careplan_id)
     )
     care_plan = care_plan_result.scalars().first()
     
@@ -944,8 +968,18 @@ async def update_care_plan(
     
     try:
         await db.commit()
+        # Refresh with eager loading to avoid lazy loading issues during serialization
         await db.refresh(care_plan)
         print(f"✅ Successfully committed care plan {careplan_id} updates to database")
+        
+        # Explicitly reload the care plan with all relationships to avoid lazy loading issues
+        result = await db.execute(
+            select(models.CarePlan)
+            .options(selectinload(models.CarePlan.tasks))
+            .where(models.CarePlan.careplan_id == careplan_id)
+        )
+        care_plan = result.scalars().first()
+        
     except Exception as e:
         print(f"❌ Error committing care plan updates: {str(e)}")
         await db.rollback()
