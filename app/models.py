@@ -329,7 +329,9 @@ class Encounter(Base, TimestampMixin):
     follow_up_date = Column(Date)
     status = Column(String(20), default="pending")
     is_lab_test_required = Column(Boolean, default=False)
-    documents = Column(ARRAY(String), nullable=True)  # <-- Add this
+    documents = Column(ARRAY(String), nullable=True)
+    primary_icd_code_value = Column(String(20), nullable=True)
+
     patient = relationship("Patient", back_populates="encounters")
     doctor = relationship("Doctor", back_populates="encounters")
     hospital = relationship("Hospital", back_populates="encounters")
