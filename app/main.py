@@ -4,6 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi.staticfiles import StaticFiles
 from app import schemas, crud, utils
 from app.cors import apply_cors, get_frontend_origins
+from app.scheduled_tasks import start_scheduler
 from app.database import get_db, engine, Base
 from app.auth import get_current_user
 from app.routers import appointment, searchPatientInHospital
@@ -98,10 +99,15 @@ async def startup():
         print(f"⚠️ Schema sync warning (non-critical): {e}")
         # Continue even if sync fails
     
-    # 3. Start scheduler
+    # 3. Start schedulers
     print("⏰ Starting reminder scheduler...")
     scheduler.start()
     print("✅ Reminder scheduler started")
+    
+    # 4. Start patient age update scheduler
+    print("⏰ Starting patient age update scheduler...")
+    patient_age_scheduler = start_scheduler()
+    print("✅ Patient age update scheduler started")
     
     print("🎉 CareIQ Patient 360 API is ready!")
 
@@ -389,12 +395,30 @@ async def read_users_me(current_user=Depends(get_current_user)):
 
 @app.get("/health")
 async def health():
+    """Health check endpoint"""
     return {"status": "ok"}
 
 @app.get("/config")
 async def get_config():
     origins = get_frontend_origins()
     return {"cors_origins": origins}
+
+@app.post("/admin/update-patient-ages")
+async def update_patient_ages(current_user=Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    """
+    Admin endpoint to manually trigger the patient age update process.
+    This is useful for testing or for immediate updates when needed.
+    """
+    if current_user.role not in ["admin", "hospital"]:
+        raise HTTPException(status_code=403, detail="Only admins and hospital users can perform this action")
+    
+    from app.utils import update_patient_ages
+    updated_count = await update_patient_ages(db)
+    
+    return {
+        "message": "Patient ages updated successfully",
+        "updated_count": updated_count
+    }
 
 @app.get("/")
 def root():

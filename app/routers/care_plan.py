@@ -1,9 +1,9 @@
 from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
-from sqlalchemy import and_, or_
+from sqlalchemy import and_, or_, func
 from typing import List, Optional, Dict, Any
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 import json
 import httpx
 import os
@@ -164,7 +164,7 @@ async def generate_care_plan_with_llm(input_data: Dict[str, Any]) -> Dict[str, A
     print(f"📡 Sending request to LLM API: {LLM_API_URL}")
     
     try:
-        async with httpx.AsyncClient(timeout=60) as client:
+        async with httpx.AsyncClient(timeout=120) as client:  # Increased timeout to 2 minutes for LLM API call
             print(f"🔄 Making API request...")
             response = await client.post(LLM_API_URL, json=payload, headers=headers)
             print(f"📊 API Response Status: {response.status_code}")
@@ -254,13 +254,18 @@ def create_fallback_care_plan(input_data: Dict[str, Any], error_reason: str) -> 
     diagnosis = encounter_data.get("diagnosis_text", "General checkup")
     condition_group = input_data.get("guideline_rules", {}).get("condition_group", "General")
     
+    # Extract ICD codes if available
+    icd_codes = []
+    if "current_encounter" in input_data and "icd_codes" in input_data["current_encounter"]:
+        icd_codes = input_data["current_encounter"]["icd_codes"]
+    
     # Create a basic care plan
     return {
         "careplan_id": f"fallback_{encounter_id}",
         "status": "proposed",
         "generated_at": datetime.utcnow().isoformat(),
         "condition_group": condition_group,
-        "icd_codes": [],
+        "icd_codes": icd_codes,
         "tasks": [
             {
                 "task_id": "task_001",
@@ -383,10 +388,63 @@ async def generate_care_plan(
     
     print(f"✅ Found encounter {encounter_id} for patient {encounter.patient_id}")
     
-    # Get or create condition group based on diagnosis
-    condition_name = input_data.guideline_rules.condition_group if input_data.guideline_rules else "General"
-    print(f"🔍 Looking up condition group: {condition_name}")
+    # Get ICD codes from the encounter
+    print(f"🔍 Looking up ICD codes for encounter {encounter_id}")
+    encounter_icd_result = await db.execute(
+        select(models.EncounterIcdCode)
+        .where(models.EncounterIcdCode.encounter_id == encounter_id)
+        .options(selectinload(models.EncounterIcdCode.icd_code))
+    )
+    encounter_icd_codes = encounter_icd_result.scalars().all()
     
+    # Default condition group name
+    condition_name = "General"
+    
+    if not encounter_icd_codes:
+        print(f"⚠️ No ICD codes found for encounter {encounter_id}, using default condition group")
+    else:
+        # Get primary ICD code first
+        primary_icd = next((icd for icd in encounter_icd_codes if icd.is_primary), None)
+        
+        if primary_icd and primary_icd.icd_code:
+            print(f"✅ Found primary ICD code: {primary_icd.icd_code.code} - {primary_icd.icd_code.name}")
+            icd_code = primary_icd.icd_code.code
+        else:
+            # Use first ICD code if no primary is marked
+            print(f"⚠️ No primary ICD code found, using first available")
+            icd_code = encounter_icd_codes[0].icd_code.code if encounter_icd_codes[0].icd_code else None
+        
+        if icd_code:
+            # Look up condition group mapping for this ICD code
+            print(f"🔍 Looking up condition group mapping for ICD code: {icd_code}")
+            icd_mapping_result = await db.execute(
+                select(models.ICDConditionMap)
+                .where(
+                    or_(
+                        models.ICDConditionMap.icd_code == icd_code,
+                        # Also check for pattern matches if is_pattern is True
+                        and_(
+                            models.ICDConditionMap.is_pattern == True,
+                            func.substring(icd_code, 1, func.length(models.ICDConditionMap.icd_code)) == models.ICDConditionMap.icd_code
+                        )
+                    )
+                )
+                .options(selectinload(models.ICDConditionMap.condition_group))
+            )
+            icd_mapping = icd_mapping_result.scalars().first()
+            
+            if icd_mapping and icd_mapping.condition_group:
+                print(f"✅ Found condition group mapping: {icd_mapping.condition_group.name}")
+                condition_name = icd_mapping.condition_group.name
+            else:
+                print(f"⚠️ No condition group mapping found for ICD code {icd_code}, using default")
+    
+    # If guideline rules were provided in input, use that condition group as override
+    if input_data.guideline_rules and input_data.guideline_rules.condition_group:
+        print(f"ℹ️ Overriding condition group with provided value: {input_data.guideline_rules.condition_group}")
+        condition_name = input_data.guideline_rules.condition_group
+    
+    print(f"🔍 Looking up condition group: {condition_name}")
     condition_group_result = await db.execute(
         select(models.ConditionGroup).where(models.ConditionGroup.name == condition_name)
     )
@@ -409,7 +467,41 @@ async def generate_care_plan(
     try:
         # Generate care plan using LLM
         print(f"🧠 Generating care plan using LLM for encounter {encounter_id}")
-        care_plan_data = await generate_care_plan_with_llm(input_data.dict())
+        
+        # Prepare input data with ICD codes from the encounter
+        input_data_dict = input_data.dict()
+        
+        # Get ICD codes from the encounter if not already provided
+        if not input_data_dict.get("current_encounter", {}).get("icd_codes"):
+            print(f"🔍 Fetching ICD codes for LLM input")
+            icd_codes = []
+            
+            for icd in encounter_icd_codes:
+                if icd.icd_code:
+                    icd_codes.append({
+                        "code": icd.icd_code.code,
+                        "name": icd.icd_code.name,
+                        "description": icd.icd_code.description if hasattr(icd.icd_code, 'description') else None,
+                        "is_primary": icd.is_primary
+                    })
+            
+            # Add ICD codes to input data
+            if "current_encounter" not in input_data_dict:
+                input_data_dict["current_encounter"] = {}
+            
+            input_data_dict["current_encounter"]["icd_codes"] = icd_codes
+            print(f"✅ Added {len(icd_codes)} ICD codes to LLM input")
+        
+        # Add condition group to input data
+        if "guideline_rules" not in input_data_dict:
+            input_data_dict["guideline_rules"] = {}
+        
+        input_data_dict["guideline_rules"]["condition_group"] = condition_name
+        
+        # Log the enhanced input data
+        print(f"📊 Enhanced input data with ICD codes and condition group")
+        
+        care_plan_data = await generate_care_plan_with_llm(input_data_dict)
         print(f"✅ LLM generated care plan data successfully")
         
         # Create care plan in database
@@ -559,6 +651,51 @@ async def get_care_plan(
 )
     return result.scalars().first()
 
+@router.get("/patient/current", response_model=List[schemas.CarePlanOut])
+async def get_current_patient_care_plans(
+    current_user = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Get all care plans for the currently logged-in patient
+    """
+    print(f"🔍 Getting care plans for current patient user: {current_user.id}")
+    
+    if current_user.role != "patient":
+        print(f"❌ User role {current_user.role} not authorized to access current patient endpoint")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only patients can access this endpoint"
+        )
+    
+    # Get the patient record for the current user
+    print(f"🔍 Looking up patient record for user {current_user.id}")
+    patient_result = await db.execute(
+        select(models.Patient).where(models.Patient.user_id == current_user.id)
+    )
+    patient = patient_result.scalars().first()
+    
+    if not patient:
+        print(f"❌ Patient record not found for user {current_user.id}")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Patient record not found for current user"
+        )
+    
+    print(f"✅ Found patient record with ID {patient.id}")
+    
+    # Get all care plans for the patient
+    print(f"🔍 Retrieving care plans for patient {patient.id}")
+    result = await db.execute(
+        select(models.CarePlan)
+        .where(models.CarePlan.patient_id == patient.id)
+        .options(selectinload(models.CarePlan.tasks))
+    )
+    care_plans = result.scalars().all()
+    print(f"✅ Found {len(care_plans)} care plans for patient {patient.id}")
+    
+    return care_plans
+
 @router.get("/patient/{patient_id}", response_model=List[schemas.CarePlanOut])
 async def get_patient_care_plans(
     patient_id: int,
@@ -624,6 +761,78 @@ async def get_patient_care_plans(
 )
     return result.scalars().all()
 
+@router.get("/encounter/{encounter_id}", response_model=schemas.CarePlanOut)
+async def get_care_plan_by_encounter(
+    encounter_id: int,
+    current_user = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Get the most recent care plan for an encounter
+    """
+    print(f"🔍 Looking up care plan for encounter {encounter_id}")
+    
+    # Get the encounter to check permissions
+    encounter_result = await db.execute(
+        select(models.Encounter).where(models.Encounter.id == encounter_id)
+    )
+    encounter = encounter_result.scalars().first()
+    
+    if not encounter:
+        print(f"❌ Encounter {encounter_id} not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Encounter with ID {encounter_id} not found"
+        )
+    
+    # Check if user is authorized to view this encounter's care plan
+    if current_user.role == "patient":
+        # Check if encounter belongs to this patient
+        patient_result = await db.execute(
+            select(models.Patient).where(models.Patient.user_id == current_user.id)
+        )
+        patient = patient_result.scalars().first()
+        
+        if not patient or patient.id != encounter.patient_id:
+            print(f"❌ Patient {current_user.id} not authorized to view encounter {encounter_id}")
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You are not authorized to view this encounter's care plan"
+            )
+    elif current_user.role == "doctor":
+        # Check if encounter is for a patient of this doctor
+        doctor_result = await db.execute(
+            select(models.Doctor).where(models.Doctor.user_id == current_user.id)
+        )
+        doctor = doctor_result.scalars().first()
+        
+        if not doctor or doctor.id != encounter.doctor_id:
+            print(f"❌ Doctor {current_user.id} not authorized to view encounter {encounter_id}")
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You are not authorized to view this encounter's care plan"
+            )
+    
+    # Get the care plan for this encounter
+    print(f"🔍 Querying care plan for encounter {encounter_id}")
+    care_plan_result = await db.execute(
+        select(models.CarePlan)
+        .where(models.CarePlan.encounter_id == encounter_id)
+        .options(selectinload(models.CarePlan.tasks))
+        .order_by(models.CarePlan.created_at.desc())
+    )
+    care_plan = care_plan_result.scalars().first()
+    
+    if not care_plan:
+        print(f"❌ No care plan found for encounter {encounter_id}")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"No care plan found for encounter {encounter_id}"
+        )
+    
+    print(f"✅ Found care plan {care_plan.careplan_id} for encounter {encounter_id}")
+    return care_plan
+
 @router.put("/{careplan_id}", response_model=schemas.CarePlanOut)
 async def update_care_plan(
     careplan_id: int,
@@ -635,59 +844,94 @@ async def update_care_plan(
     """
     Update a care plan
     """
+    # Debug information
+    print(f"🔄 Received request to update care plan {careplan_id}")
+    print(f"👤 User: {current_user.id}, Role: {current_user.role}")
+    print(f"📝 Update data: {care_plan_update.dict()}")
+    
     # Check if user is authorized (doctor or admin)
     if current_user.role not in ["doctor", "admin"]:
+        print(f"❌ User role {current_user.role} not authorized to update care plans")
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Only doctors and admins can update care plans"
         )
     
     # Get the care plan
+    print(f"🔍 Looking up care plan with ID {careplan_id}")
     care_plan_result = await db.execute(
         select(models.CarePlan).where(models.CarePlan.careplan_id == careplan_id)
     )
     care_plan = care_plan_result.scalars().first()
     
     if not care_plan:
+        print(f"❌ Care plan with ID {careplan_id} not found")
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Care plan with ID {careplan_id} not found"
         )
     
+    print(f"✅ Found care plan {careplan_id} for patient {care_plan.patient_id}")
     # Check if doctor is authorized to update this care plan
     if current_user.role == "doctor":
+        print(f"🔍 Verifying doctor authorization for care plan {careplan_id}")
         # Check if care plan is for a patient of this doctor
         encounter_result = await db.execute(
             select(models.Encounter).where(models.Encounter.id == care_plan.encounter_id)
         )
         encounter = encounter_result.scalars().first()
         
+        if not encounter:
+            print(f"❌ Encounter {care_plan.encounter_id} not found for care plan {careplan_id}")
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Encounter not found for care plan"
+            )
+        
         doctor_result = await db.execute(
             select(models.Doctor).where(models.Doctor.user_id == current_user.id)
         )
         doctor = doctor_result.scalars().first()
         
-        if not doctor or not encounter or encounter.doctor_id != doctor.id:
+        if not doctor:
+            print(f"❌ Doctor record not found for user {current_user.id}")
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Doctor record not found"
+            )
+        
+        if doctor.id != encounter.doctor_id:
+            print(f"❌ Doctor {doctor.id} not authorized to update care plan for encounter {encounter.id}")
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="You are not authorized to update this care plan"
             )
-    
+        
+        print(f"✅ Doctor {doctor.id} is authorized to update care plan {careplan_id}")
     # Update care plan fields
+    print(f"🔄 Updating care plan {careplan_id} fields")
+    updated_fields = []
+    
     if care_plan_update.status is not None:
         care_plan.status = care_plan_update.status
+        updated_fields.append("status")
     
     if care_plan_update.patient_friendly_summary is not None:
         care_plan.patient_friendly_summary = care_plan_update.patient_friendly_summary
+        updated_fields.append("patient_friendly_summary")
     
     if care_plan_update.clinician_summary is not None:
         care_plan.clinician_summary = care_plan_update.clinician_summary
+        updated_fields.append("clinician_summary")
     
     if care_plan_update.plan_metadata is not None:
         care_plan.plan_metadata = care_plan_update.plan_metadata
+        updated_fields.append("plan_metadata")
     
     # Update the updated_at timestamp
     care_plan.updated_at = datetime.utcnow()
+    
+    print(f"✅ Updated fields: {', '.join(updated_fields)}")
     
     # Create audit log
     audit = models.CarePlanAudit(
@@ -698,8 +942,17 @@ async def update_care_plan(
     )
     db.add(audit)
     
-    await db.commit()
-    await db.refresh(care_plan)
+    try:
+        await db.commit()
+        await db.refresh(care_plan)
+        print(f"✅ Successfully committed care plan {careplan_id} updates to database")
+    except Exception as e:
+        print(f"❌ Error committing care plan updates: {str(e)}")
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to update care plan: {str(e)}"
+        )
     
     # If status changed to "active", send notification to patient
     if care_plan_update.status == "active":

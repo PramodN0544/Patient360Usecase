@@ -186,4 +186,40 @@ async def send_notification(db: AsyncSession, user_id: int, title: str, desc: st
     await db.commit()
 
 
+async def update_patient_ages(db: AsyncSession):
+    """
+    Update the age field for all patients in the database based on their date of birth.
+    This function should be called periodically (e.g., daily) to ensure that the age field is up-to-date.
+    """
+    from sqlalchemy import select, update
+    from app.models import Patient
+    from datetime import datetime
+    
+    print("🔄 Starting patient age update process")
+    
+    # Get all patients
+    result = await db.execute(select(Patient))
+    patients = result.scalars().all()
+    
+    update_count = 0
+    for patient in patients:
+        if patient.dob:
+            # Calculate age
+            today = datetime.now().date()
+            age = today.year - patient.dob.year
+            if today.month < patient.dob.month or (today.month == patient.dob.month and today.day < patient.dob.day):
+                age -= 1
+            
+            # Update age if it has changed
+            if patient.age != age:
+                patient.age = age
+                update_count += 1
+    
+    if update_count > 0:
+        await db.commit()
+        print(f"✅ Updated ages for {update_count} patients")
+    else:
+        print("ℹ️ No patient ages needed updating")
+    
+    return update_count
 

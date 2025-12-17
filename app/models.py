@@ -135,6 +135,7 @@ class Patient(Base, TimestampMixin):
     first_name = Column(String(100))
     last_name = Column(String(100))
     dob = Column(Date)
+    age = Column(Integer, nullable=True)  # Added age field to store calculated age
     gender = Column(String(20), index=True)
     ssn = Column(String(100), unique=True, index=True)
     phone = Column(String(20), unique=True, index=True)

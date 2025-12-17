@@ -10,7 +10,7 @@ from sqlalchemy import or_
 from app.models import IcdCodeMaster, EncounterIcdCode  # Add these models
 from app.models import EncounterHistory
 from typing import List
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas
 from reportlab.lib.styles import getSampleStyleSheet,ParagraphStyle
@@ -23,7 +23,7 @@ import json
 import re
 import httpx
 from app.database import get_db
-from app.models import Encounter, Doctor, Patient, Vitals, Medication, Assignment, LabOrder
+from app.models import Encounter, Doctor, Patient, Vitals, Medication, Assignment, LabOrder, User
 from app.schemas import EncounterCreate, EncounterOut, EncounterUpdate, LabTestDetail, CarePlanGenerationInput, PatientProfile, CurrentEncounter, CurrentVitals, MedicationInfo, LabInfo, MedicalHistory, ConditionInfo, MedicationHistoryInfo, AllergyInfo, GuidelineRulesInfo
 from app.auth import get_current_user
 from app.S3connection import generate_presigned_url, upload_encounter_document_to_s3
@@ -1056,7 +1056,7 @@ async def generate_encounter_pdf(
         elements.append(Paragraph("PATIENT ENCOUNTER REPORT", styles['CustomTitle']))
         elements.append(Spacer(1, 12))
         
-        # Calculate age properly
+        # Get or calculate patient age
         def calculate_age(birth_date):
             today = datetime.now().date()
             age = today.year - birth_date.year
@@ -1064,7 +1064,16 @@ async def generate_encounter_pdf(
                 age -= 1
             return age
         
-        patient_age = calculate_age(encounter.patient.dob)
+        # Check if patient has age field in database
+        if encounter.patient.age is not None:
+            patient_age = encounter.patient.age
+            print(f"🖨️ Using stored patient age from database for PDF: {patient_age}")
+        else:
+            patient_age = calculate_age(encounter.patient.dob)
+            # Store the calculated age in the database for future use
+            encounter.patient.age = patient_age
+            await db.commit()
+            print(f"🖨️ Patient age calculated and stored in database for PDF: {patient_age}")
         
         # Patient and Doctor Information
         patient_info = [
@@ -1471,7 +1480,7 @@ async def generate_care_plan_for_encounter(encounter_id: int, user_id: int, db: 
         print(f"✅ Found encounter {encounter_id} with {len(encounter.medications) if encounter.medications else 0} medications and {len(encounter.lab_orders) if encounter.lab_orders else 0} lab orders")
         
         # Get the user
-        user_result = await db.execute(select(models.User).where(models.User.id == user_id))
+        user_result = await db.execute(select(User).where(User.id == user_id))
         user = user_result.scalars().first()
         
         if not user:
@@ -1480,14 +1489,24 @@ async def generate_care_plan_for_encounter(encounter_id: int, user_id: int, db: 
         
         print(f"✅ Found user {user_id} for care plan generation")
         
-        # Calculate patient age
+        # Get or calculate patient age
         patient = encounter.patient
-        today = datetime.now().date()
-        age = today.year - patient.dob.year
-        if today.month < patient.dob.month or (today.month == patient.dob.month and today.day < patient.dob.day):
-            age -= 1
         
-        print(f"📊 Patient age calculated: {age}")
+        # Check if patient has age field in database
+        if patient.age is not None:
+            age = patient.age
+            print(f"📊 Using stored patient age from database: {age}")
+        else:
+            # Calculate age from DOB
+            today = datetime.now().date()
+            age = today.year - patient.dob.year
+            if today.month < patient.dob.month or (today.month == patient.dob.month and today.day < patient.dob.day):
+                age -= 1
+            
+            # Store the calculated age in the database for future use
+            patient.age = age
+            await db.commit()
+            print(f"📊 Patient age calculated and stored in database: {age}")
         
         # Prepare input data for care plan generation
         input_data = CarePlanGenerationInput(
@@ -1573,27 +1592,50 @@ async def generate_care_plan_for_encounter(encounter_id: int, user_id: int, db: 
         print(f"📡 Calling care plan API for encounter {encounter_id}")
         
         # Call the care plan API
-        async with httpx.AsyncClient(timeout=60.0) as client:
+        async with httpx.AsyncClient(timeout=120.0) as client:  # Increased timeout to 2 minutes
             api_url = "http://localhost:8000/api/care-plans/generate"
             print(f"🔗 API URL: {api_url}")
             
-            # Get token from user or use a default token
-            token = getattr(user, 'token', None)
-            if not token:
-                print("⚠️ User token not found, using empty token")
-                token = ""
+            # Use the current user's token from the auth system
+            from app.utils import create_access_token
+            
+            # Create a token for the API call
+            token_data = {
+                "sub": user.email if hasattr(user, 'email') else f"user_{user_id}",
+                "user_id": user_id,
+                "role": user.role if hasattr(user, 'role') else "system",
+                "exp": datetime.utcnow() + timedelta(minutes=30)  # Short-lived token
+            }
+            token = create_access_token(token_data)
             
             headers = {
                 "Authorization": f"Bearer {token}",
                 "Content-Type": "application/json"
             }
             
-            print(f"🔑 Using token: {token[:10]}... (truncated)")
+            print(f"🔑 Using generated token for API call")
             
             try:
+                # Convert the input_data to a dict and handle date serialization
+                input_dict = input_data.dict()
+                
+                # Convert date objects to ISO format strings
+                if 'encounter_date' in input_dict['current_encounter'] and input_dict['current_encounter']['encounter_date']:
+                    input_dict['current_encounter']['encounter_date'] = input_dict['current_encounter']['encounter_date'].isoformat()
+                
+                if 'follow_up_date' in input_dict['current_encounter'] and input_dict['current_encounter']['follow_up_date']:
+                    input_dict['current_encounter']['follow_up_date'] = input_dict['current_encounter']['follow_up_date'].isoformat()
+                
+                # Handle dates in medications
+                for med in input_dict.get('current_medications', []):
+                    if 'start_date' in med and med['start_date']:
+                        med['start_date'] = med['start_date'].isoformat()
+                    if 'stop_date' in med and med['stop_date']:
+                        med['stop_date'] = med['stop_date'].isoformat()
+                
                 response = await client.post(
                     api_url,
-                    json=input_data.dict(),
+                    json=input_dict,
                     headers=headers
                 )
                 
@@ -1678,13 +1720,9 @@ async def trigger_care_plan_generation(
         traceback.print_exc()
         # Continue execution even if care plan generation fails
         # We'll still update the encounter status and return a response
-    
-    # Update encounter status if not already completed
-    if encounter.status != "completed":
-        encounter.status = "completed"
-        await db.commit()
-        await db.refresh(encounter)
-        print(f"✅ Updated encounter {encounter_id} status to completed")
+    # Keep the encounter status as is - we now support care plans for in-progress encounters
+    print(f"ℹ️ Keeping encounter {encounter_id} status as '{encounter.status}'")
+    await db.refresh(encounter)
     
     # Build response
     response = EncounterOut.from_orm(encounter)
