@@ -121,8 +121,24 @@ async def create_patient(db: AsyncSession, data: schemas.PatientCreate):
     )
 
     patient_dict["user_id"] = user.id
-    patient_dict["insurance_status"] = insurance_status
-
+    
+    # Calculate and store patient age if DOB is provided
+    if data.dob:
+        today = datetime.now().date()
+        age = today.year - data.dob.year
+        if today.month < data.dob.month or (today.month == data.dob.month and today.day < data.dob.day):
+            age -= 1
+        patient_dict["age"] = age
+        print(f"📊 Patient age calculated during creation: {age}")
+    
+    # ADD INSURANCE TOGGLE HANDLING HERE
+    if data.is_insured:
+        patient_dict["insurance_status"] = "Insured"     
+    else:
+        patient_dict["insurance_status"] = "Self-Pay"    
+        data.patient_insurances = []                     
+        data.pharmacy_insurances = []                    
+   
     patient = models.Patient(**patient_dict)
     db.add(patient)
     await db.flush()   # 🔑 get patient.id
@@ -230,6 +246,10 @@ async def update_patient_by_public_id(
         "city",
         "state",
         "zip_code",
+        "photo_url",
+        "marital_status",
+        "preferred_contact",
+        "dob",  # Allow updating date of birth
 
         # Demographics
         "marital_status",
@@ -267,6 +287,15 @@ async def update_patient_by_public_id(
     for field in ALLOWED_UPDATE_FIELDS:
         if field in data:
             setattr(patient, field, data[field])
+    
+    # Recalculate age if DOB is updated
+    if "dob" in data and data["dob"]:
+        today = datetime.now().date()
+        age = today.year - data["dob"].year
+        if today.month < data["dob"].month or (today.month == data["dob"].month and today.day < data["dob"].day):
+            age -= 1
+        patient.age = age
+        print(f"📊 Patient age recalculated during update: {age}")
 
     # Sync email with User table
     if "email" in data and patient.user_id:

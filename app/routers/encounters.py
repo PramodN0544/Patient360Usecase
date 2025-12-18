@@ -1,16 +1,17 @@
 import ast
 import aiohttp
-from fastapi import APIRouter, Depends, HTTPException, File, UploadFile, Form
+from fastapi import APIRouter, Depends, HTTPException, File, UploadFile, Form, BackgroundTasks
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, func
 from sqlalchemy.orm import selectinload
 from app.models import EncounterHistory, Hospital
-from sqlalchemy import or_
-from app.models import IcdCodeMaster, EncounterIcdCode  # Add these models
+from sqlalchemy import or_, and_
+from app import models
+# Removed IcdCodeMaster and EncounterIcdCode imports as they no longer exist
 from app.models import EncounterHistory
 from typing import List
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas
 from reportlab.lib.styles import getSampleStyleSheet,ParagraphStyle
@@ -21,9 +22,10 @@ from io import BytesIO
 import os
 import json
 import re
+import httpx
 from app.database import get_db
-from app.models import Encounter, Doctor, Patient, Vitals, Medication, Assignment, LabOrder
-from app.schemas import EncounterCreate, EncounterOut, EncounterUpdate,LabTestDetail
+from app.models import Encounter, Doctor, Patient, Vitals, Medication, Assignment, LabOrder, User
+from app.schemas import EncounterCreate, EncounterOut, EncounterUpdate, LabTestDetail, CarePlanGenerationInput, PatientProfile, CurrentEncounter, CurrentVitals, MedicationInfo, LabInfo, MedicalHistory, ConditionInfo, MedicationHistoryInfo, AllergyInfo, GuidelineRulesInfo
 from app.auth import get_current_user
 from app.S3connection import generate_presigned_url, upload_encounter_document_to_s3
 
@@ -132,40 +134,24 @@ async def create_encounter(
         documents=[]
     )
 
-    if encounter_in.primary_icd_code_id:
+    if encounter_in.primary_icd_code:
+        # Check if the ICD code exists in the ICDConditionMap table
         icd_result = await db.execute(
-            select(IcdCodeMaster).where(
-                IcdCodeMaster.id == encounter_in.primary_icd_code_id,
-                IcdCodeMaster.is_active == True
+            select(models.ICDConditionMap).where(
+                models.ICDConditionMap.icd_code == encounter_in.primary_icd_code
             )
         )
         if not icd_result.scalar_one_or_none():
-            raise HTTPException(400, "Primary ICD code not found or inactive")
-
-        new_encounter.primary_icd_code_id = encounter_in.primary_icd_code_id
+            # If not found, we'll still set it but log a warning
+            print(f"Warning: ICD code {encounter_in.primary_icd_code} not found in ICDConditionMap")
+            
+        new_encounter.primary_icd_code = encounter_in.primary_icd_code
 
     db.add(new_encounter)
     await db.flush()
 
-    if encounter_in.icd_codes:
-        for icd_data in encounter_in.icd_codes:
-
-            icd_result = await db.execute(
-                select(IcdCodeMaster).where(
-                    IcdCodeMaster.id == icd_data.icd_code_id,
-                    IcdCodeMaster.is_active == True
-                )
-            )
-            icd = icd_result.scalar_one_or_none()
-            if not icd:
-                raise HTTPException(400, f"ICD {icd_data.icd_code_id} not found")
-
-            db.add(EncounterIcdCode(
-                encounter_id=new_encounter.id,
-                icd_code_id=icd_data.icd_code_id,
-                is_primary=icd_data.is_primary,
-                notes=icd_data.notes
-            ))
+    # ICD codes are now handled directly through the primary_icd_code field
+    # No need to add to EncounterIcdCode table as it no longer exists
 
     if encounter_in.vitals:
         v = encounter_in.vitals
@@ -248,8 +234,8 @@ async def create_encounter(
             selectinload(Encounter.patient),
             selectinload(Encounter.doctor),
             selectinload(Encounter.hospital),
-            selectinload(Encounter.icd_codes).selectinload(EncounterIcdCode.icd_code),
-            selectinload(Encounter.primary_icd_code),
+            # Note: primary_icd_code is a direct field on Encounter, not a relationship,
+            # so it's automatically loaded without needing selectinload
         )
         .where(Encounter.id == new_encounter.id)
     )
@@ -260,18 +246,27 @@ async def create_encounter(
     out.hospital_name = doctor.hospital.name
     out.patient_public_id = patient.public_id
 
-    out.icd_codes = [
-        {
-            "id": ec.id,
-            "icd_code_id": ec.icd_code_id,
-            "code": ec.icd_code.code,
-            "name": ec.icd_code.name,
-            "is_primary": ec.is_primary,
-            "notes": ec.notes,
-            "created_at": ec.created_at
-        }
-        for ec in enc.icd_codes
-    ]
+    # Instead of loading from relationship, we'll just set the primary ICD code directly
+    if enc.primary_icd_code:
+        # Try to find the description from ICDConditionMap
+        icd_map_result = await db.execute(
+            select(models.ICDConditionMap).where(
+                models.ICDConditionMap.icd_code == enc.primary_icd_code
+            )
+        )
+        icd_map = icd_map_result.scalar_one_or_none()
+        
+        out.icd_codes = [{
+            "id": 0,  # Placeholder ID
+            "icd_code": enc.primary_icd_code,
+            "code": enc.primary_icd_code,
+            "name": icd_map.description if icd_map else "Unknown",
+            "is_primary": True,
+            "notes": None,
+            "created_at": enc.created_at
+        }]
+    else:
+        out.icd_codes = []
 
     return out
 
@@ -347,28 +342,30 @@ async def update_encounter(
 
     if encounter.status == "completed":
         raise HTTPException(400, "Completed encounters cannot be modified")
-
     # -------------------------------------------------
-    # 6. PRIMARY ICD CODE (ID + CODE)
+    # 6. PRIMARY ICD CODE
     # -------------------------------------------------
-    if encounter_update.primary_icd_code_id is not None:
+    if encounter_update.primary_icd_code is not None:
+        # Check if the ICD code exists in the ICDConditionMap table
         icd_result = await db.execute(
-            select(IcdCodeMaster).where(
-                IcdCodeMaster.id == encounter_update.primary_icd_code_id
+            select(models.ICDConditionMap).where(
+                models.ICDConditionMap.icd_code == encounter_update.primary_icd_code
             )
         )
         icd = icd_result.scalar_one_or_none()
 
+        # If not found, we'll still set it but log a warning
         if not icd:
-            raise HTTPException(400, "Invalid primary_icd_code_id")
-
-        encounter.primary_icd_code_id = icd.id
-        encounter.primary_icd_code_value = icd.code
+            print(f"Warning: ICD code {encounter_update.primary_icd_code} not found in ICDConditionMap")
+            
+        # Update the primary_icd_code field
+        print(f"Updating primary_icd_code from '{encounter.primary_icd_code}' to '{encounter_update.primary_icd_code}'")
+        encounter.primary_icd_code = encounter_update.primary_icd_code
     else:
-        encounter.primary_icd_code_id = None
-        encounter.primary_icd_code_value = None
+        print(f"Clearing primary_icd_code (was '{encounter.primary_icd_code}')")
+        encounter.primary_icd_code = None
 
-    scalar_exclude = {"vitals", "medications", "lab_orders", "primary_icd_code_id"}
+    scalar_exclude = {"vitals", "medications", "lab_orders", "primary_icd_code"}
 
     for field, value in encounter_update.dict(exclude_none=True).items():
         if field in scalar_exclude:
@@ -514,12 +511,8 @@ async def get_patient_encounters(
                     Assignment.doctor_id == doctor.id
                 )
             )
-
-            assignment_record = assign.scalars().first() 
-
-            if not assignment_record:
-                raise HTTPException(403, "Not authorized to view this patient’s encounters")
-
+            if not assign.scalars().first():
+                raise HTTPException(403, "Not authorized to view this patient's encounters")
     elif current_user.role == "patient":
         if patient.user_id != current_user.id:
             raise HTTPException(403, "You can only view your own encounters")
@@ -616,8 +609,7 @@ async def get_doctor_patient_encounters(
             Assignment.doctor_id == doctor.id
         )
     )
-    assignment_record = assign.scalars().first()
-    if not assignment_record:
+    if not assign.scalars().first():
         raise HTTPException(403, "Doctor is not assigned to this patient")
     
     stmt = (
@@ -784,10 +776,14 @@ async def get_encounter(
             selectinload(Encounter.hospital),
             selectinload(Encounter.vitals),
             selectinload(Encounter.medications),
+            selectinload(Encounter.patient),
+            selectinload(Encounter.hospital),
+            selectinload(Encounter.doctor),
+            selectinload(Encounter.lab_orders),  # 👈 Added lab orders
             selectinload(Encounter.lab_orders),
-            selectinload(Encounter.previous_encounter),
-            selectinload(Encounter.icd_codes).selectinload(EncounterIcdCode.icd_code),
-            selectinload(Encounter.primary_icd_code) 
+            selectinload(Encounter.previous_encounter)
+            # Note: primary_icd_code is a direct field on Encounter, not a relationship,
+            # so it's automatically loaded without needing selectinload
         )
     )
 
@@ -838,22 +834,11 @@ async def get_encounter(
         "follow_up_date": encounter.follow_up_date,
         "status": encounter.status,
         "is_lab_test_required": encounter.is_lab_test_required,
-         "icd_codes": [
-            {
-                "id": ec.id,
-                "code": ec.icd_code.code,
-                "name": ec.icd_code.name,
-                "is_primary": ec.is_primary,
-                "notes": ec.notes,
-                "created_at": ec.created_at
-            }
-            for ec in encounter.icd_codes
-        ],
-        "primary_icd_code": {
-            "id": encounter.primary_icd_code.id,
-            "code": encounter.primary_icd_code.code,
-            "name": encounter.primary_icd_code.name
-        } if encounter.primary_icd_code else None,
+         "icd_codes": [],  # No longer using icd_codes relationship
+         "primary_icd_code": None,  # Initialize as None
+         
+         # If there's a primary ICD code, try to get its description from ICDConditionMap
+         # This will be populated below
 
         "doctor_name": f"{encounter.doctor.first_name} {encounter.doctor.last_name}" if encounter.doctor else None,
         "hospital_name": encounter.hospital.name if encounter.hospital else None,
@@ -904,6 +889,20 @@ async def get_encounter(
             "status": encounter.previous_encounter.status
         } if encounter.previous_encounter else None
     }
+    
+    # If there's a primary ICD code, get its description from ICDConditionMap
+    if encounter.primary_icd_code:
+        icd_map_result = await db.execute(
+            select(models.ICDConditionMap).where(
+                models.ICDConditionMap.icd_code == encounter.primary_icd_code
+            )
+        )
+        icd_map = icd_map_result.scalar_one_or_none()
+        
+        response["primary_icd_code"] = {
+            "code": encounter.primary_icd_code,
+            "name": icd_map.description if icd_map else "Unknown"
+        }
 
     return response
 
@@ -927,8 +926,10 @@ async def generate_encounter_pdf(
                 selectinload(Encounter.medications),
                 selectinload(Encounter.lab_orders),  # ADD THIS for lab tests
                 selectinload(Encounter.doctor),
-                selectinload(Encounter.hospital),  
+                selectinload(Encounter.hospital),
                 selectinload(Encounter.patient)
+                # Note: primary_icd_code is a direct field on Encounter, not a relationship,
+                # so it's automatically loaded without needing selectinload
             )
             .where(Encounter.id == encounter_id)
         )
@@ -1056,7 +1057,7 @@ async def generate_encounter_pdf(
         elements.append(Paragraph("PATIENT ENCOUNTER REPORT", styles['CustomTitle']))
         elements.append(Spacer(1, 8))  # Reduced space
         
-        # Calculate age
+        # Get or calculate patient age
         def calculate_age(birth_date):
             today = datetime.now().date()
             age = today.year - birth_date.year
@@ -1064,7 +1065,16 @@ async def generate_encounter_pdf(
                 age -= 1
             return age
         
-        patient_age = calculate_age(encounter.patient.dob)
+        # Check if patient has age field in database
+        if encounter.patient.age is not None:
+            patient_age = encounter.patient.age
+            print(f"🖨️ Using stored patient age from database for PDF: {patient_age}")
+        else:
+            patient_age = calculate_age(encounter.patient.dob)
+            # Store the calculated age in the database for future use
+            encounter.patient.age = patient_age
+            await db.commit()
+            print(f"🖨️ Patient age calculated and stored in database for PDF: {patient_age}")
         
         # Patient and Doctor Information - Fixed to fit within page
         patient_info = [
@@ -1503,6 +1513,451 @@ async def download_encounter_document(
         headers={"Content-Disposition": f'attachment; filename="{filename}"'}
     )
 
+# Function to get condition-specific guidelines from the database
+async def get_condition_specific_guidelines(
+    db: AsyncSession,
+    condition_group: str,
+    encounter: Encounter
+) -> GuidelineRulesInfo:
+    """
+    Get condition-specific guidelines for a given condition group
+    """
+    print(f"🔍 Looking up guidelines for condition group: {condition_group}")
+    
+    # Try to find guidelines for this condition group
+    guideline_map_result = await db.execute(
+        select(models.ConditionGuidelineMap)
+        .join(models.ConditionGroup)
+        .where(models.ConditionGroup.name == condition_group)
+        .options(
+            selectinload(models.ConditionGuidelineMap.guideline),
+            selectinload(models.ConditionGuidelineMap.condition_group)
+        )
+    )
+    guideline_map = guideline_map_result.scalars().first()
+    
+    if guideline_map and guideline_map.guideline:
+        print(f"✅ Found guideline mapping for condition group: {condition_group}")
+        guideline = guideline_map.guideline
+        
+        # Get the latest rules for this guideline
+        rules_result = await db.execute(
+            select(models.GuidelineRules)
+            .where(models.GuidelineRules.guideline_id == guideline.guideline_id)
+            .order_by(models.GuidelineRules.created_at.desc())
+        )
+        rules = rules_result.scalars().first()
+        
+        if rules and rules.rules_json:
+            print(f"✅ Found specific rules for guideline: {guideline.name}")
+            
+            # Use the rules from the database, but add encounter-specific information
+            rules_json = rules.rules_json
+            
+            # Add encounter-specific information to the rules
+            rules_json["follow_up_required"] = encounter.follow_up_date is not None
+            rules_json["lab_tests_required"] = encounter.is_lab_test_required
+            
+            return GuidelineRulesInfo(
+                condition_group=condition_group,
+                guideline_source=guideline.name,
+                rules_version=rules.version or "latest",
+                rules_json=rules_json
+            )
+    
+    # If no specific guidelines found, use generic guidelines based on condition group
+    print(f"⚠️ No specific guidelines found for condition group: {condition_group}, using generic guidelines")
+    
+    # Create generic guidelines based on condition group
+    generic_rules = {
+        "standard_of_care": True,
+        "follow_up_required": encounter.follow_up_date is not None,
+        "lab_tests_required": encounter.is_lab_test_required,
+        "condition_group": condition_group
+    }
+    
+    # Add condition-specific rules based on condition group name
+    if "diabetes" in condition_group.lower():
+        print(f"🔍 Adding diabetes-specific guidelines for condition group: {condition_group}")
+        generic_rules.update({
+            "diabetes_guidelines": True,
+            "monitoring_frequency": "3_months",
+            "hba1c_target": "less_than_7_percent",
+            "blood_glucose_monitoring": "daily",
+            "insulin_adjustment": "as_needed",
+            "dietary_recommendations": True,
+            "hypoglycemia_management": True
+        })
+    elif "hypertension" in condition_group.lower():
+        print(f"🔍 Adding hypertension-specific guidelines for condition group: {condition_group}")
+        generic_rules.update({
+            "hypertension_guidelines": True,
+            "blood_pressure_target": "less_than_130_80",
+            "sodium_restriction": True,
+            "weight_management": True,
+            "physical_activity": "moderate_30_min_daily",
+            "medication_adherence": True
+        })
+    elif "asthma" in condition_group.lower():
+        print(f"🔍 Adding asthma-specific guidelines for condition group: {condition_group}")
+        generic_rules.update({
+            "asthma_guidelines": True,
+            "inhaler_technique": "check_regularly",
+            "trigger_avoidance": True,
+            "peak_flow_monitoring": "daily",
+            "action_plan": "provide_written_plan",
+            "controller_medication": "daily_use"
+        })
+    
+    return GuidelineRulesInfo(
+        condition_group=condition_group,
+        guideline_source="Standard of Care",
+        rules_version="2025-01",
+        rules_json=generic_rules
+    )
+
+# Function to generate care plan for an encounter
+async def generate_care_plan_for_encounter(encounter_id: int, user_id: int, db: AsyncSession):
+    """
+    Generate a care plan for a completed encounter
+    """
+    try:
+        print(f"🔄 Starting care plan generation for encounter {encounter_id}")
+        
+        # Get the encounter with all related data
+        result = await db.execute(
+            select(Encounter)
+            .options(
+                selectinload(Encounter.vitals),
+                selectinload(Encounter.medications),
+                selectinload(Encounter.doctor),
+                selectinload(Encounter.hospital),
+                selectinload(Encounter.patient),
+                selectinload(Encounter.lab_orders)
+                # Note: primary_icd_code is a direct field on Encounter, not a relationship,
+                # so it's automatically loaded without needing selectinload
+            )
+            .where(Encounter.id == encounter_id)
+        )
+        encounter = result.unique().scalar_one_or_none()
+        
+        if not encounter:
+            print(f"❌ Encounter {encounter_id} not found for care plan generation")
+            return
+        
+        print(f"✅ Found encounter {encounter_id} with {len(encounter.medications) if encounter.medications else 0} medications and {len(encounter.lab_orders) if encounter.lab_orders else 0} lab orders")
+        
+        # Get the user
+        user_result = await db.execute(select(User).where(User.id == user_id))
+        user = user_result.scalars().first()
+        
+        if not user:
+            print(f"❌ User {user_id} not found for care plan generation")
+            return
+        
+        print(f"✅ Found user {user_id} for care plan generation")
+        
+        # Get or calculate patient age
+        patient = encounter.patient
+        
+        # Check if patient has age field in database
+        if patient.age is not None:
+            age = patient.age
+            print(f"📊 Using stored patient age from database: {age}")
+        else:
+            # Calculate age from DOB
+            today = datetime.now().date()
+            age = today.year - patient.dob.year
+            if today.month < patient.dob.month or (today.month == patient.dob.month and today.day < patient.dob.day):
+                age -= 1
+            
+            # Store the calculated age in the database for future use
+            patient.age = age
+            await db.commit()
+            print(f"📊 Patient age calculated and stored in database: {age}")
+            
+        # Extract ICD code from the encounter
+        icd_codes = []
+        condition_group = "General"  # Default condition group
+        
+        if encounter.primary_icd_code:
+            print(f"🔍 Found primary ICD code for encounter {encounter_id}: {encounter.primary_icd_code}")
+            
+            # Look up condition group mapping for this ICD code
+            icd_mapping_result = await db.execute(
+                select(models.ICDConditionMap)
+                .where(
+                    or_(
+                        models.ICDConditionMap.icd_code == encounter.primary_icd_code,
+                        # Also check for pattern matches if is_pattern is True
+                        and_(
+                            models.ICDConditionMap.is_pattern == True,
+                            func.substring(encounter.primary_icd_code, 1, func.length(models.ICDConditionMap.icd_code)) == models.ICDConditionMap.icd_code
+                        )
+                    )
+                )
+                .options(selectinload(models.ICDConditionMap.condition_group))
+            )
+            icd_mapping = icd_mapping_result.scalars().first()
+            
+            if icd_mapping and icd_mapping.condition_group:
+                print(f"✅ Found condition group mapping: {icd_mapping.condition_group.name}")
+                condition_group = icd_mapping.condition_group.name
+                
+                # Add the ICD code to the list
+                icd_codes.append({
+                    "code": encounter.primary_icd_code,
+                    "name": icd_mapping.description or "Unknown",
+                    "description": icd_mapping.description,
+                    "is_primary": True
+                })
+            else:
+                # If no mapping found, use the first part of the ICD code as a generic condition group
+                code_prefix = encounter.primary_icd_code.split('.')[0] if '.' in encounter.primary_icd_code else encounter.primary_icd_code
+                condition_group = f"ICD-{code_prefix}"
+                print(f"⚠️ No condition group mapping found, using generic: {condition_group}")
+                
+                # Still add the ICD code to the list
+                icd_codes.append({
+                    "code": encounter.primary_icd_code,
+                    "name": "Unknown",
+                    "description": None,
+                    "is_primary": True
+                })
+        
+        # Prepare input data for care plan generation
+        input_data = CarePlanGenerationInput(
+            context_id=f"ctx_{encounter_id}",
+            patient_profile=PatientProfile(
+                age=age,
+                gender=patient.gender,
+                smoking_status=patient.smoking_status or "unknown",
+                alcohol_use=patient.alcohol_use or "unknown",
+                pregnancy_status=False  # Default value, could be updated based on patient data
+            ),
+            current_encounter=CurrentEncounter(
+                encounter_id=str(encounter.id),
+                encounter_type=encounter.encounter_type or "consultation",
+                reason_for_visit=encounter.reason_for_visit or "General checkup",
+                diagnosis_text=encounter.diagnosis or "",
+                icd_codes=icd_codes,  # Use the extracted ICD codes
+                encounter_date=encounter.encounter_date,
+                follow_up_date=encounter.follow_up_date,
+                clinical_notes=encounter.notes or ""
+            ),
+            current_vitals=CurrentVitals(
+                blood_pressure=encounter.vitals[0].blood_pressure if encounter.vitals else None,
+                heart_rate=encounter.vitals[0].heart_rate if encounter.vitals else None,
+                respiratory_rate=encounter.vitals[0].respiration_rate if encounter.vitals else None,
+                temperature=encounter.vitals[0].temperature if encounter.vitals else None,
+                bmi=encounter.vitals[0].bmi if encounter.vitals else None,
+                oxygen_saturation=encounter.vitals[0].oxygen_saturation if encounter.vitals else None,
+                height_cm=float(encounter.vitals[0].height) if encounter.vitals and encounter.vitals[0].height else None,
+                weight_kg=float(encounter.vitals[0].weight) if encounter.vitals and encounter.vitals[0].weight else None
+            ),
+            current_medications=[
+                MedicationInfo(
+                    medication_name=med.medication_name,
+                    dosage=med.dosage,
+                    frequency=med.frequency,
+                    route=med.route,
+                    start_date=med.start_date,
+                    stop_date=med.end_date
+                )
+                for med in encounter.medications
+            ] if encounter.medications else [],
+            lab_orders=[
+                LabInfo(
+                    lab_test=lab.test_name or lab.test_code,
+                    status=lab.status,
+                    result_value=None,
+                    result_date=None,
+                    lab_report_url=None
+                )
+                for lab in encounter.lab_orders
+            ] if encounter.lab_orders else [],
+            medical_history=MedicalHistory(
+                chronic_conditions=[
+                    ConditionInfo(
+                        condition_name=encounter.diagnosis or "General checkup",
+                        icd_code=None
+                    )
+                ] if encounter.diagnosis else [],
+                medication_history=[],
+                allergies=[
+                    AllergyInfo(
+                        allergen=allergy.name,
+                        reaction=None,
+                        severity=None
+                    )
+                    for allergy in patient.allergies
+                ] if hasattr(patient, 'allergies') and patient.allergies else []
+            ),
+            # Look up specific guidelines for this condition group
+            guideline_rules = await get_condition_specific_guidelines(
+                db=db,
+                condition_group=condition_group,
+                encounter=encounter
+            )
+        )
+        print(f"📋 Prepared input data for care plan generation")
+        print(f"📡 Calling care plan API for encounter {encounter_id}")
+        
+        # Print the guideline rules for debugging
+        print(f"📝 Guideline rules for condition group '{condition_group}':")
+        import json
+        print(json.dumps(input_data.guideline_rules.dict(), indent=2))
+        
+        
+        # Call the care plan API
+        async with httpx.AsyncClient(timeout=120.0) as client:  # Increased timeout to 2 minutes
+            api_url = "http://localhost:8000/api/care-plans/generate"
+            print(f"🔗 API URL: {api_url}")
+            
+            # Use the current user's token from the auth system
+            from app.utils import create_access_token
+            
+            # Create a token for the API call
+            token_data = {
+                "sub": user.email if hasattr(user, 'email') else f"user_{user_id}",
+                "user_id": user_id,
+                "role": user.role if hasattr(user, 'role') else "system",
+                "exp": datetime.utcnow() + timedelta(minutes=30)  # Short-lived token
+            }
+            token = create_access_token(token_data)
+            
+            headers = {
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json"
+            }
+            
+            print(f"🔑 Using generated token for API call")
+            
+            try:
+                # Convert the input_data to a dict and handle date serialization
+                input_dict = input_data.dict()
+                
+                # Convert date objects to ISO format strings
+                if 'encounter_date' in input_dict['current_encounter'] and input_dict['current_encounter']['encounter_date']:
+                    input_dict['current_encounter']['encounter_date'] = input_dict['current_encounter']['encounter_date'].isoformat()
+                
+                if 'follow_up_date' in input_dict['current_encounter'] and input_dict['current_encounter']['follow_up_date']:
+                    input_dict['current_encounter']['follow_up_date'] = input_dict['current_encounter']['follow_up_date'].isoformat()
+                
+                # Print the full input data without truncation
+                print("📊 Full input data for LLM:")
+                import json
+                print(json.dumps(input_dict, indent=2, default=str))
+                
+                # Handle dates in medications
+                for med in input_dict.get('current_medications', []):
+                    if 'start_date' in med and med['start_date']:
+                        med['start_date'] = med['start_date'].isoformat()
+                    if 'stop_date' in med and med['stop_date']:
+                        med['stop_date'] = med['stop_date'].isoformat()
+                
+                response = await client.post(
+                    api_url,
+                    json=input_dict,
+                    headers=headers
+                )
+                
+                print(f"📊 API Response Status: {response.status_code}")
+                
+                # Print the full response without truncation
+                if response.status_code == 200:
+                    print("📄 Full API Response:")
+                    print(response.text)
+                    print(f"✅ Care plan generated successfully for encounter {encounter_id}")
+                    print(f"📄 Response: {response.text[:200]}... (truncated)")
+                else:
+                    print(f"❌ Failed to generate care plan for encounter {encounter_id}")
+                    print(f"📄 Error Response: {response.text}")
+            except httpx.TimeoutException:
+                print(f"⏱️ API request timed out after 60 seconds")
+            except httpx.RequestError as e:
+                print(f"🌐 Request error: {str(e)}")
+    
+    except Exception as e:
+        print(f"❌ Error generating care plan for encounter {encounter_id}: {str(e)}")
+        import traceback
+        traceback.print_exc()
+
+# Endpoint to manually trigger care plan generation
+@router.post("/{encounter_id}/generate-care-plan", response_model=EncounterOut)
+async def trigger_care_plan_generation(
+    encounter_id: int,
+    background_tasks: BackgroundTasks,
+    current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Manually trigger care plan generation for an encounter
+    """
+    print(f"🔄 Received request to generate care plan for encounter {encounter_id}")
+    
+    # Get the encounter
+    result = await db.execute(
+        select(Encounter)
+        .options(
+            selectinload(Encounter.vitals),
+            selectinload(Encounter.medications),
+            selectinload(Encounter.doctor),
+            selectinload(Encounter.hospital),
+            selectinload(Encounter.patient),
+            selectinload(Encounter.lab_orders)
+        )
+        .where(Encounter.id == encounter_id)
+    )
+    encounter = result.unique().scalar_one_or_none()
+    
+    if not encounter:
+        print(f"❌ Encounter {encounter_id} not found")
+        raise HTTPException(404, "Encounter not found")
+    
+    print(f"✅ Found encounter {encounter_id} for patient {encounter.patient_id}")
+    
+    # Check permissions
+    if current_user.role == "doctor":
+        doctor_result = await db.execute(select(Doctor).where(Doctor.user_id == current_user.id))
+        doctor = doctor_result.unique().scalar_one_or_none()
+        
+        if not doctor or doctor.id != encounter.doctor_id:
+            print(f"❌ Doctor {current_user.id} not authorized for encounter {encounter_id}")
+            raise HTTPException(403, "Not authorized to generate care plan for this encounter")
+        
+        print(f"✅ Doctor {doctor.id} authorized for encounter {encounter_id}")
+    elif current_user.role != "admin":
+        print(f"❌ User role {current_user.role} not authorized to generate care plans")
+        raise HTTPException(403, "Only doctors and admins can generate care plans")
+    
+    try:
+        # Try to generate care plan directly instead of using background task
+        print(f"🔄 Generating care plan for encounter {encounter_id} directly")
+        await generate_care_plan_for_encounter(
+            encounter_id=encounter.id,
+            user_id=current_user.id,
+            db=db
+        )
+        print(f"✅ Care plan generation completed for encounter {encounter_id}")
+    except Exception as e:
+        print(f"❌ Error generating care plan: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        # Continue execution even if care plan generation fails
+        # We'll still update the encounter status and return a response
+    # Keep the encounter status as is - we now support care plans for in-progress encounters
+    print(f"ℹ️ Keeping encounter {encounter_id} status as '{encounter.status}'")
+    await db.refresh(encounter)
+    
+    # Build response
+    response = EncounterOut.from_orm(encounter)
+    response.doctor_name = f"{encounter.doctor.first_name} {encounter.doctor.last_name}"
+    response.hospital_name = encounter.hospital.name
+    response.patient_public_id = encounter.patient.public_id
+    
+    print(f"✅ Returning response for encounter {encounter_id}")
+    return response
 
 # ===== ICD CODE ENDPOINTS =====
 
@@ -1516,18 +1971,18 @@ async def search_icd_codes(
     """
     Search ICD codes for dropdown/autocomplete
     """
-    query = select(IcdCodeMaster).where(IcdCodeMaster.is_active == True)
+    query = select(models.ICDConditionMap)
     
     if search:
         search_term = f"%{search}%"
         query = query.where(
             or_(
-                IcdCodeMaster.code.ilike(search_term),
-                IcdCodeMaster.name.ilike(search_term)
+                models.ICDConditionMap.icd_code.ilike(search_term),
+                models.ICDConditionMap.description.ilike(search_term) if models.ICDConditionMap.description else False
             )
         )
     
-    query = query.order_by(IcdCodeMaster.code).limit(limit)
+    query = query.order_by(models.ICDConditionMap.icd_code).limit(limit)
     
     result = await db.execute(query)
     icd_codes = result.scalars().all()
@@ -1535,10 +1990,9 @@ async def search_icd_codes(
     return [
         {
             "id": icd.id,
-            "code": icd.code,
-            "name": icd.name,
-            "description": icd.description,
-            "category": icd.category
+            "code": icd.icd_code,
+            "name": icd.description or icd.icd_code,
+            "description": icd.description
         }
         for icd in icd_codes
     ]
@@ -1551,7 +2005,7 @@ async def get_encounter_icd_codes(
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Get all ICD codes for a specific encounter
+    Get ICD code for a specific encounter
     """
     # Check if encounter exists and user has access
     enc_result = await db.execute(
@@ -1562,109 +2016,174 @@ async def get_encounter_icd_codes(
     if not encounter:
         raise HTTPException(404, "Encounter not found")
     
-    # Get ICD codes for this encounter
-    result = await db.execute(
-        select(EncounterIcdCode)
-        .options(selectinload(EncounterIcdCode.icd_code))
-        .where(EncounterIcdCode.encounter_id == encounter_id)
-        .order_by(EncounterIcdCode.is_primary.desc(), EncounterIcdCode.created_at)
-    )
+    # If there's a primary ICD code, try to get its description from ICDConditionMap
+    if encounter.primary_icd_code:
+        icd_map_result = await db.execute(
+            select(models.ICDConditionMap).where(
+                models.ICDConditionMap.icd_code == encounter.primary_icd_code
+            )
+        )
+        icd_map = icd_map_result.scalar_one_or_none()
+        
+        return [{
+            "id": 0,  # Placeholder ID
+            "icd_code": encounter.primary_icd_code,
+            "code": encounter.primary_icd_code,
+            "name": icd_map.description if icd_map else "Unknown",
+            "is_primary": True,
+            "notes": None,
+            "created_at": encounter.created_at
+        }]
     
-    icd_codes = result.scalars().all()
-    
-    return [
-        {
-            "id": ec.id,
-            "icd_code_id": ec.icd_code_id,
-            "code": ec.icd_code.code,
-            "name": ec.icd_code.name,
-            "is_primary": ec.is_primary,
-            "notes": ec.notes,
-            "created_at": ec.created_at
-        }
-        for ec in icd_codes
-    ]
+    return []  # No ICD codes
 
 
 @router.post("/{encounter_id}/icd-codes")
 async def add_icd_code_to_encounter(
     encounter_id: int,
-    icd_data: dict,  # { "icd_code_id": 1, "is_primary": false, "notes": "optional" }
+    icd_data: dict,  # { "icd_code": "E11.9", "is_primary": true, "notes": "optional" }
     current_user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Add an ICD code to an existing encounter
+    Set the primary ICD code for an existing encounter
     """
-    # Check if encounter exists and user has access
-    enc_result = await db.execute(
+    try:
+        print(f"🔍 Received ICD code data: {icd_data}")
+        
+        # Check if encounter exists and user has access
+        enc_result = await db.execute(
+            select(Encounter).where(Encounter.id == encounter_id)
+        )
+        encounter = enc_result.unique().scalar_one_or_none()
+        
+        if not encounter:
+            raise HTTPException(404, "Encounter not found")
+        
+        # Get the ICD code from the request
+        if not isinstance(icd_data, dict):
+            print(f"❌ Invalid icd_data format: {type(icd_data)}")
+            raise HTTPException(400, f"Invalid data format: expected dict, got {type(icd_data)}")
+        
+        # Check for icd_code or icd_code_id in the request
+        icd_code = icd_data.get("icd_code")
+        icd_code_id = icd_data.get("icd_code_id")
+        
+        print(f"🔍 Checking for ICD code: icd_code={icd_code}, icd_code_id={icd_code_id}")
+        
+        # If we have an icd_code_id but no icd_code, look up the icd_code from the database
+        if not icd_code and icd_code_id:
+            print(f"🔍 Looking up ICD code for ID: {icd_code_id}")
+            icd_result = await db.execute(
+                select(models.ICDConditionMap).where(
+                    models.ICDConditionMap.id == icd_code_id
+                )
+            )
+            icd_map = icd_result.scalar_one_or_none()
+            
+            if icd_map:
+                icd_code = icd_map.icd_code
+                print(f"✅ Found ICD code {icd_code} for ID {icd_code_id}")
+            else:
+                print(f"❌ No ICD code found for ID {icd_code_id}")
+        
+        if not icd_code:
+            print(f"❌ Missing icd_code in data and could not resolve from icd_code_id: {icd_data}")
+            raise HTTPException(400, "ICD code is required (either icd_code or valid icd_code_id)")
+    except Exception as e:
+        print(f"❌ Error processing ICD code request: {str(e)}")
+        raise HTTPException(500, f"Error processing request: {str(e)}")
+    
+    try:
+        # Check if the ICD code exists in the ICDConditionMap table
+        icd_map_result = await db.execute(
+            select(models.ICDConditionMap).where(
+                models.ICDConditionMap.icd_code == icd_code
+            )
+        )
+        icd_map = icd_map_result.scalar_one_or_none()
+        
+        # If not found in the map, we'll create a new entry
+        if not icd_map and icd_data.get("description"):
+            try:
+                print(f"🔍 ICD code {icd_code} not found in map, creating new entry with description: {icd_data.get('description')}")
+                
+                # Find a default condition group
+                condition_group_result = await db.execute(
+                    select(models.ConditionGroup).where(
+                        models.ConditionGroup.name == "General"
+                    )
+                )
+                condition_group = condition_group_result.scalar_one_or_none()
+                
+                if not condition_group:
+                    print("🔍 Default condition group 'General' not found, creating it")
+                    # Create a default condition group if it doesn't exist
+                    condition_group = models.ConditionGroup(
+                        name="General",
+                        description="General condition group for miscellaneous ICD codes"
+                    )
+                    db.add(condition_group)
+                    await db.commit()
+                    await db.refresh(condition_group)
+                    print(f"✅ Created default condition group with ID: {condition_group.condition_group_id}")
+                
+                # Create a new ICDConditionMap entry
+                icd_map = models.ICDConditionMap(
+                    icd_code=icd_code,
+                    condition_group_id=condition_group.condition_group_id,
+                    description=icd_data.get("description", "")
+                )
+                db.add(icd_map)
+                await db.commit()
+                print(f"✅ Created new ICDConditionMap entry for {icd_code}")
+            except Exception as e:
+                print(f"❌ Error creating ICDConditionMap entry: {str(e)}")
+                raise HTTPException(500, f"Error creating ICD code mapping: {str(e)}")
+        
+        # Update the encounter with the primary ICD code
+        print(f"🔄 Updating encounter {encounter_id} with primary_icd_code: {icd_code}")
+        encounter.primary_icd_code = icd_code
+        await db.commit()
+        
+        # Verify the update was successful by refreshing the encounter from the database
+        await db.refresh(encounter)
+        print(f"✅ Successfully updated encounter with ICD code. Verified: primary_icd_code is now '{encounter.primary_icd_code}'")
+        
+        # Also verify that we can retrieve the ICD code correctly
+        # Make sure to call unique() on the result since it may contain joined eager loads
+        verify_result = await db.execute(
+            select(Encounter).where(Encounter.id == encounter_id)
+        )
+        verify_encounter = verify_result.unique().scalar_one_or_none()
+        print(f"🔍 Double verification: primary_icd_code from fresh query is '{verify_encounter.primary_icd_code}'")
+        
+        return {"message": "ICD code added successfully", "icd_code": icd_code}
+    except Exception as e:
+        print(f"❌ Error updating encounter with ICD code: {str(e)}")
+        raise HTTPException(500, f"Error updating encounter: {str(e)}")
+
+
+@router.delete("/{encounter_id}/icd-codes")
+async def remove_icd_code_from_encounter(
+    encounter_id: int,
+    current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Remove the ICD code from an encounter
+    """
+    # Check if encounter exists
+    result = await db.execute(
         select(Encounter).where(Encounter.id == encounter_id)
     )
-    encounter = enc_result.scalar_one_or_none()
+    encounter = result.scalar_one_or_none()
     
     if not encounter:
         raise HTTPException(404, "Encounter not found")
     
-    # Validate ICD code exists and is active
-    icd_result = await db.execute(
-        select(IcdCodeMaster).where(
-            IcdCodeMaster.id == icd_data["icd_code_id"],
-            IcdCodeMaster.is_active == True
-        )
-    )
-    icd_code = icd_result.scalar_one_or_none()
-    
-    if not icd_code:
-        raise HTTPException(400, "ICD code not found or inactive")
-    
-    # Check for duplicate
-    existing = await db.execute(
-        select(EncounterIcdCode).where(
-            EncounterIcdCode.encounter_id == encounter_id,
-            EncounterIcdCode.icd_code_id == icd_data["icd_code_id"]
-        )
-    )
-    duplicate = existing.scalar_one_or_none()
-    
-    if duplicate:
-        raise HTTPException(400, "ICD code already added to this encounter")
-    
-    # Create encounter ICD code
-    db_encounter_icd = EncounterIcdCode(
-        encounter_id=encounter_id,
-        icd_code_id=icd_data["icd_code_id"],
-        is_primary=icd_data.get("is_primary", False),
-        notes=icd_data.get("notes")
-    )
-    db.add(db_encounter_icd)
-    await db.commit()
-    
-    return {"message": "ICD code added successfully", "icd_code": icd_code.code}
-
-
-@router.delete("/{encounter_id}/icd-codes/{encounter_icd_id}")
-async def remove_icd_code_from_encounter(
-    encounter_id: int,
-    encounter_icd_id: int,
-    current_user=Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
-):
-    """
-    Remove an ICD code from an encounter
-    """
-    # Check if encounter ICD code exists
-    result = await db.execute(
-        select(EncounterIcdCode).where(
-            EncounterIcdCode.id == encounter_icd_id,
-            EncounterIcdCode.encounter_id == encounter_id
-        )
-    )
-    encounter_icd = result.scalar_one_or_none()
-    
-    if not encounter_icd:
-        raise HTTPException(404, "ICD code not found in this encounter")
-    
-    await db.delete(encounter_icd)
+    # Clear the primary ICD code
+    encounter.primary_icd_code = None
     await db.commit()
     
     return {"message": "ICD code removed successfully"}
