@@ -127,6 +127,7 @@ class Patient(Base, TimestampMixin):
     first_name = Column(String(100))
     last_name = Column(String(100))
     dob = Column(Date)
+    age = Column(Integer, nullable=True)  # Added age field to store calculated age
     gender = Column(String(20), index=True)
     ssn = Column(String(100), unique=True, index=True)
     phone = Column(String(20), unique=True, index=True)
@@ -270,7 +271,7 @@ class Medication(Base, TimestampMixin):
     appointment_id = Column(Integer, ForeignKey("appointments.id", ondelete="SET NULL"), nullable=True)
     encounter_id = Column(Integer, ForeignKey("encounters.id", ondelete="CASCADE"), nullable=True)
     assignment_id = Column(Integer, ForeignKey("assignments.id"), nullable=True)
-    icd_code_id = Column(Integer, ForeignKey("icd_code_master.id"), nullable=True)
+    icd_code = Column(String(50), nullable=True)  # Changed from foreign key to direct string
     medication_name = Column(String(200), nullable=False)
     dosage = Column(String(100), nullable=False)
     frequency = Column(String(100), nullable=False)
@@ -286,7 +287,6 @@ class Medication(Base, TimestampMixin):
     doctor = relationship("Doctor", back_populates="medications")
     appointment = relationship("Appointment", back_populates="medications")
     encounter = relationship("Encounter", back_populates="medications")
-    icd_code_ref = relationship("IcdCodeMaster", foreign_keys=[icd_code_id])
 
 
 class Vitals(Base, TimestampMixin):
@@ -321,7 +321,7 @@ class Encounter(Base, TimestampMixin):
     hospital_id = Column(Integer, ForeignKey("hospitals.id", ondelete="SET NULL"), nullable=True)
     encounter_date = Column(Date, nullable=False)
     encounter_type = Column(String(50), nullable=False)
-    primary_icd_code_id = Column(Integer, ForeignKey("icd_code_master.id"), nullable=True)
+    primary_icd_code = Column(String(50), nullable=True)  # This is the only field needed for ICD codes, stores the code directly
     reason_for_visit = Column(String(255))
     diagnosis = Column(Text)
     notes = Column(Text)
@@ -329,7 +329,7 @@ class Encounter(Base, TimestampMixin):
     status = Column(String(20), default="pending")
     is_lab_test_required = Column(Boolean, default=False)
     documents = Column(ARRAY(String), nullable=True)
-    primary_icd_code_value = Column(String(20), nullable=True)
+    # primary_icd_code_value column removed as it's redundant with primary_icd_code
 
     patient = relationship("Patient", back_populates="encounters")
     doctor = relationship("Doctor", back_populates="encounters")
@@ -348,18 +348,8 @@ class Encounter(Base, TimestampMixin):
         cascade="all, delete-orphan",
         lazy="joined"
     )
-    icd_codes = relationship(
-        "EncounterIcdCode", 
-        back_populates="encounter", 
-        cascade="all, delete-orphan",
-        lazy="selectin"  
-    )
-
-    primary_icd_code = relationship(
-        "IcdCodeMaster", 
-        foreign_keys=[primary_icd_code_id],
-        lazy="joined" 
-    )
+    # icd_codes relationship removed as EncounterIcdCode table no longer exists
+    # primary_icd_code relationship removed as it's now a direct string column
 
 class EncounterHistory(Base):
     __tablename__ = "encounter_history"
@@ -672,37 +662,116 @@ class PatientTask(Base, TimestampMixin):
 
     patient = relationship("Patient", backref="tasks")
 
-# Add this to your models.py file after the LabMaster model
-class IcdCodeMaster(Base):
-    __tablename__ = "icd_code_master"
+# Care Plan Feature - New Models
 
-    id = Column(Integer, primary_key=True, index=True)
-    code = Column(String(20), unique=True, nullable=False)          # e.g. "J06.9", "I10", "E11.9"
-    name = Column(String(500), nullable=False)                      # e.g. "Acute upper respiratory infection", "Essential (primary) hypertension"
-    description = Column(Text, nullable=True)                       # Detailed description
-    category = Column(String(100), nullable=True)                   # e.g. "Infectious", "Cardiovascular", "Metabolic"
-    chapter = Column(String(200), nullable=True)                    # e.g. "Chapter X: Diseases of the respiratory system"
-    subcategory = Column(String(200), nullable=True)                # e.g. "Acute upper respiratory infections"
-    is_active = Column(Boolean, default=True)
-    version = Column(String(20), default="ICD-10")                  # ICD-10, ICD-11
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+class ConditionGroup(Base, TimestampMixin):
+   __tablename__ = "condition_groups"
 
-    encounter_icd_codes = relationship("EncounterIcdCode", back_populates="icd_code", cascade="all, delete-orphan")
+   condition_group_id = Column(Integer, primary_key=True, autoincrement=True)
+   name = Column(String(200), nullable=False)
+   description = Column(Text)
+   
+   # Relationships
+   icd_codes = relationship("ICDConditionMap", back_populates="condition_group")
+   guidelines = relationship("ConditionGuidelineMap", back_populates="condition_group")
+   care_plans = relationship("CarePlan", back_populates="condition_group")
 
-class EncounterIcdCode(Base):
-    __tablename__ = "encounter_icd_codes"
-    
-    id = Column(Integer, primary_key=True, index=True)
-    encounter_id = Column(Integer, ForeignKey("encounters.id", ondelete="CASCADE"), nullable=False)
-    icd_code_id = Column(Integer, ForeignKey("icd_code_master.id", ondelete="CASCADE"), nullable=False)
-    is_primary = Column(Boolean, default=False)                    
-    notes = Column(Text, nullable=True)                             
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    
-    encounter = relationship("Encounter", back_populates="icd_codes")
-    icd_code = relationship("IcdCodeMaster", back_populates="encounter_icd_codes")
-    
-    __table_args__ = (
-        UniqueConstraint('encounter_id', 'icd_code_id', name='uq_encounter_icd_code'),
-    )
+class ICDConditionMap(Base):
+   __tablename__ = "icd_condition_map"
+
+   id = Column(Integer, primary_key=True, autoincrement=True)
+   icd_code = Column(String(50), nullable=False)
+   condition_group_id = Column(Integer, ForeignKey("condition_groups.condition_group_id"), nullable=False)
+   is_pattern = Column(Boolean, default=False)
+   description = Column(Text, nullable=True)  # Added description column
+   
+   # Relationships
+   condition_group = relationship("ConditionGroup", back_populates="icd_codes")
+
+class GuidelineMaster(Base, TimestampMixin):
+   __tablename__ = "guideline_master"
+
+   guideline_id = Column(Integer, primary_key=True, autoincrement=True)
+   name = Column(String(200))
+   guideline_number = Column(String(50))  # e.g., NG17
+   url = Column(Text)
+   version = Column(String(50))
+   description = Column(Text)
+   
+   # Relationships
+   conditions = relationship("ConditionGuidelineMap", back_populates="guideline")
+   rules = relationship("GuidelineRules", back_populates="guideline")
+
+class ConditionGuidelineMap(Base):
+   __tablename__ = "condition_guideline_map"
+
+   id = Column(Integer, primary_key=True, autoincrement=True)
+   condition_group_id = Column(Integer, ForeignKey("condition_groups.condition_group_id"), nullable=False)
+   guideline_id = Column(Integer, ForeignKey("guideline_master.guideline_id"), nullable=False)
+   
+   # Relationships
+   condition_group = relationship("ConditionGroup", back_populates="guidelines")
+   guideline = relationship("GuidelineMaster", back_populates="conditions")
+
+class GuidelineRules(Base, TimestampMixin):
+   __tablename__ = "guideline_rules"
+
+   id = Column(Integer, primary_key=True, autoincrement=True)
+   guideline_id = Column(Integer, ForeignKey("guideline_master.guideline_id"), nullable=False)
+   rules_json = Column(JSON, nullable=False)
+   version = Column(String(50))
+   
+   # Relationships
+   guideline = relationship("GuidelineMaster", back_populates="rules")
+
+class CarePlan(Base, TimestampMixin):
+   __tablename__ = "care_plans"
+
+   careplan_id = Column(Integer, primary_key=True, autoincrement=True)
+   patient_id = Column(Integer, ForeignKey("patients.id"), nullable=False)
+   encounter_id = Column(Integer, ForeignKey("encounters.id"), nullable=False)
+   condition_group_id = Column(Integer, ForeignKey("condition_groups.condition_group_id"), nullable=False)
+   status = Column(String(20), default="proposed")  # proposed, active, completed
+   patient_friendly_summary = Column(Text)
+   clinician_summary = Column(Text)
+   plan_metadata = Column(JSON)
+   
+   # Relationships
+   patient = relationship("Patient", backref="care_plans")
+   encounter = relationship("Encounter", backref="care_plans")
+   condition_group = relationship("ConditionGroup", back_populates="care_plans")
+   tasks = relationship("CarePlanTask", back_populates="care_plan", cascade="all, delete-orphan")
+   audit_logs = relationship("CarePlanAudit", back_populates="care_plan", cascade="all, delete-orphan")
+
+class CarePlanTask(Base, TimestampMixin):
+   __tablename__ = "care_plan_tasks"
+
+   task_id = Column(Integer, primary_key=True, autoincrement=True)
+   careplan_id = Column(Integer, ForeignKey("care_plans.careplan_id"), nullable=False)
+   type = Column(String(50))  # lab_test, monitoring, education, visit, screening, referral
+   title = Column(String(200), nullable=False)
+   description = Column(Text)
+   frequency = Column(String(50))
+   due_date = Column(Date)
+   assigned_to = Column(String(50))  # patient or provider
+   requires_clinician_review = Column(Boolean, default=False)
+   status = Column(String(20), default="pending")  # pending, in_progress, completed, cancelled
+   
+   # Relationships
+   care_plan = relationship("CarePlan", back_populates="tasks")
+
+class CarePlanAudit(Base):
+   __tablename__ = "care_plan_audit"
+
+   audit_id = Column(Integer, primary_key=True, autoincrement=True)
+   careplan_id = Column(Integer, ForeignKey("care_plans.careplan_id"), nullable=False)
+   action = Column(String(50))
+   actor_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+   notes = Column(Text)
+   timestamp = Column(DateTime, default=datetime.utcnow)
+   
+   # Relationships
+   care_plan = relationship("CarePlan", back_populates="audit_logs")
+   actor = relationship("User")
+# IcdCodeMaster and EncounterIcdCode tables have been removed
+# Their functionality is now handled by the ICDConditionMap table with the added description column
