@@ -490,57 +490,8 @@ class LabOrderCreate(BaseModel):
     class Config:
         orm_mode = True
 
-class IcdCodeBase(BaseModel):
-    code: str
-    name: str
-    description: Optional[str] = None
-    category: Optional[str] = None
-    chapter: Optional[str] = None
-    subcategory: Optional[str] = None
-    is_active: bool = True
-    version: str = "ICD-10"
-
-class IcdCodeCreate(IcdCodeBase):
-    pass
-
-class IcdCodeUpdate(BaseModel):
-    code: Optional[str] = None
-    name: Optional[str] = None
-    description: Optional[str] = None
-    category: Optional[str] = None
-    chapter: Optional[str] = None
-    subcategory: Optional[str] = None
-    is_active: Optional[bool] = None
-    version: Optional[str] = None
-
-class IcdCodeResponse(IcdCodeBase):
-    id: int
-    created_at: datetime
-    updated_at: Optional[datetime] = None
-
-    class Config:
-        orm_mode = True
-
-class EncounterIcdCodeBase(BaseModel):
-    icd_code_id: int
-    is_primary: bool = False
-    notes: Optional[str] = None
-
-class EncounterIcdCodeCreate(EncounterIcdCodeBase):
-    pass
-
-class EncounterIcdCodeUpdate(BaseModel):
-    is_primary: Optional[bool] = None
-    notes: Optional[str] = None
-
-class EncounterIcdCodeInDB(EncounterIcdCodeBase):
-    id: int
-    encounter_id: int
-    created_at: datetime
-    icd_code: Optional[IcdCodeResponse] = None
-
-    class Config:
-        orm_mode = True
+# ICD code classes have been removed as they are no longer needed
+# The functionality is now handled by the ICDConditionMap class
 
 class VitalsUpdate(BaseModel):
     height: Optional[float]
@@ -583,8 +534,8 @@ class EncounterCreate(BaseModel):
     encounter_date: Optional[date] = None
     follow_up_date: Optional[date] = None
     is_lab_test_required: Optional[bool] = False
-    primary_icd_code_id: Optional[int] = None
-    icd_codes: Optional[List[EncounterIcdCodeCreate]] = None
+    primary_icd_code: Optional[str] = None
+    # icd_codes field removed as it's no longer needed
     vitals: Optional[VitalsUpdate] = None
     medications: Optional[List[MedicationUpdate]] = None
     previous_encounter_id: Optional[int] = None
@@ -602,8 +553,8 @@ class EncounterUpdate(BaseModel):
     follow_up_date: Optional[date] = None
     is_lab_test_required: Optional[bool] = None
     status: Optional[str] = None  
-    primary_icd_code_id: Optional[int] = None
-    icd_codes: Optional[List[EncounterIcdCodeCreate]] = None
+    primary_icd_code: Optional[str] = None
+    # icd_codes field removed as it's no longer needed
     previous_encounter_id: Optional[int] = None
     is_continuation: Optional[bool] = None
     vitals: Optional[VitalsUpdate] = None
@@ -630,12 +581,12 @@ class EncounterOut(BaseModel):
     documents: Optional[List[str]] = None
     previous_encounter_id: Optional[int] = None
     is_continuation: bool = False
-    primary_icd_code_id: Optional[int] = None
-    lab_orders: List[LabOrderResponse] = [] 
+    primary_icd_code: Optional[str] = None
+    lab_orders: List[LabOrderResponse] = []
     doctor_name: Optional[str] = None
     hospital_name: Optional[str] = None
-    primary_icd_code: Optional[IcdCodeResponse] = None
-    icd_codes: List[EncounterIcdCodeInDB] = []
+    # primary_icd_code relationship removed as it's now a direct string field
+    # icd_codes list removed as it's no longer needed
 
     class Config:
         orm_mode = True
@@ -664,7 +615,7 @@ class EncounterBase(BaseModel):
     visit_date: datetime
     provider_name: str | None = None
     notes: str | None = None
-    primary_icd_code_id: Optional[int] = None
+    primary_icd_code: Optional[str] = None
 
     class Config:
         orm_mode = True
@@ -1261,6 +1212,7 @@ class ICDConditionMapBase(BaseModel):
     icd_code: str
     condition_group_id: int
     is_pattern: Optional[bool] = False
+    description: Optional[str] = None  # Added description field
 
 class ICDConditionMapCreate(ICDConditionMapBase):
     pass
@@ -1411,7 +1363,7 @@ class CurrentEncounter(BaseModel):
     encounter_type: str
     reason_for_visit: Optional[str] = None
     diagnosis_text: Optional[str] = None
-    icd_codes: Optional[List[str]] = None
+    icd_codes: Optional[List[Dict[str, Any]]] = None
     encounter_date: date
     follow_up_date: Optional[date] = None
     clinical_notes: Optional[str] = None
@@ -1481,7 +1433,7 @@ class CarePlanGenerationOutput(BaseModel):
     status: str = "proposed"
     generated_at: datetime
     condition_group: str
-    icd_codes: List[str] = []
+    icd_codes: List[Dict[str, Any]] = []
     tasks: List[CarePlanTaskCreate] = []
     patient_friendly_summary: str
     clinician_summary: str

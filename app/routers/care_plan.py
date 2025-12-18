@@ -388,31 +388,19 @@ async def generate_care_plan(
     
     print(f"✅ Found encounter {encounter_id} for patient {encounter.patient_id}")
     
-    # Get ICD codes from the encounter
-    print(f"🔍 Looking up ICD codes for encounter {encounter_id}")
-    encounter_icd_result = await db.execute(
-        select(models.EncounterIcdCode)
-        .where(models.EncounterIcdCode.encounter_id == encounter_id)
-        .options(selectinload(models.EncounterIcdCode.icd_code))
-    )
-    encounter_icd_codes = encounter_icd_result.scalars().all()
+    # Get ICD code from the encounter
+    print(f"🔍 Looking up ICD code for encounter {encounter_id}")
     
     # Default condition group name
     condition_name = "General"
     
-    if not encounter_icd_codes:
-        print(f"⚠️ No ICD codes found for encounter {encounter_id}, using default condition group")
+    # Check if encounter has a primary ICD code
+    if not encounter.primary_icd_code:
+        print(f"⚠️ No ICD code found for encounter {encounter_id}, using default condition group")
+        icd_code = None
     else:
-        # Get primary ICD code first
-        primary_icd = next((icd for icd in encounter_icd_codes if icd.is_primary), None)
-        
-        if primary_icd and primary_icd.icd_code:
-            print(f"✅ Found primary ICD code: {primary_icd.icd_code.code} - {primary_icd.icd_code.name}")
-            icd_code = primary_icd.icd_code.code
-        else:
-            # Use first ICD code if no primary is marked
-            print(f"⚠️ No primary ICD code found, using first available")
-            icd_code = encounter_icd_codes[0].icd_code.code if encounter_icd_codes[0].icd_code else None
+        print(f"✅ Found primary ICD code: {encounter.primary_icd_code}")
+        icd_code = encounter.primary_icd_code
         
         if icd_code:
             # Look up condition group mapping for this ICD code
@@ -471,18 +459,37 @@ async def generate_care_plan(
         # Prepare input data with ICD codes from the encounter
         input_data_dict = input_data.dict()
         
-        # Get ICD codes from the encounter if not already provided
+        # Get ICD code from the encounter if not already provided
         if not input_data_dict.get("current_encounter", {}).get("icd_codes"):
-            print(f"🔍 Fetching ICD codes for LLM input")
+            print(f"🔍 Fetching ICD code for LLM input")
             icd_codes = []
             
-            for icd in encounter_icd_codes:
-                if icd.icd_code:
+            # Check if there's a primary ICD code
+            if encounter.primary_icd_code:
+                print(f"✅ Found primary_icd_code: {encounter.primary_icd_code}")
+                
+                # Look up the ICD code in the ICDConditionMap table to get description
+                icd_map_result = await db.execute(
+                    select(models.ICDConditionMap).where(models.ICDConditionMap.icd_code == encounter.primary_icd_code)
+                )
+                icd_map = icd_map_result.scalar_one_or_none()
+                
+                if icd_map:
+                    print(f"✅ Found ICD code in condition map: {icd_map.icd_code} - {icd_map.description}")
                     icd_codes.append({
-                        "code": icd.icd_code.code,
-                        "name": icd.icd_code.name,
-                        "description": icd.icd_code.description if hasattr(icd.icd_code, 'description') else None,
-                        "is_primary": icd.is_primary
+                        "code": icd_map.icd_code,
+                        "name": icd_map.description or encounter.primary_icd_code,
+                        "description": icd_map.description,
+                        "is_primary": True
+                    })
+                else:
+                    # If not found in map, use the direct values
+                    print(f"⚠️ ICD code not found in condition map, using direct value")
+                    icd_codes.append({
+                        "code": encounter.primary_icd_code,
+                        "name": encounter.diagnosis or encounter.primary_icd_code,
+                        "description": encounter.diagnosis,
+                        "is_primary": True
                     })
             
             # Add ICD codes to input data
