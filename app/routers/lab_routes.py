@@ -267,6 +267,9 @@ async def get_hospital_lab_results(current_user=Depends(get_current_user), db: A
 
         out.append({
             "lab_order_id": order.id,
+            "patient_public_id": patient.public_id,
+            "patient_name": f"{patient.first_name} {patient.last_name}",
+            "test_name": order.test_name,
             "result_value": result.result_value if result else None,
             "notes": result.notes if result else None,
             "view_url": view_url,
@@ -274,6 +277,7 @@ async def get_hospital_lab_results(current_user=Depends(get_current_user), db: A
             "file_key": result.file_key if result else None,
             "created_at": result.created_at if result else None
         })
+
     return out
 
 # View PDF securely (inline)

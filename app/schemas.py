@@ -561,6 +561,7 @@ class EncounterUpdate(BaseModel):
     medications: Optional[List[MedicationUpdate]] = None
     lab_orders: Optional[List[LabOrderUpdate]] = None
     documents: Optional[List[str]] = None
+    primary_icd_code: Optional[str] = None
 
     class Config:
         orm_mode = True
