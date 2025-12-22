@@ -8,7 +8,6 @@ from sqlalchemy.orm import selectinload
 from app.models import EncounterHistory, Hospital
 from sqlalchemy import or_, and_
 from app import models
-# Removed IcdCodeMaster and EncounterIcdCode imports as they no longer exist
 from app.models import EncounterHistory
 from typing import List
 from datetime import date, datetime, timedelta
@@ -60,108 +59,120 @@ async def create_encounter(
     current_user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    parsed_data = json.loads(encounter_in)
-    encounter_in = EncounterCreate(**parsed_data)
+    # -------------------------------------------------
+    # 1. Parse JSON safely
+    # -------------------------------------------------
+    try:
+        parsed_data = json.loads(encounter_in)
+        encounter_data = EncounterCreate(**parsed_data)
+    except Exception as e:
+        raise HTTPException(400, f"Invalid encounter data: {e}")
 
-    # ------------------ VALIDATE DOCTOR ------------------
+    # -------------------------------------------------
+    # 2. Validate Doctor
+    # -------------------------------------------------
     if current_user.role == "doctor":
-        doctor_result = await db.execute(
+        result = await db.execute(
             select(Doctor).where(Doctor.user_id == current_user.id)
         )
-        doctor = doctor_result.scalar_one_or_none()
-
+        doctor = result.scalar_one_or_none()
         if not doctor:
-            raise HTTPException(403, "Doctor profile not found for this user")
+            raise HTTPException(403, "Doctor profile not found")
 
     elif current_user.role == "hospital":
-        if not parsed_data.get("doctor_id"):
+        doctor_id = parsed_data.get("doctor_id")
+        if not doctor_id:
             raise HTTPException(400, "doctor_id is required for hospital users")
 
-        doctor_result = await db.execute(
+        result = await db.execute(
             select(Doctor).where(
-                Doctor.id == parsed_data["doctor_id"],
+                Doctor.id == doctor_id,
                 Doctor.hospital_id == current_user.hospital_id
             )
         )
-        doctor = doctor_result.scalar_one_or_none()
-
+        doctor = result.scalar_one_or_none()
         if not doctor:
             raise HTTPException(404, "Doctor not found in your hospital")
 
     else:
         raise HTTPException(403, "Only doctors or hospitals can create encounters")
 
-    # ------------------ VALIDATE PATIENT ------------------
-    if not encounter_in.patient_public_id:
+    # -------------------------------------------------
+    # 3. Validate Patient
+    # -------------------------------------------------
+    if not encounter_data.patient_public_id:
         raise HTTPException(400, "patient_public_id is required")
 
-    patient_result = await db.execute(
-        select(Patient).where(Patient.public_id == encounter_in.patient_public_id)
+    result = await db.execute(
+        select(Patient).where(Patient.public_id == encounter_data.patient_public_id)
     )
-    patient = patient_result.scalar_one_or_none()
+    patient = result.scalar_one_or_none()
     if not patient:
         raise HTTPException(404, "Patient not found")
 
-    # ------------------ VALIDATE ASSIGNMENT ------------------
+    # -------------------------------------------------
+    # 4. Validate Assignment
+    # -------------------------------------------------
     assign = await db.execute(
         select(Assignment).where(
             Assignment.patient_id == patient.id,
             Assignment.doctor_id == doctor.id
         )
     )
-    assignment_record = assign.first()  # SAFE: even if duplicates exist
-
-    if not assignment_record:
+    if not assign.first():
         raise HTTPException(403, "Doctor is not assigned to this patient")
 
-    # ------------------ CREATE ENCOUNTER ------------------
-    new_encounter = Encounter(
+    # -------------------------------------------------
+    # 5. Create Encounter
+    # -------------------------------------------------
+    encounter = Encounter(
         patient_id=patient.id,
         patient_public_id=patient.public_id,
         doctor_id=doctor.id,
         hospital_id=doctor.hospital_id,
-        encounter_date=encounter_in.encounter_date or date.today(),
-        encounter_type=encounter_in.encounter_type,
-        reason_for_visit=encounter_in.reason_for_visit,
-        diagnosis=encounter_in.diagnosis,
-        notes=encounter_in.notes,
-        follow_up_date=encounter_in.follow_up_date,
-        is_lab_test_required=encounter_in.is_lab_test_required,
-        
-        # ALWAYS start with pending
+        encounter_date=encounter_data.encounter_date or date.today(),
+        encounter_type=encounter_data.encounter_type,
+        reason_for_visit=encounter_data.reason_for_visit,
+        diagnosis=encounter_data.diagnosis,
+        notes=encounter_data.notes,
+        follow_up_date=encounter_data.follow_up_date,
+        is_lab_test_required=encounter_data.is_lab_test_required,
         status="pending",
-
         documents=[]
     )
 
-    if encounter_in.primary_icd_code:
-        # Check if the ICD code exists in the ICDConditionMap table
+    # -------------------------------------------------
+    # 6. Primary ICD Code (ONLY HERE)
+    # -------------------------------------------------
+    if encounter_data.primary_icd_code:
         icd_result = await db.execute(
             select(models.ICDConditionMap).where(
-                models.ICDConditionMap.icd_code == encounter_in.primary_icd_code
+                models.ICDConditionMap.icd_code == encounter_data.primary_icd_code
             )
         )
         if not icd_result.scalar_one_or_none():
-            # If not found, we'll still set it but log a warning
-            print(f"Warning: ICD code {encounter_in.primary_icd_code} not found in ICDConditionMap")
-            
-        new_encounter.primary_icd_code = encounter_in.primary_icd_code
+            print(f"⚠️ ICD {encounter_data.primary_icd_code} not found in ICDConditionMap")
 
-    db.add(new_encounter)
+        encounter.primary_icd_code = encounter_data.primary_icd_code
+
+    db.add(encounter)
     await db.flush()
 
-    # ICD codes are now handled directly through the primary_icd_code field
-    # No need to add to EncounterIcdCode table as it no longer exists
-
-    if encounter_in.vitals:
-        v = encounter_in.vitals
+    # -------------------------------------------------
+    # 7. Vitals
+    # -------------------------------------------------
+    if encounter_data.vitals:
+        v = encounter_data.vitals
         bmi = None
         if v.height and v.weight:
-            bmi = round(v.weight / ((v.height / 100) ** 2), 2)
+            try:
+                bmi = round(v.weight / ((v.height / 100) ** 2), 2)
+            except Exception:
+                bmi = None
 
         db.add(Vitals(
             patient_id=patient.id,
-            encounter_id=new_encounter.id,
+            encounter_id=encounter.id,
             height=v.height,
             weight=v.weight,
             bmi=bmi,
@@ -172,12 +183,15 @@ async def create_encounter(
             oxygen_saturation=v.oxygen_saturation,
         ))
 
-    if encounter_in.medications:
-        for m in encounter_in.medications:
+    # -------------------------------------------------
+    # 8. Medications
+    # -------------------------------------------------
+    if encounter_data.medications:
+        for m in encounter_data.medications:
             db.add(Medication(
                 patient_id=patient.id,
                 doctor_id=doctor.id,
-                encounter_id=new_encounter.id,
+                encounter_id=encounter.id,
                 medication_name=m.medication_name,
                 dosage=m.dosage,
                 frequency=m.frequency,
@@ -188,44 +202,49 @@ async def create_encounter(
                 notes=m.notes
             ))
 
+    # -------------------------------------------------
+    # 9. Documents
+    # -------------------------------------------------
     if files:
         docs = []
         for file in files:
-            file_path = await upload_encounter_document_to_s3(
+            path = await upload_encounter_document_to_s3(
                 hospital_id=doctor.hospital_id,
                 patient_id=patient.id,
-                encounter_id=new_encounter.id,
+                encounter_id=encounter.id,
                 file=file
             )
-            docs.append(file_path)
-        new_encounter.documents = docs
+            docs.append(path)
+        encounter.documents = docs
 
-    # ------------------ CONTINUATION LOGIC ------------------
-    if encounter_in.follow_up_date:
-        prev_enc_result = await db.execute(
+    # -------------------------------------------------
+    # 10. Follow-up Logic
+    # -------------------------------------------------
+    if encounter_data.follow_up_date:
+        prev = await db.execute(
             select(Encounter)
             .where(
                 Encounter.patient_id == patient.id,
-                Encounter.id != new_encounter.id
+                Encounter.id != encounter.id
             )
             .order_by(Encounter.encounter_date.desc())
         )
-        previous_encounter = prev_enc_result.unique().scalars().first()
-
-        new_encounter.previous_encounter_id = (
-            previous_encounter.id if previous_encounter else None
-        )
+        previous = prev.scalars().first()
+        encounter.previous_encounter_id = previous.id if previous else None
 
         db.add(EncounterHistory(
-            encounter_id=new_encounter.id,
+            encounter_id=encounter.id,
             status="FOLLOW_UP_SCHEDULED",
             updated_by=current_user.id,
             notes="Follow-up created"
         ))
 
     await db.commit()
-    await db.refresh(new_encounter)
+    await db.refresh(encounter)
 
+    # -------------------------------------------------
+    # 11. Response
+    # -------------------------------------------------
     result = await db.execute(
         select(Encounter)
         .options(
@@ -234,10 +253,8 @@ async def create_encounter(
             selectinload(Encounter.patient),
             selectinload(Encounter.doctor),
             selectinload(Encounter.hospital),
-            # Note: primary_icd_code is a direct field on Encounter, not a relationship,
-            # so it's automatically loaded without needing selectinload
         )
-        .where(Encounter.id == new_encounter.id)
+        .where(Encounter.id == encounter.id)
     )
 
     enc = result.unique().scalar_one()
@@ -245,30 +262,10 @@ async def create_encounter(
     out.doctor_name = f"{doctor.first_name} {doctor.last_name}"
     out.hospital_name = doctor.hospital.name
     out.patient_public_id = patient.public_id
-
-    # Instead of loading from relationship, we'll just set the primary ICD code directly
-    if enc.primary_icd_code:
-        # Try to find the description from ICDConditionMap
-        icd_map_result = await db.execute(
-            select(models.ICDConditionMap).where(
-                models.ICDConditionMap.icd_code == enc.primary_icd_code
-            )
-        )
-        icd_map = icd_map_result.scalar_one_or_none()
-        
-        out.icd_codes = [{
-            "id": 0,  # Placeholder ID
-            "icd_code": enc.primary_icd_code,
-            "code": enc.primary_icd_code,
-            "name": icd_map.description if icd_map else "Unknown",
-            "is_primary": True,
-            "notes": None,
-            "created_at": enc.created_at
-        }]
-    else:
-        out.icd_codes = []
+    out.primary_icd_code = enc.primary_icd_code
 
     return out
+
 
 
 @router.put("/{encounter_id}", response_model=EncounterOut)
@@ -342,25 +339,18 @@ async def update_encounter(
 
     if encounter.status == "completed":
         raise HTTPException(400, "Completed encounters cannot be modified")
-    # -------------------------------------------------
-    # 6. PRIMARY ICD CODE
-    # -------------------------------------------------
+    
     if encounter_update.primary_icd_code is not None:
-        # Check if the ICD code exists in the ICDConditionMap table
         icd_result = await db.execute(
             select(models.ICDConditionMap).where(
                 models.ICDConditionMap.icd_code == encounter_update.primary_icd_code
             )
         )
-        icd = icd_result.scalar_one_or_none()
+        if not icd_result.scalar_one_or_none():
+            print(f"⚠️ ICD {encounter_update.primary_icd_code} not found in ICDConditionMap")
 
-        # If not found, we'll still set it but log a warning
-        if not icd:
-            print(f"Warning: ICD code {encounter_update.primary_icd_code} not found in ICDConditionMap")
-            
-        # Update the primary_icd_code field
-        print(f"Updating primary_icd_code from '{encounter.primary_icd_code}' to '{encounter_update.primary_icd_code}'")
         encounter.primary_icd_code = encounter_update.primary_icd_code
+
     else:
         print(f"Clearing primary_icd_code (was '{encounter.primary_icd_code}')")
         encounter.primary_icd_code = None
@@ -373,7 +363,11 @@ async def update_encounter(
         setattr(encounter, field, value)
 
     encounter.is_continuation = encounter.follow_up_date is not None
-    encounter.status = "in-progress" if encounter.follow_up_date else "completed"
+
+    if encounter_update.status:
+        encounter.status = encounter_update.status
+    else:
+        encounter.status = "in-progress" if encounter.follow_up_date else "completed"
 
     if encounter_update.vitals:
         vitals_result = await db.execute(
@@ -565,7 +559,6 @@ async def get_patient_encounters(
                     "end_date": m.end_date,
                     "status": m.status,
                     "notes": m.notes,
-                    "icd_code": m.icd_code,
                     "ndc_code": m.ndc_code,
                 }
                 for m in e.medications
@@ -834,7 +827,6 @@ async def get_encounter(
         "follow_up_date": encounter.follow_up_date,
         "status": encounter.status,
         "is_lab_test_required": encounter.is_lab_test_required,
-         "icd_codes": [],  # No longer using icd_codes relationship
          "primary_icd_code": None,  # Initialize as None
          
          # If there's a primary ICD code, try to get its description from ICDConditionMap
@@ -1996,194 +1988,3 @@ async def search_icd_codes(
         }
         for icd in icd_codes
     ]
-
-
-@router.get("/{encounter_id}/icd-codes")
-async def get_encounter_icd_codes(
-    encounter_id: int,
-    current_user=Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
-):
-    """
-    Get ICD code for a specific encounter
-    """
-    # Check if encounter exists and user has access
-    enc_result = await db.execute(
-        select(Encounter).where(Encounter.id == encounter_id)
-    )
-    encounter = enc_result.scalar_one_or_none()
-    
-    if not encounter:
-        raise HTTPException(404, "Encounter not found")
-    
-    # If there's a primary ICD code, try to get its description from ICDConditionMap
-    if encounter.primary_icd_code:
-        icd_map_result = await db.execute(
-            select(models.ICDConditionMap).where(
-                models.ICDConditionMap.icd_code == encounter.primary_icd_code
-            )
-        )
-        icd_map = icd_map_result.scalar_one_or_none()
-        
-        return [{
-            "id": 0,  # Placeholder ID
-            "icd_code": encounter.primary_icd_code,
-            "code": encounter.primary_icd_code,
-            "name": icd_map.description if icd_map else "Unknown",
-            "is_primary": True,
-            "notes": None,
-            "created_at": encounter.created_at
-        }]
-    
-    return []  # No ICD codes
-
-
-@router.post("/{encounter_id}/icd-codes")
-async def add_icd_code_to_encounter(
-    encounter_id: int,
-    icd_data: dict,  # { "icd_code": "E11.9", "is_primary": true, "notes": "optional" }
-    current_user=Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
-):
-    """
-    Set the primary ICD code for an existing encounter
-    """
-    try:
-        print(f"🔍 Received ICD code data: {icd_data}")
-        
-        # Check if encounter exists and user has access
-        enc_result = await db.execute(
-            select(Encounter).where(Encounter.id == encounter_id)
-        )
-        encounter = enc_result.unique().scalar_one_or_none()
-        
-        if not encounter:
-            raise HTTPException(404, "Encounter not found")
-        
-        # Get the ICD code from the request
-        if not isinstance(icd_data, dict):
-            print(f"❌ Invalid icd_data format: {type(icd_data)}")
-            raise HTTPException(400, f"Invalid data format: expected dict, got {type(icd_data)}")
-        
-        # Check for icd_code or icd_code_id in the request
-        icd_code = icd_data.get("icd_code")
-        icd_code_id = icd_data.get("icd_code_id")
-        
-        print(f"🔍 Checking for ICD code: icd_code={icd_code}, icd_code_id={icd_code_id}")
-        
-        # If we have an icd_code_id but no icd_code, look up the icd_code from the database
-        if not icd_code and icd_code_id:
-            print(f"🔍 Looking up ICD code for ID: {icd_code_id}")
-            icd_result = await db.execute(
-                select(models.ICDConditionMap).where(
-                    models.ICDConditionMap.id == icd_code_id
-                )
-            )
-            icd_map = icd_result.scalar_one_or_none()
-            
-            if icd_map:
-                icd_code = icd_map.icd_code
-                print(f"✅ Found ICD code {icd_code} for ID {icd_code_id}")
-            else:
-                print(f"❌ No ICD code found for ID {icd_code_id}")
-        
-        if not icd_code:
-            print(f"❌ Missing icd_code in data and could not resolve from icd_code_id: {icd_data}")
-            raise HTTPException(400, "ICD code is required (either icd_code or valid icd_code_id)")
-    except Exception as e:
-        print(f"❌ Error processing ICD code request: {str(e)}")
-        raise HTTPException(500, f"Error processing request: {str(e)}")
-    
-    try:
-        # Check if the ICD code exists in the ICDConditionMap table
-        icd_map_result = await db.execute(
-            select(models.ICDConditionMap).where(
-                models.ICDConditionMap.icd_code == icd_code
-            )
-        )
-        icd_map = icd_map_result.scalar_one_or_none()
-        
-        # If not found in the map, we'll create a new entry
-        if not icd_map and icd_data.get("description"):
-            try:
-                print(f"🔍 ICD code {icd_code} not found in map, creating new entry with description: {icd_data.get('description')}")
-                
-                # Find a default condition group
-                condition_group_result = await db.execute(
-                    select(models.ConditionGroup).where(
-                        models.ConditionGroup.name == "General"
-                    )
-                )
-                condition_group = condition_group_result.scalar_one_or_none()
-                
-                if not condition_group:
-                    print("🔍 Default condition group 'General' not found, creating it")
-                    # Create a default condition group if it doesn't exist
-                    condition_group = models.ConditionGroup(
-                        name="General",
-                        description="General condition group for miscellaneous ICD codes"
-                    )
-                    db.add(condition_group)
-                    await db.commit()
-                    await db.refresh(condition_group)
-                    print(f"✅ Created default condition group with ID: {condition_group.condition_group_id}")
-                
-                # Create a new ICDConditionMap entry
-                icd_map = models.ICDConditionMap(
-                    icd_code=icd_code,
-                    condition_group_id=condition_group.condition_group_id,
-                    description=icd_data.get("description", "")
-                )
-                db.add(icd_map)
-                await db.commit()
-                print(f"✅ Created new ICDConditionMap entry for {icd_code}")
-            except Exception as e:
-                print(f"❌ Error creating ICDConditionMap entry: {str(e)}")
-                raise HTTPException(500, f"Error creating ICD code mapping: {str(e)}")
-        
-        # Update the encounter with the primary ICD code
-        print(f"🔄 Updating encounter {encounter_id} with primary_icd_code: {icd_code}")
-        encounter.primary_icd_code = icd_code
-        await db.commit()
-        
-        # Verify the update was successful by refreshing the encounter from the database
-        await db.refresh(encounter)
-        print(f"✅ Successfully updated encounter with ICD code. Verified: primary_icd_code is now '{encounter.primary_icd_code}'")
-        
-        # Also verify that we can retrieve the ICD code correctly
-        # Make sure to call unique() on the result since it may contain joined eager loads
-        verify_result = await db.execute(
-            select(Encounter).where(Encounter.id == encounter_id)
-        )
-        verify_encounter = verify_result.unique().scalar_one_or_none()
-        print(f"🔍 Double verification: primary_icd_code from fresh query is '{verify_encounter.primary_icd_code}'")
-        
-        return {"message": "ICD code added successfully", "icd_code": icd_code}
-    except Exception as e:
-        print(f"❌ Error updating encounter with ICD code: {str(e)}")
-        raise HTTPException(500, f"Error updating encounter: {str(e)}")
-
-
-@router.delete("/{encounter_id}/icd-codes")
-async def remove_icd_code_from_encounter(
-    encounter_id: int,
-    current_user=Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
-):
-    """
-    Remove the ICD code from an encounter
-    """
-    # Check if encounter exists
-    result = await db.execute(
-        select(Encounter).where(Encounter.id == encounter_id)
-    )
-    encounter = result.scalar_one_or_none()
-    
-    if not encounter:
-        raise HTTPException(404, "Encounter not found")
-    
-    # Clear the primary ICD code
-    encounter.primary_icd_code = None
-    await db.commit()
-    
-    return {"message": "ICD code removed successfully"}

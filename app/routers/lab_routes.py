@@ -1,4 +1,3 @@
-# app/routers/labs.py
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
@@ -25,7 +24,6 @@ async def get_all_test_codes(current_user=Depends(get_current_user), db: AsyncSe
     return [{"test_code": t.test_code } for t in tests]
 
 
-# 2 - test detail
 @router.get("/test/{test_code}", response_model=LabTestDetail)
 async def get_test_details(test_code: str, current_user=Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     if current_user.role not in ["doctor", "hospital", "labassistant"]:
@@ -35,7 +33,6 @@ async def get_test_details(test_code: str, current_user=Depends(get_current_user
     if not test:
         raise HTTPException(status_code=404, detail="Test code not found")
     return test
-
 
 @router.get("/requests")
 async def get_all_lab_requests(
@@ -70,8 +67,6 @@ async def get_all_lab_requests(
 
     return out
 
-
-# 3 - create lab orders
 @router.post("/orders/{encounter_id}", response_model=List[LabOrderResponse])
 async def create_lab_orders(
     encounter_id: int,
@@ -104,8 +99,6 @@ async def create_lab_orders(
     await db.commit()
     return lab_orders
 
-
-# 4 - upload lab result (store file_key)
 @router.post("/results")
 async def add_lab_result(
     lab_order_id: int = Form(...),
@@ -155,7 +148,6 @@ async def add_lab_result(
         "file_key": file_key
     }
 
-# 5 - list orders for encounter
 @router.get("/orders/{encounter_id}", response_model=List[LabOrderResponse])
 async def get_lab_orders(encounter_id: int, current_user=Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     if current_user.role not in ["doctor", "hospital", "labassistant", "patient"]:
@@ -173,7 +165,6 @@ async def get_my_lab_results(current_user=Depends(get_current_user), db: AsyncSe
         select(Patient).where(Patient.user_id == current_user.id)
     )
     
-    # FIX: use unique() before scalar_one_or_none()
     patient = r.unique().scalar_one_or_none()
 
     if not patient:
@@ -206,7 +197,6 @@ async def get_my_lab_results(current_user=Depends(get_current_user), db: AsyncSe
             "file_key": result.file_key if result else None,
             "created_at": result.created_at if result else None
         })
-
     return out
 
 # 7 - doctor: results for my patients (includes presigned URLs)
@@ -277,6 +267,9 @@ async def get_hospital_lab_results(current_user=Depends(get_current_user), db: A
 
         out.append({
             "lab_order_id": order.id,
+            "patient_public_id": patient.public_id,
+            "patient_name": f"{patient.first_name} {patient.last_name}",
+            "test_name": order.test_name,
             "result_value": result.result_value if result else None,
             "notes": result.notes if result else None,
             "view_url": view_url,
@@ -284,6 +277,7 @@ async def get_hospital_lab_results(current_user=Depends(get_current_user), db: A
             "file_key": result.file_key if result else None,
             "created_at": result.created_at if result else None
         })
+
     return out
 
 # View PDF securely (inline)
