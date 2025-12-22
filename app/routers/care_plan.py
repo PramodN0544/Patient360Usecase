@@ -130,13 +130,53 @@ async def generate_care_plan_with_llm(input_data: Dict[str, Any]) -> Dict[str, A
       "tasks": [
         {{
           "task_id": "task_001",
-          "type": "lab_test",
+          "type": "labs",
           "title": "Repeat HbA1c",
           "description": "Repeat HbA1c test in 3 months to assess glycemic improvement.",
           "frequency": "once",
           "due_date": "2026-03-09",
           "assigned_to": "provider",
           "requires_clinician_review": false
+        }},
+        {{
+          "task_id": "task_002",
+          "type": "meds",
+          "title": "Adjust Insulin Dosage",
+          "description": "Adjust insulin dosage based on blood glucose readings.",
+          "frequency": "daily",
+          "due_date": null,
+          "assigned_to": "patient",
+          "requires_clinician_review": true
+        }},
+        {{
+          "task_id": "task_003",
+          "type": "lifestyle",
+          "title": "Regular Exercise",
+          "description": "Engage in moderate physical activity for 30 minutes, 5 days a week.",
+          "frequency": "weekly",
+          "due_date": null,
+          "assigned_to": "patient",
+          "requires_clinician_review": false
+        }},
+        {{
+          "task_id": "task_004",
+          "type": "diet",
+          "title": "Low Carb Diet Plan",
+          "description": "Follow the provided low carbohydrate meal plan.",
+          "frequency": "daily",
+          "due_date": null,
+          "assigned_to": "patient",
+          "requires_clinician_review": false
+        }},
+        {{
+          "task_id": "task_005",
+          "type": "medicine",
+          "title": "Start Metformin",
+          "description": "Take Metformin 500mg twice daily with meals.",
+          "frequency": "daily",
+          "due_date": null,
+          "assigned_to": "patient",
+          "requires_clinician_review": true
         }},
         ...
       ],
@@ -149,6 +189,21 @@ async def generate_care_plan_with_llm(input_data: Dict[str, Any]) -> Dict[str, A
         "created_by": "system"
       }}
     }}
+    
+    When creating tasks, use the following task types:
+    - "labs" for laboratory tests and diagnostics
+    - "meds" for medication-related tasks
+    - "lifestyle" for lifestyle modifications like exercise
+    - "diet" for dietary recommendations
+    - "medicine" for specific medication prescriptions
+    - "lab_test" (legacy type)
+    - "monitoring" (legacy type)
+    - "education" (legacy type)
+    - "visit" (legacy type)
+    - "screening" (legacy type)
+    - "referral" (legacy type)
+    
+    Try to use the newer task types (labs, meds, lifestyle, diet, medicine) when appropriate.
     """
     
     payload = {
@@ -269,7 +324,7 @@ def create_fallback_care_plan(input_data: Dict[str, Any], error_reason: str) -> 
         "tasks": [
             {
                 "task_id": "task_001",
-                "type": "follow_up",
+                "type": "visit",
                 "title": "Schedule Follow-up Appointment",
                 "description": "Please schedule a follow-up appointment with your doctor in 2 weeks.",
                 "frequency": "once",
@@ -279,9 +334,39 @@ def create_fallback_care_plan(input_data: Dict[str, Any], error_reason: str) -> 
             },
             {
                 "task_id": "task_002",
-                "type": "medication",
+                "type": "meds",
                 "title": "Continue Current Medications",
                 "description": "Continue taking your current medications as prescribed.",
+                "frequency": "daily",
+                "due_date": None,
+                "assigned_to": "patient",
+                "requires_clinician_review": False
+            },
+            {
+                "task_id": "task_003",
+                "type": "labs",
+                "title": "Basic Lab Tests",
+                "description": "Complete basic lab tests as recommended by your doctor.",
+                "frequency": "once",
+                "due_date": (datetime.now().date() + timedelta(days=7)).isoformat(),
+                "assigned_to": "patient",
+                "requires_clinician_review": True
+            },
+            {
+                "task_id": "task_004",
+                "type": "lifestyle",
+                "title": "Regular Exercise",
+                "description": "Engage in moderate physical activity for 30 minutes, 5 days a week.",
+                "frequency": "weekly",
+                "due_date": None,
+                "assigned_to": "patient",
+                "requires_clinician_review": False
+            },
+            {
+                "task_id": "task_005",
+                "type": "diet",
+                "title": "Healthy Diet",
+                "description": "Follow a balanced diet as recommended by your healthcare provider.",
                 "frequency": "daily",
                 "due_date": None,
                 "assigned_to": "patient",
