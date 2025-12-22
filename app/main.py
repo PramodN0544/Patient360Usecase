@@ -20,6 +20,7 @@ from app.routers import lab_routes
 from app.routers import hospitals
 from app.routers import care_plan
 from app.routers import chat_api
+from app.routers import patient_tasks
 from app.routers import icd_codes
 from fastapi import WebSocket, WebSocketDisconnect, Query
 from app.web_socket import chat_manager, get_user_from_token, check_chat_access, process_websocket_message
@@ -65,6 +66,7 @@ app.include_router(auth_router)
 app.include_router(hospitals.router)
 app.include_router(chat_api.router)
 app.include_router(tasks.router)
+app.include_router(patient_tasks.router)
 app.include_router(admin_users.router)
 app.include_router(icd_codes.router)
 
