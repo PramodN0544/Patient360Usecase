@@ -281,7 +281,7 @@ async def create_doctor(
         "message": "Doctor created and credentials emailed successfully"
     }
 
-# CREATE PATIENT (User + Patient)
+
 @app.post("/patients")
 async def create_patient(
     patient_in: schemas.PatientCreate,

@@ -898,8 +898,6 @@ async def get_encounter(
 
     return response
 
-
-# GENERATE PDF FOR ENCOUNTER
 # GENERATE PDF FOR ENCOUNTER
 @router.post("/{encounter_id}/generate-pdf", response_model=EncounterOut)
 async def generate_encounter_pdf(

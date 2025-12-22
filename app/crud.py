@@ -88,29 +88,21 @@ async def create_doctor(db: AsyncSession, data: dict, hospital_id: UUID):
 
 async def create_patient(db: AsyncSession, data: schemas.PatientCreate):
 
-    # ----------------------------
-    # Create user
-    # ----------------------------
     default_password = utils.generate_default_password()
     user = await create_user(
         db=db,
         email=data.email,
         password=default_password,
-        full_name=f"{data.first_name} {data.last_name}",
+        full_name=f"{data.first_name} {data.middle_name}{data.last_name}",
         role="patient"
     )
 
-    # ----------------------------
-    # Determine insurance status
-    # ----------------------------
-    has_medical = bool(data.patient_insurances)
-    has_pharmacy = bool(data.pharmacy_insurances)
 
-    insurance_status = "Insured" if (has_medical or has_pharmacy) else "Self-Pay"
+    # has_medical = bool(data.patient_insurances)
+    # has_pharmacy = bool(data.pharmacy_insurances)
 
-    # ----------------------------
-    # Create patient
-    # ----------------------------
+    # insurance_status = "Insured" if (has_medical or has_pharmacy) else "Self-Pay"
+
     patient_dict = data.dict(
         exclude={
             "allergies",
@@ -121,8 +113,11 @@ async def create_patient(db: AsyncSession, data: schemas.PatientCreate):
     )
 
     patient_dict["user_id"] = user.id
+    patient_dict.setdefault("country", "USA")
+    patient_dict.setdefault("preferred_contact", "phone")
+    patient_dict.setdefault("is_active", True)
+    patient_dict.setdefault("phone_verified", False)
     
-    # Calculate and store patient age if DOB is provided
     if data.dob:
         today = datetime.now().date()
         age = today.year - data.dob.year
@@ -130,8 +125,7 @@ async def create_patient(db: AsyncSession, data: schemas.PatientCreate):
             age -= 1
         patient_dict["age"] = age
         print(f"📊 Patient age calculated during creation: {age}")
-    
-    # ADD INSURANCE TOGGLE HANDLING HERE
+   
     if data.is_insured:
         patient_dict["insurance_status"] = "Insured"     
     else:
@@ -141,22 +135,15 @@ async def create_patient(db: AsyncSession, data: schemas.PatientCreate):
    
     patient = models.Patient(**patient_dict)
     db.add(patient)
-    await db.flush()   # 🔑 get patient.id
+    await db.flush()  
 
-    # ----------------------------
-    # Allergies
-    # ----------------------------
     for allergy in data.allergies or []:
         db.add(models.Allergy(**allergy.dict(), patient_id=patient.id))
 
-    # ----------------------------
-    # Consents
-    # ----------------------------
+   
     db.add(models.PatientConsent(**data.consents.dict(), patient_id=patient.id))
 
-    # ----------------------------
-    # Medical Insurance
-    # ----------------------------
+   
     for insurance_data in data.patient_insurances or []:
 
         master = await db.get(models.InsuranceMaster, insurance_data.id)
@@ -182,9 +169,7 @@ async def create_patient(db: AsyncSession, data: schemas.PatientCreate):
             benefits_verified=insurance_data.benefits_verified or False
         ))
 
-    # ----------------------------
-    # Pharmacy Insurance
-    # ----------------------------
+
     for pharm_data in data.pharmacy_insurances or []:
 
         master = await db.get(models.PharmacyInsuranceMaster, pharm_data.id)
@@ -209,7 +194,6 @@ async def create_patient(db: AsyncSession, data: schemas.PatientCreate):
             is_preferred=pharm_data.is_preferred
         ))
 
-    # ----------------------------
     await db.commit()
     await db.refresh(patient)
 
@@ -221,20 +205,47 @@ async def get_patient_by_public_id(db: AsyncSession, public_id: str):
     )
     return result.scalars().first()
 
-
 async def update_patient_by_public_id(
     db: AsyncSession,
     public_id: str,
-    patient_in
+    patient_in: schemas.PatientUpdate
 ):
     patient = await get_patient_by_public_id(db, public_id)
-    
     if not patient:
         return None
 
     data = patient_in.dict(exclude_unset=True)
 
+    if "ssn" in data and data["ssn"]:
+        result = await db.execute(
+            select(models.Patient)
+            .where(
+                models.Patient.ssn == data["ssn"],
+                models.Patient.id != patient.id
+            )
+        )
+        if result.scalar_one_or_none():
+            raise HTTPException(
+                status_code=409,
+                detail="Another patient already exists with this SSN"
+            )
+
     ALLOWED_UPDATE_FIELDS = {
+        # Identity / Demographics
+        "first_name",
+        "middle_name",
+        "last_name",
+        "suffix",
+        "dob",
+        "gender",
+        "marital_status",
+        "preferred_language",
+        "race",
+        "ethnicity",
+        "interpreter_required",
+        "citizenship_status",
+        "visa_type",
+
         # Contact
         "phone",
         "alternate_phone",
@@ -246,22 +257,7 @@ async def update_patient_by_public_id(
         "city",
         "state",
         "zip_code",
-        "photo_url",
-        "marital_status",
-        "preferred_contact",
-        "dob",  # Allow updating date of birth
-
-        # Demographics
-        "marital_status",
-        "preferred_language",
-        "race",
-        "ethnicity",
-        "interpreter_required",
-
-        # PCP
-        "pcp_name",
-        "pcp_npi",
-        "pcp_phone",
+        "country",
 
         # Physical
         "weight",
@@ -280,33 +276,47 @@ async def update_patient_by_public_id(
         "caregiver_phone",
         "caregiver_email",
 
-        # Profile
+        # PCP
+        "pcp_name",
+        "pcp_npi",
+        "pcp_phone",
+
+        # Media
         "photo_url",
+        "id_proof_document",
+
+        # Insurance flags
+        "is_insured",
+        "insurance_status",
     }
-    # Only update allowed fields
-    for field in ALLOWED_UPDATE_FIELDS:
-        if field in data:
-            setattr(patient, field, data[field])
-    
-    # Recalculate age if DOB is updated
+    for field, value in data.items():
+        if field in ALLOWED_UPDATE_FIELDS:
+            setattr(patient, field, value)
+
     if "dob" in data and data["dob"]:
         today = datetime.now().date()
         age = today.year - data["dob"].year
-        if today.month < data["dob"].month or (today.month == data["dob"].month and today.day < data["dob"].day):
+        if (today.month, today.day) < (data["dob"].month, data["dob"].day):
             age -= 1
         patient.age = age
         print(f"📊 Patient age recalculated during update: {age}")
 
-    # Sync email with User table
     if "email" in data and patient.user_id:
         user = await db.get(models.User, patient.user_id)
         if user:
             user.email = data["email"]
-
-    await db.commit()
+            
+    try:
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="Update failed due to duplicate or invalid data"
+        )
     await db.refresh(patient)
-
     return patient
+
 
 async def create_password_reset_token(db: AsyncSession, user_id: UUID, token: str, expires_at: datetime) -> PasswordResetToken:
     new_token = PasswordResetToken(user_id=user_id, token=token, expires_at=expires_at)

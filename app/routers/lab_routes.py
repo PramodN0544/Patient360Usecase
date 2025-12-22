@@ -447,8 +447,16 @@ async def get_doctor_lab_results_filtered(
     out = []
     for lab_order, lab_result, patient in rows:
         if lab_result and lab_result.file_key:
-            view_url = generate_presigned_url(lab_result.file_key, "inline")
-            download_url = generate_presigned_url(lab_result.file_key, "attachment")
+            view_url = generate_presigned_url(
+                file_key=lab_result.file_key,
+                disposition="inline",
+                expiration=3600
+            )
+            download_url = generate_presigned_url(
+                file_key=lab_result.file_key, 
+                disposition="attachment",
+                expiration=3600
+            )
         else:
             view_url = download_url = None
 
