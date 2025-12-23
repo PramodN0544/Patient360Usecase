@@ -180,46 +180,69 @@ class PatientPharmacyInsuranceOut(BaseModel):
     policy_number: str
 
     group_number: Optional[str] = None
-    formulary_type: Optional[str] = None
-    prior_auth_required: bool
+    bin_number: Optional[str] = None
+    pcn_number: Optional[str] = None
 
+    formulary_type: Optional[str] = None
+    prior_auth_required: Optional[bool] = False
     standard_copay: Optional[float] = None
     deductible_amount: Optional[float] = None
 
     effective_date: date
-    expiry_date: date
+    expiry_date: Optional[date] = None
 
-    status: Optional[str] = None             
     insurance_type: Optional[str] = None
+    benefits_verified: Optional[bool] = None
+    status: Optional[str] = None
+
     pharmacy_name: Optional[str] = None
     pharmacy_phone: Optional[str] = None
     pharmacy_address: Optional[str] = None
-    is_preferred: Optional[bool] = False
+    is_preferred: Optional[bool] = None
+
     created_at: datetime
     updated_at: Optional[datetime] = None
 
     class Config:
         orm_mode = True
 
+
 class PatientInsuranceOut(BaseModel):
     id: int
     patient_id: int
     insurance_id: int
+
     provider_name: str
     plan_name: str
-    plan_type: Optional[str]
-    coverage_percent: Optional[float]
-    copay_amount: Optional[float]
-    deductible_amount: Optional[float]
-    out_of_pocket_max: Optional[float]
+    plan_type: Optional[str] = None
+
+    policy_number: str
+    group_number: Optional[str] = None
+
+    subscriber_name: str
+    subscriber_relationship: str
+    subscriber_dob: Optional[date] = None
+
+    payer_phone: Optional[str] = None
+
+    coverage_percent: Optional[float] = None
+    copay_amount: Optional[float] = None
+    deductible_amount: Optional[float] = None
+    out_of_pocket_max: Optional[float] = None
+
     effective_date: date
-    expiry_date: date
-    status: Optional[str] = None           
+    expiry_date: Optional[date] = None
+
     insurance_type: Optional[str] = None
+    benefits_verified: Optional[bool] = None
+    status: Optional[str] = None
+
     created_at: datetime
+    updated_at: Optional[datetime] = None
 
     class Config:
         orm_mode = True
+
 
 class PatientInsuranceCreate(BaseModel):
     # frontend sends plan.id

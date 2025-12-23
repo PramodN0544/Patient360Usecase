@@ -97,12 +97,6 @@ async def create_patient(db: AsyncSession, data: schemas.PatientCreate):
         role="patient"
     )
 
-
-    # has_medical = bool(data.patient_insurances)
-    # has_pharmacy = bool(data.pharmacy_insurances)
-
-    # insurance_status = "Insured" if (has_medical or has_pharmacy) else "Self-Pay"
-
     patient_dict = data.dict(
         exclude={
             "allergies",
@@ -126,13 +120,12 @@ async def create_patient(db: AsyncSession, data: schemas.PatientCreate):
         patient_dict["age"] = age
         print(f"📊 Patient age calculated during creation: {age}")
    
-    if data.is_insured:
-        patient_dict["insurance_status"] = "Insured"     
-    else:
-        patient_dict["insurance_status"] = "Self-Pay"    
-        data.patient_insurances = []                     
-        data.pharmacy_insurances = []                    
-   
+    has_medical = bool(data.patient_insurances)
+    has_pharmacy = bool(data.pharmacy_insurances)
+
+    patient_dict["insurance_status"] = "Insured" if (has_medical or has_pharmacy) else "Self-Pay"
+    patient_dict["is_insured"] = has_medical or has_pharmacy
+
     patient = models.Patient(**patient_dict)
     db.add(patient)
     await db.flush()  
@@ -153,10 +146,14 @@ async def create_patient(db: AsyncSession, data: schemas.PatientCreate):
         db.add(models.PatientInsurance(
             patient_id=patient.id,
             insurance_id=master.id,
+
             provider_name=master.provider_name,
             plan_name=master.plan_name,
             plan_type=master.plan_type,
             coverage_percent=master.coverage_percent,
+            copay_amount=master.copay_amount,
+            deductible_amount=master.deductible_amount,
+            out_of_pocket_max=master.out_of_pocket_max,
             policy_number=insurance_data.policy_number,
             group_number=insurance_data.group_number,
             subscriber_name=insurance_data.subscriber_name,
@@ -179,9 +176,15 @@ async def create_patient(db: AsyncSession, data: schemas.PatientCreate):
         db.add(models.PatientPharmacyInsurance(
             patient_id=patient.id,
             pharmacy_insurance_id=master.id,
+
             provider_name=master.provider_name,
             plan_name=master.plan_name,
             policy_number=pharm_data.policy_number,
+            group_number=master.group_number,
+            formulary_type=master.formulary_type,
+            prior_auth_required=master.prior_auth_required,
+            standard_copay=master.standard_copay,
+            deductible_amount=master.deductible_amount,
             bin_number=pharm_data.bin_number,
             pcn_number=pharm_data.pcn_number,
             effective_date=pharm_data.effective_date,
