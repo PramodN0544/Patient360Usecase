@@ -180,46 +180,69 @@ class PatientPharmacyInsuranceOut(BaseModel):
     policy_number: str
 
     group_number: Optional[str] = None
-    formulary_type: Optional[str] = None
-    prior_auth_required: bool
+    bin_number: Optional[str] = None
+    pcn_number: Optional[str] = None
 
+    formulary_type: Optional[str] = None
+    prior_auth_required: Optional[bool] = False
     standard_copay: Optional[float] = None
     deductible_amount: Optional[float] = None
 
     effective_date: date
-    expiry_date: date
+    expiry_date: Optional[date] = None
 
-    status: Optional[str] = None             
     insurance_type: Optional[str] = None
+    benefits_verified: Optional[bool] = None
+    status: Optional[str] = None
+
     pharmacy_name: Optional[str] = None
     pharmacy_phone: Optional[str] = None
     pharmacy_address: Optional[str] = None
-    is_preferred: Optional[bool] = False
+    is_preferred: Optional[bool] = None
+
     created_at: datetime
     updated_at: Optional[datetime] = None
 
     class Config:
         orm_mode = True
 
+
 class PatientInsuranceOut(BaseModel):
     id: int
     patient_id: int
     insurance_id: int
+
     provider_name: str
     plan_name: str
-    plan_type: Optional[str]
-    coverage_percent: Optional[float]
-    copay_amount: Optional[float]
-    deductible_amount: Optional[float]
-    out_of_pocket_max: Optional[float]
+    plan_type: Optional[str] = None
+
+    policy_number: str
+    group_number: Optional[str] = None
+
+    subscriber_name: str
+    subscriber_relationship: str
+    subscriber_dob: Optional[date] = None
+
+    payer_phone: Optional[str] = None
+
+    coverage_percent: Optional[float] = None
+    copay_amount: Optional[float] = None
+    deductible_amount: Optional[float] = None
+    out_of_pocket_max: Optional[float] = None
+
     effective_date: date
-    expiry_date: date
-    status: Optional[str] = None           
+    expiry_date: Optional[date] = None
+
     insurance_type: Optional[str] = None
+    benefits_verified: Optional[bool] = None
+    status: Optional[str] = None
+
     created_at: datetime
+    updated_at: Optional[datetime] = None
 
     class Config:
         orm_mode = True
+
 
 class PatientInsuranceCreate(BaseModel):
     # frontend sends plan.id
@@ -312,53 +335,93 @@ class PatientOut(BaseModel):
     id: int
     public_id: str
     user_id: Optional[int] = None
+
+    # ---------------- Basic Identity ----------------
     first_name: str
     middle_name: Optional[str] = None
     last_name: str
     suffix: Optional[str] = None
     mrn: Optional[str] = None
     ssn: Optional[str] = None
+
     dob: Optional[date] = None
     gender: Optional[str] = None
     marital_status: Optional[str] = None
+
+    # ---------------- Demographics ----------------
     preferred_language: Optional[str] = None
     race: Optional[str] = None
     ethnicity: Optional[str] = None
     interpreter_required: Optional[bool] = False
+
+    # ---------------- Contact ----------------
     phone: Optional[str] = None
     alternate_phone: Optional[str] = None
     email: Optional[EmailStr] = None
     preferred_contact: Optional[str] = "phone"
+
     address: Optional[str] = None
     city: Optional[str] = None
     state: Optional[str] = None
     zip_code: Optional[str] = None
     country: Optional[str] = None
+
+    # ---------------- Citizenship ----------------
     citizenship_status: Optional[str] = None
     visa_type: Optional[str] = None
+
+    # ---------------- Physical ----------------
     weight: Optional[float] = None
     height: Optional[float] = None
+
+    # ---------------- Lifestyle ----------------
     smoking_status: Optional[str] = None
     alcohol_use: Optional[str] = None
     diet: Optional[str] = None
     exercise_frequency: Optional[str] = None
+
+    # ---------------- Caregiver ----------------
     has_caregiver: Optional[bool] = False
     caregiver_name: Optional[str] = None
     caregiver_relationship: Optional[str] = None
     caregiver_phone: Optional[str] = None
     caregiver_email: Optional[str] = None
+
+    # ---------------- PCP ----------------
     pcp_name: Optional[str] = None
     pcp_npi: Optional[str] = None
     pcp_phone: Optional[str] = None
+    pcp_facility: Optional[str] = None
+
+    # ---------------- Emergency Contact ----------------
+    emergency_contact_name: Optional[str] = None
+    emergency_contact_relationship: Optional[str] = None
+    emergency_phone: Optional[str] = None
+    emergency_alternate_phone: Optional[str] = None
+
+    # ---------------- Insurance ----------------
     is_insured: Optional[bool] = False
     insurance_status: Optional[str] = "Self-Pay"
+
+    # ---------------- Pharmacy ----------------
+    preferred_pharmacy_name: Optional[str] = None
+    preferred_pharmacy_address: Optional[str] = None
+    preferred_pharmacy_phone: Optional[str] = None
+
+    # ---------------- Documents ----------------
     photo_url: Optional[str] = None
     id_proof_document: Optional[str] = None
+
+    # ---------------- Account Status ----------------
     is_active: Optional[bool] = True
+    phone_verified: Optional[bool] = False
+    phone_verified_at: Optional[datetime] = None
     deactivated_at: Optional[datetime] = None
+
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 
+    # ---------------- Relationships ----------------
     allergies: List[AllergyOut] = []
     consents: Optional[PatientConsentOut] = None
     patient_insurances: List[PatientInsuranceOut] = []
@@ -367,6 +430,7 @@ class PatientOut(BaseModel):
 
     class Config:
         orm_mode = True
+
 
 class Token(BaseModel):
     access_token: str

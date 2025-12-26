@@ -35,7 +35,6 @@ def _time_to_str(t):
         return str(t)
 
 # GET /appointments/doctors
-# Filter doctors by hospital_id or specialty
 @router.get("/doctors")
 async def get_doctors(
     hospital_id: Optional[int] = Query(None, description="Filter by hospital id"),
@@ -545,3 +544,62 @@ async def get_my_appointments(
         })
 
     return enriched
+
+
+@router.put("/{appointment_id}/cancel")
+async def cancel_appointment(
+    appointment_id: int,
+    current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    # Fetch appointment
+    result = await db.execute(
+        select(Appointment).where(Appointment.id == appointment_id)
+    )
+    appointment = result.scalar_one_or_none()
+
+    if not appointment:
+        raise HTTPException(status_code=404, detail="Appointment not found")
+
+    # Authorization check
+    if current_user.role == "patient":
+        patient_result = await db.execute(
+            select(Patient).where(Patient.user_id == current_user.id)
+        )
+        patient = patient_result.scalar_one_or_none()
+
+        if not patient or appointment.patient_id != patient.id:
+            raise HTTPException(status_code=403, detail="Not allowed to cancel this appointment")
+
+    elif current_user.role not in ("doctor", "hospital", "admin"):
+        raise HTTPException(status_code=403, detail="Not permitted")
+
+    # Prevent double cancel
+    if appointment.status == "Cancelled":
+        raise HTTPException(status_code=400, detail="Appointment already cancelled")
+
+    # Update status
+    appointment.status = "Cancelled"
+    appointment.updated_at = datetime.utcnow()
+
+    await db.commit()
+    await db.refresh(appointment)
+
+    # Create notification
+    notif = Notification(
+        user_id=current_user.id,
+        title="Appointment Cancelled",
+        desc=f"Your appointment on {appointment.appointment_date} "
+             f"at {appointment.appointment_time.strftime('%H:%M') if appointment.appointment_time else ''} "
+             f"has been cancelled.",
+        type="appointment",
+        status="unread",
+    )
+    db.add(notif)
+    await db.commit()
+
+    return {
+        "message": "Appointment cancelled successfully",
+        "appointment_id": appointment.id,
+        "status": appointment.status
+    }
