@@ -1,7 +1,7 @@
 # app/config.py
 import os
 from dotenv import load_dotenv
-from pydantic import BaseSettings
+from pydantic_settings import BaseSettings
 load_dotenv()  # load environment variables from .env
 
 JWT_SECRET = os.getenv("JWT_SECRET", "change_this_secret")
@@ -12,3 +12,6 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 APP_HOST = os.getenv("APP_HOST", "0.0.0.0")
 APP_PORT = int(os.getenv("APP_PORT", 8000))
 
+class Config:
+    from_attributes = True
+    validate_by_name = True
