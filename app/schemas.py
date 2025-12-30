@@ -219,8 +219,8 @@ class PatientInsuranceOut(BaseModel):
     policy_number: str
     group_number: Optional[str] = None
 
-    subscriber_name: str
-    subscriber_relationship: str
+    subscriber_name: Optional[str] = None
+    subscriber_relationship: Optional[str] = None
     subscriber_dob: Optional[date] = None
 
     payer_phone: Optional[str] = None

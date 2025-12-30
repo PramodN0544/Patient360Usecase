@@ -240,9 +240,11 @@ async def get_doctor_lab_results(current_user=Depends(get_current_user), db: Asy
     return out
 
 
-# 8 - hospital: all results for hospital
 @router.get("/hospital-results", response_model=List[LabResultResponse])
-async def get_hospital_lab_results(current_user=Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+async def get_hospital_lab_results(
+    current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
     if current_user.role != "hospital":
         raise HTTPException(status_code=403, detail="Access denied")
 
@@ -250,18 +252,29 @@ async def get_hospital_lab_results(current_user=Depends(get_current_user), db: A
 
     q = await db.execute(
         select(LabOrder, LabResult, Patient, Doctor)
-        .join(LabResult, LabResult.lab_order_id == LabOrder.id, isouter=True)
+        .join(LabResult, LabResult.lab_order_id == LabOrder.id)  # ✅ INNER JOIN
         .join(Patient, Patient.id == LabOrder.patient_id)
         .join(Doctor, Doctor.id == LabOrder.doctor_id)
-        .where(Doctor.hospital_id == hospital_id)
+        .where(
+            Doctor.hospital_id == hospital_id,
+            LabOrder.status == "Completed"   # ✅ CRITICAL FIX
+        )
+        .order_by(LabResult.created_at.desc())
     )
-    rows = q.unique().all()
 
+    rows = q.unique().all()
     out = []
+
     for order, result, patient, doctor in rows:
         if result and result.file_key:
-            view_url = generate_presigned_url(result.file_key, disposition="inline")
-            download_url = generate_presigned_url(result.file_key, disposition="attachment")
+            view_url = generate_presigned_url(
+                file_key=result.file_key,
+                disposition="inline"
+            )
+            download_url = generate_presigned_url(
+                file_key=result.file_key,
+                disposition="attachment"
+            )
         else:
             view_url = download_url = None
 
@@ -270,15 +283,15 @@ async def get_hospital_lab_results(current_user=Depends(get_current_user), db: A
             "patient_public_id": patient.public_id,
             "patient_name": f"{patient.first_name} {patient.last_name}",
             "test_name": order.test_name,
-            "result_value": result.result_value if result else None,
-            "notes": result.notes if result else None,
+            "result_value": result.result_value,
+            "notes": result.notes,
             "view_url": view_url,
             "download_url": download_url,
-            "file_key": result.file_key if result else None,
-            "created_at": result.created_at if result else None
+            "file_key": result.file_key,
+            "created_at": result.created_at,
         })
-
     return out
+
 
 # View PDF securely (inline)
 @router.get("/view/{lab_result_id}")
