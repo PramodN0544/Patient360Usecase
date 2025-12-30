@@ -23,9 +23,11 @@ from app.routers import chat_api
 from app.routers import patient_tasks
 from app.routers import icd_codes
 from app.chatbot.api import router as chatbot_router
+from app.chatbot.pdf_api import router as pdf_api_router
 from fastapi import WebSocket, WebSocketDisconnect, Query
 from app.web_socket import chat_manager, get_user_from_token, check_chat_access, process_websocket_message
 from app.web_socket import socket_app, sio
+from app.routers import wearable_data
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -71,6 +73,8 @@ app.include_router(patient_tasks.router)
 app.include_router(admin_users.router)
 app.include_router(icd_codes.router)
 app.include_router(chatbot_router)
+app.include_router(pdf_api_router)
+app.include_router(wearable_data.router)
 
 scheduler = AsyncIOScheduler()
 

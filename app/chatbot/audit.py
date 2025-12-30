@@ -51,9 +51,9 @@ async def log_chat_interaction(
             "user_id": user_id,
             "timestamp": datetime.utcnow(),
 
-            # 🔐 CRITICAL FIX: store hashes only
-            "message_hash": _sha256(message),
-            "response_hash": _sha256(response),
+            # Store the actual message and response
+            "message": message,
+            "response": response,
 
             # ✅ Metadata only
             "query_type": query_type,
@@ -95,9 +95,9 @@ async def log_chat_interaction_simple(
             "user_id": user_id,
             "timestamp": datetime.utcnow(),
 
-            # 🔐 Hash only
-            "message_hash": _sha256(message),
-            "response_hash": _sha256(response),
+            # Store the actual message and response
+            "message": message,
+            "response": response,
 
             "query_type": query_type,
             "data_accessed": json.dumps(data_accessed) if data_accessed else None

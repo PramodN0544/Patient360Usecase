@@ -73,7 +73,8 @@ async def get_data_scope(user: User, db: AsyncSession) -> DataScope:
     # Define allowed data types based on role
     if user.role == "patient":
         allowed_data_types = {
-            "labs", "medications", "vitals", "appointments", "care_plans"
+            "labs", "medications", "vitals", "appointments", "care_plans",
+            "wearable_data", "heart_rate", "temperature", "blood_pressure", "oxygen_level"
         }
         
         # Get patient ID
@@ -100,7 +101,8 @@ async def get_data_scope(user: User, db: AsyncSession) -> DataScope:
     elif user.role == "doctor":
         allowed_data_types = {
             "labs", "medications", "vitals", "appointments", "care_plans",
-            "encounters", "diagnoses"
+            "encounters", "diagnoses", "wearable_data", "heart_rate",
+            "temperature", "blood_pressure", "oxygen_level"
         }
         
         # Get doctor ID

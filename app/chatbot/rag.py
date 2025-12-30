@@ -2,87 +2,132 @@
 Retrieval-Augmented Generation (RAG) Pipeline for the Patient360 Chatbot.
 
 This module implements a RAG pipeline for retrieving medical knowledge
-and providing accurate responses to user queries.
+and providing accurate responses to user queries. It supports PDF uploads
+for expanding the knowledge base.
 """
 
 import os
 import json
+import uuid
+import time
 import logging
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 import chromadb
 from chromadb.utils import embedding_functions
 from openai import OpenAI
 
-import os
+# Import from task_store instead of pdf_api to avoid circular imports
+from app.chatbot.task_store import background_tasks, save_background_tasks
+
+# Disable ChromaDB telemetry
 os.environ["ANONYMIZED_TELEMETRY"] = "False"
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Default medical knowledge chunks for demonstration
-DEFAULT_MEDICAL_KNOWLEDGE = [
-    {
-        "id": "diabetes-1",
-        "text": "Diabetes is a chronic health condition that affects how your body turns food into energy. Most of the food you eat is broken down into sugar (glucose) and released into your bloodstream. When your blood sugar goes up, it signals your pancreas to release insulin. Insulin acts like a key to let the blood sugar into your body's cells for use as energy.",
-        "metadata": {
-            "source": "CDC",
-            "topic": "diabetes",
-            "subtopic": "overview",
-            "audience": "patient"
-        }
-    },
-    {
-        "id": "diabetes-2",
-        "text": "There are three main types of diabetes: Type 1, Type 2, and gestational diabetes. Type 1 diabetes is caused by an autoimmune reaction that stops your body from making insulin. Type 2 diabetes occurs when your body doesn't use insulin well and can't keep blood sugar at normal levels. Gestational diabetes develops in pregnant women who have never had diabetes.",
-        "metadata": {
-            "source": "CDC",
-            "topic": "diabetes",
-            "subtopic": "types",
-            "audience": "patient"
-        }
-    },
-    {
-        "id": "hypertension-1",
-        "text": "Hypertension, also known as high blood pressure, is a common condition in which the long-term force of the blood against your artery walls is high enough that it may eventually cause health problems, such as heart disease. Blood pressure is determined both by the amount of blood your heart pumps and the amount of resistance to blood flow in your arteries.",
-        "metadata": {
-            "source": "Mayo Clinic",
-            "topic": "hypertension",
-            "subtopic": "overview",
-            "audience": "patient"
-        }
-    },
-    {
-        "id": "hypertension-2",
-        "text": "Blood pressure readings are given as two numbers. The top number (systolic) is the pressure in your arteries when your heart beats. The bottom number (diastolic) is the pressure in your arteries when your heart rests between beats. Normal blood pressure is less than 120/80 mm Hg. Hypertension stage 1 is 130-139 or 80-89 mm Hg, and hypertension stage 2 is 140/90 mm Hg or higher.",
-        "metadata": {
-            "source": "American Heart Association",
-            "topic": "hypertension",
-            "subtopic": "diagnosis",
-            "audience": "patient"
-        }
-    },
-    {
-        "id": "diabetes-clinical-1",
-        "text": "The diagnostic criteria for diabetes mellitus include: Fasting plasma glucose ≥126 mg/dL (7.0 mmol/L), or 2-hour plasma glucose ≥200 mg/dL (11.1 mmol/L) during OGTT, or HbA1c ≥6.5% (48 mmol/mol), or random plasma glucose ≥200 mg/dL (11.1 mmol/L) in patients with classic symptoms of hyperglycemia. The test should be repeated to confirm the diagnosis unless unequivocal hyperglycemia is present.",
-        "metadata": {
-            "source": "American Diabetes Association",
-            "topic": "diabetes",
-            "subtopic": "diagnosis",
-            "audience": "clinician"
-        }
-    },
-    {
-        "id": "hypertension-clinical-1",
-        "text": "The 2017 ACC/AHA guidelines define hypertension as BP ≥130/80 mm Hg, while the ESC/ESH guidelines define it as BP ≥140/90 mm Hg. Initial evaluation should include assessment of cardiovascular risk factors, target organ damage, and secondary causes of hypertension. Ambulatory BP monitoring is recommended to confirm the diagnosis, identify white coat or masked hypertension, and evaluate BP control in treated patients.",
-        "metadata": {
-            "source": "ACC/AHA Guidelines",
-            "topic": "hypertension",
-            "subtopic": "diagnosis",
-            "audience": "clinician"
-        }
-    }
-]
+# PDF processing imports
+try:
+    from pypdf import PdfReader
+    from langchain.text_splitter import RecursiveCharacterTextSplitter
+    PDF_SUPPORT = True
+except ImportError:
+    logger.warning("PDF support libraries not installed. PDF processing will be disabled.")
+    PDF_SUPPORT = False
+
+
+class PDFProcessor:
+    """
+    PDF Processing Utility for extracting and chunking text from PDFs.
+    """
+    
+    @staticmethod
+    def extract_text_from_pdf(pdf_path: str) -> str:
+        """
+        Extract text from a PDF file.
+        
+        Args:
+            pdf_path: Path to the PDF file.
+            
+        Returns:
+            The extracted text.
+        """
+        if not PDF_SUPPORT:
+            raise ImportError("PDF support libraries not installed. Please install pypdf and langchain.")
+            
+        try:
+            reader = PdfReader(pdf_path)
+            text = ""
+            for page in reader.pages:
+                text += page.extract_text() + "\n"
+            return text
+        except Exception as e:
+            logger.error(f"Error extracting text from PDF: {e}")
+            raise
+
+    @staticmethod
+    def chunk_text(text: str, chunk_size: int = 1000, chunk_overlap: int = 200) -> List[str]:
+        """
+        Split text into chunks for embedding.
+        
+        Args:
+            text: The text to chunk.
+            chunk_size: The size of each chunk.
+            chunk_overlap: The overlap between chunks.
+            
+        Returns:
+            A list of text chunks.
+        """
+        if not PDF_SUPPORT:
+            raise ImportError("PDF support libraries not installed. Please install pypdf and langchain.")
+            
+        try:
+            text_splitter = RecursiveCharacterTextSplitter(
+                chunk_size=chunk_size,
+                chunk_overlap=chunk_overlap,
+                length_function=len,
+                separators=["\n\n", "\n", " ", ""]
+            )
+            chunks = text_splitter.split_text(text)
+            return chunks
+        except Exception as e:
+            logger.error(f"Error chunking text: {e}")
+            raise
+
+    @staticmethod
+    def prepare_knowledge_items(
+        chunks: List[str], 
+        source: str, 
+        topic: str, 
+        audience: str = "clinician"
+    ) -> List[Dict[str, Any]]:
+        """
+        Prepare knowledge items for the RAG pipeline.
+        
+        Args:
+            chunks: The text chunks.
+            source: The source of the knowledge (e.g., book title).
+            topic: The topic of the knowledge.
+            audience: The target audience (patient or clinician).
+            
+        Returns:
+            A list of knowledge items.
+        """
+        knowledge_items = []
+        for i, chunk in enumerate(chunks):
+            item_id = f"{source.lower().replace(' ', '-')}-{i}-{uuid.uuid4().hex[:8]}"
+            knowledge_items.append({
+                "id": item_id,
+                "text": chunk,
+                "metadata": {
+                    "source": source,
+                    "topic": topic,
+                    "subtopic": f"chunk-{i}",
+                    "audience": audience,
+                    "page": i  # This is approximate and doesn't correspond to actual PDF pages
+                }
+            })
+        return knowledge_items
 
 
 class RAGPipeline:
@@ -103,7 +148,7 @@ class RAGPipeline:
         # Create or get collection
         self.embedding_function = embedding_functions.OpenAIEmbeddingFunction(
             api_key=os.getenv("LLM_API_KEY"),
-            model_name="text-embedding-ada-002"
+            model_name="text-embedding-3-large"
         )
         
         try:
@@ -112,6 +157,14 @@ class RAGPipeline:
                 embedding_function=self.embedding_function
             )
             logger.info(f"Retrieved existing collection: {collection_name}")
+            
+            # Check if collection is empty
+            collection_count = self.collection.count()
+            if collection_count == 0:
+                logger.info("Collection is empty. Please upload knowledge through the admin interface.")
+            else:
+                logger.info(f"Collection contains {collection_count} items.")
+                
         except ValueError:
             # Collection doesn't exist, create it
             self.collection = self.client.create_collection(
@@ -119,28 +172,103 @@ class RAGPipeline:
                 embedding_function=self.embedding_function
             )
             logger.info(f"Created new collection: {collection_name}")
-            
-            # Add default medical knowledge
-            self._add_default_knowledge()
+            logger.info("Collection is empty. Please upload knowledge through the admin interface.")
     
-    def _add_default_knowledge(self):
-        """Add default medical knowledge to the collection."""
+    async def process_pdf(
+        self,
+        pdf_path: str,
+        source: str,
+        topic: str,
+        audience: str = "clinician",
+        chunk_size: int = 1000,
+        chunk_overlap: int = 200,
+        task_id: str = None
+    ) -> Tuple[int, List[str]]:
+        """
+        Process a PDF file and add its content to the knowledge base.
+        
+        Args:
+            pdf_path: Path to the PDF file.
+            source: The source of the knowledge (e.g., book title).
+            topic: The topic of the knowledge.
+            audience: The target audience (patient or clinician).
+            chunk_size: The size of each chunk.
+            chunk_overlap: The overlap between chunks.
+            task_id: Optional task ID for progress tracking.
+            
+        Returns:
+            A tuple of (number of chunks added, list of chunk IDs).
+        """
+        if not PDF_SUPPORT:
+            raise ImportError("PDF support libraries not installed. Please install pypdf and langchain.")
+            
         try:
-            # Extract data from the default knowledge
-            ids = [item["id"] for item in DEFAULT_MEDICAL_KNOWLEDGE]
-            texts = [item["text"] for item in DEFAULT_MEDICAL_KNOWLEDGE]
-            metadatas = [item["metadata"] for item in DEFAULT_MEDICAL_KNOWLEDGE]
+            # Update task status if task_id is provided
+            if task_id and task_id in background_tasks:
+                background_tasks[task_id].update({
+                    "status": "extracting_text",
+                    "progress": 10,
+                    "message": "Extracting text from PDF",
+                    "last_updated": time.time()
+                })
+                # Save tasks to file
+                save_background_tasks()
             
-            # Add to collection
-            self.collection.add(
-                ids=ids,
-                documents=texts,
-                metadatas=metadatas
-            )
+            # Extract text from PDF
+            text = PDFProcessor.extract_text_from_pdf(pdf_path)
             
-            logger.info(f"Added {len(ids)} default knowledge items to collection")
+            # Update task status
+            if task_id and task_id in background_tasks:
+                background_tasks[task_id].update({
+                    "status": "chunking_text",
+                    "progress": 20,
+                    "message": "Chunking text into segments",
+                    "last_updated": time.time()
+                })
+                # Save tasks to file
+                save_background_tasks()
+            
+            # Chunk the text
+            chunks = PDFProcessor.chunk_text(text, chunk_size, chunk_overlap)
+            
+            # Update task status
+            if task_id and task_id in background_tasks:
+                background_tasks[task_id].update({
+                    "status": "preparing_items",
+                    "progress": 30,
+                    "message": "Preparing knowledge items",
+                    "total_chunks": len(chunks),
+                    "last_updated": time.time()
+                })
+                # Save tasks to file
+                save_background_tasks()
+            
+            # Prepare knowledge items
+            knowledge_items = PDFProcessor.prepare_knowledge_items(chunks, source, topic, audience)
+            
+            # Update task status
+            if task_id and task_id in background_tasks:
+                background_tasks[task_id].update({
+                    "status": "adding_to_database",
+                    "progress": 40,
+                    "message": "Adding items to vector database",
+                    "last_updated": time.time()
+                })
+                # Save tasks to file
+                save_background_tasks()
+            
+            # Add to RAG pipeline with task_id for progress tracking
+            success = await self.add_knowledge(knowledge_items, task_id)
+            
+            if success:
+                logger.info(f"Successfully added {len(chunks)} chunks from {pdf_path} to knowledge base")
+                return len(chunks), [item["id"] for item in knowledge_items]
+            else:
+                logger.error(f"Failed to add chunks from {pdf_path} to knowledge base")
+                return 0, []
         except Exception as e:
-            logger.error(f"Error adding default knowledge: {e}")
+            logger.error(f"Error processing PDF to knowledge base: {e}")
+            raise
     
     async def query(self, query_text: str, n_results: int = 3, audience: str = "patient") -> List[Dict[str, Any]]:
         """
@@ -155,11 +283,21 @@ class RAGPipeline:
             A list of relevant knowledge items.
         """
         try:
+            # Prepare where clause to include general audience content
+            where_clause = None
+            if audience:
+                if audience == "patient":
+                    where_clause = {"audience": {"$in": ["patient", "general"]}}
+                elif audience == "clinician":
+                    where_clause = {"audience": {"$in": ["clinician", "general"]}}
+                else:
+                    where_clause = {"audience": audience}
+            
             # Query the collection
             results = self.collection.query(
                 query_texts=[query_text],
                 n_results=n_results,
-                where={"audience": audience} if audience else None
+                where=where_clause
             )
             
             # Format results
@@ -178,30 +316,55 @@ class RAGPipeline:
             logger.error(f"Error querying RAG pipeline: {e}")
             return []
     
-    async def add_knowledge(self, items: List[Dict[str, Any]]) -> bool:
+    async def add_knowledge(self, items: List[Dict[str, Any]], task_id: str = None) -> bool:
         """
         Add knowledge items to the RAG pipeline.
         
         Args:
             items: A list of knowledge items, each with id, text, and metadata.
+            task_id: Optional task ID for progress tracking.
             
         Returns:
             True if successful, False otherwise.
         """
         try:
-            # Extract data from the items
-            ids = [item["id"] for item in items]
-            texts = [item["text"] for item in items]
-            metadatas = [item["metadata"] for item in items]
+            # Process in batches to avoid token limits
+            batch_size = 50  # Adjust based on average chunk size
+            total_items = len(items)
+            successful_items = 0
             
-            # Add to collection
-            self.collection.add(
-                ids=ids,
-                documents=texts,
-                metadatas=metadatas
-            )
+            for i in range(0, total_items, batch_size):
+                batch = items[i:i+batch_size]
+                
+                # Extract data from the batch
+                ids = [item["id"] for item in batch]
+                texts = [item["text"] for item in batch]
+                metadatas = [item["metadata"] for item in batch]
+                
+                # Add batch to collection
+                self.collection.add(
+                    ids=ids,
+                    documents=texts,
+                    metadatas=metadatas
+                )
+                
+                successful_items += len(batch)
+                
+                # Update progress if task_id is provided
+                if task_id and task_id in background_tasks:
+                    progress = int((i + len(batch)) / total_items * 100)
+                    background_tasks[task_id].update({
+                        "progress": progress,
+                        "chunks_processed": i + len(batch),
+                        "total_chunks": total_items,
+                        "message": f"Processing chunks: {i + len(batch)}/{total_items}",
+                        "last_updated": time.time()
+                    })
+                    # Save tasks to file after each batch update
+                    save_background_tasks()
+                    logger.info(f"Task {task_id}: Processed {i + len(batch)}/{total_items} chunks ({progress}%)")
             
-            logger.info(f"Added {len(ids)} knowledge items to collection")
+            logger.info(f"Added {successful_items} knowledge items to collection")
             return True
         
         except Exception as e:
@@ -280,6 +443,48 @@ class RAGPipeline:
         except Exception as e:
             logger.error(f"Error getting knowledge: {e}")
             return None
+    
+    async def get_knowledge_stats(self) -> Dict[str, Any]:
+        """
+        Get statistics about the knowledge base.
+        
+        Returns:
+            Statistics about the knowledge base.
+        """
+        try:
+            # Get all items
+            all_items = self.collection.get()
+            
+            # Count by source
+            sources = {}
+            topics = {}
+            audiences = {}
+            
+            if all_items["metadatas"]:
+                for metadata in all_items["metadatas"]:
+                    source = metadata.get("source", "unknown")
+                    topic = metadata.get("topic", "unknown")
+                    audience = metadata.get("audience", "unknown")
+                    
+                    sources[source] = sources.get(source, 0) + 1
+                    topics[topic] = topics.get(topic, 0) + 1
+                    audiences[audience] = audiences.get(audience, 0) + 1
+            
+            return {
+                "total_items": len(all_items["ids"]) if all_items["ids"] else 0,
+                "sources": sources,
+                "topics": topics,
+                "audiences": audiences
+            }
+        
+        except Exception as e:
+            logger.error(f"Error getting knowledge stats: {e}")
+            return {
+                "total_items": 0,
+                "sources": {},
+                "topics": {},
+                "audiences": {}
+            }
 
 
 # Create a singleton instance of the RAG pipeline
