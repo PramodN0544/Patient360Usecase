@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends,HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy import or_
@@ -90,4 +90,40 @@ async def get_my_notifications(
             "data_id": n.data_id       # appointment_id | medication_id
         }
         for n in sorted(notifications, key=lambda x: x.created_at, reverse=True)
+    ]
+
+
+@router.get("/doctor")
+async def get_doctor_notifications(
+    current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Fetch notifications for logged-in doctor only
+    """
+    if current_user.role != "doctor":
+        raise HTTPException(status_code=403, detail="Only doctors allowed")
+
+    # fetch notifications assigned to this doctor (via user_id)
+    result = await db.execute(
+        select(Notification)
+        .where(Notification.user_id == current_user.id)
+        .order_by(Notification.created_at.desc())
+    )
+
+    notifications = result.scalars().all()
+
+    return [
+        {
+            "id": n.id,
+            "title": n.title,
+            "desc": n.desc,
+            "type": n.type,              
+            "status": n.status,          
+            "data_id": n.data_id,         
+            "patient_id": n.patient_id,
+            "scheduled_for": n.scheduled_for,
+            "created_at": n.created_at
+        }
+        for n in notifications
     ]

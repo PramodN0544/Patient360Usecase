@@ -348,7 +348,21 @@ async def book_appointment(
     )
     db.add(new_appt)
     await db.commit()
-    await db.refresh(new_appt)  # Populate ID
+    await db.refresh(new_appt) 
+
+    doctor_notification = Notification(
+        user_id=doctor.user_id,
+        patient_id=patient.id,
+        title="New Appointment Booked",
+        desc=f"New appointment with {patient.first_name} {patient.last_name} "
+             f"on {appointment.appointment_date} at {appointment_time.strftime('%H:%M')}",
+        type="appointment",
+        status="unread",
+        data_id=str(new_appt.id)
+    )
+
+    db.add(doctor_notification)
+    await db.commit()
 
     # Create notification
     notif = Notification(
@@ -552,7 +566,6 @@ async def cancel_appointment(
     current_user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    # Fetch appointment
     result = await db.execute(
         select(Appointment).where(Appointment.id == appointment_id)
     )
@@ -561,32 +574,34 @@ async def cancel_appointment(
     if not appointment:
         raise HTTPException(status_code=404, detail="Appointment not found")
 
-    # Authorization check
     if current_user.role == "patient":
         patient_result = await db.execute(
             select(Patient).where(Patient.user_id == current_user.id)
         )
         patient = patient_result.scalar_one_or_none()
-
         if not patient or appointment.patient_id != patient.id:
-            raise HTTPException(status_code=403, detail="Not allowed to cancel this appointment")
+            raise HTTPException(status_code=403, detail="Not allowed")
 
     elif current_user.role not in ("doctor", "hospital", "admin"):
         raise HTTPException(status_code=403, detail="Not permitted")
 
-    # Prevent double cancel
     if appointment.status == "Cancelled":
-        raise HTTPException(status_code=400, detail="Appointment already cancelled")
+        raise HTTPException(status_code=400, detail="Already cancelled")
 
-    # Update status
     appointment.status = "Cancelled"
     appointment.updated_at = datetime.utcnow()
 
     await db.commit()
     await db.refresh(appointment)
 
-    # Create notification
-    notif = Notification(
+    # Fetch doctor
+    doctor_result = await db.execute(
+        select(Doctor).where(Doctor.id == appointment.doctor_id)
+    )
+    doctor = doctor_result.scalar_one_or_none()
+
+    # Patient notification
+    db.add(Notification(
         user_id=current_user.id,
         title="Appointment Cancelled",
         desc=f"Your appointment on {appointment.appointment_date} "
@@ -594,8 +609,22 @@ async def cancel_appointment(
              f"has been cancelled.",
         type="appointment",
         status="unread",
-    )
-    db.add(notif)
+        data_id=str(appointment.id),
+        patient_id=appointment.patient_id
+    ))
+
+    # Doctor notification
+    if doctor and doctor.user_id:
+        db.add(Notification(
+            user_id=doctor.user_id,
+            title="Appointment Cancelled by Patient",
+            desc="A patient has cancelled an appointment.",
+            type="appointment",
+            status="unread",
+            data_id=str(appointment.id),
+            patient_id=appointment.patient_id
+        ))
+
     await db.commit()
 
     return {

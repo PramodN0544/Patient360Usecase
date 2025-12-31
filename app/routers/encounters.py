@@ -1986,3 +1986,55 @@ async def search_icd_codes(
         }
         for icd in icd_codes
     ]
+
+@router.post("/{encounter_id}/icd-codes", status_code=201)
+async def add_icd_code_to_encounter(
+    encounter_id: int,
+    payload: dict,
+    current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Set primary ICD code for an encounter
+    """
+
+    # 1️⃣ Fetch encounter (FIXED)
+    result = await db.execute(
+        select(Encounter).where(Encounter.id == encounter_id)
+    )
+    encounter = result.unique().scalar_one_or_none()
+    if not encounter:
+        raise HTTPException(404, "Encounter not found")
+
+    # 2️⃣ Authorization (doctor only)
+    doctor_result = await db.execute(
+        select(Doctor).where(Doctor.user_id == current_user.id)
+    )
+    doctor = doctor_result.unique().scalar_one_or_none()
+
+    if not doctor or doctor.id != encounter.doctor_id:
+        raise HTTPException(403, "Not authorized")
+
+    # 3️⃣ Validate ICD from ICDConditionMap
+    icd_result = await db.execute(
+        select(models.ICDConditionMap).where(
+            models.ICDConditionMap.id == payload["icd_code_id"]
+        )
+    )
+    icd = icd_result.scalar_one_or_none()
+    if not icd:
+        raise HTTPException(404, "ICD code not found")
+
+    # 4️⃣ Set primary ICD code directly on Encounter
+    encounter.primary_icd_code = icd.icd_code
+    encounter.updated_at = datetime.utcnow()
+
+    await db.commit()
+    await db.refresh(encounter)
+
+    return {
+        "message": "Primary ICD code set successfully",
+        "encounter_id": encounter.id,
+        "primary_icd_code": encounter.primary_icd_code,
+        "description": icd.description
+    }

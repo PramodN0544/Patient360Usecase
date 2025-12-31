@@ -13,6 +13,9 @@ from app.S3connection import upload_lab_result_to_s3, generate_presigned_url
 from fastapi.responses import StreamingResponse
 import aiohttp
 from io import BytesIO
+from app.models import Notification
+
+
 router = APIRouter(prefix="/labs", tags=["Labs"])
 
 @router.get("/testcodes", response_model=List[LabTestCode])
@@ -139,6 +142,19 @@ async def add_lab_result(
     )
     db.add(lab_result)
     lab_order.status = "Completed"
+
+    if doctor.user_id:
+        doctor_notification = Notification(
+            user_id=doctor.user_id,
+            patient_id=lab_order.patient_id,
+            title="Lab Result Available",
+            desc=f"Lab result uploaded for {lab_order.test_name}.",
+            type="lab",
+            status="unread",
+            data_id=str(lab_order.id)
+        )
+    db.add(doctor_notification)
+
     await db.commit()
     await db.refresh(lab_result)
 
