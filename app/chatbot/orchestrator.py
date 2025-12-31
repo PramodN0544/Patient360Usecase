@@ -1587,6 +1587,7 @@ class ChatOrchestrator:
         You provide accurate, helpful information based on the data available to you.
         You NEVER make up information or hallucinate data that isn't provided to you.
         If you don't have specific information, say so clearly.
+        If you get the data as empty then respond the answer correctly rather than "I don't have that information".
         
         CRITICAL ERROR HANDLING:
         - If you see an error message in the data (e.g., "error": "Error getting daily vitals"),
