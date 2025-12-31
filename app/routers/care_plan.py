@@ -668,9 +668,16 @@ async def generate_care_plan(
         result = await db.execute(
             select(models.CarePlan)
             .where(models.CarePlan.careplan_id == care_plan.careplan_id)
-            .options(selectinload(models.CarePlan.tasks))
+            .options(
+                selectinload(models.CarePlan.tasks),
+                selectinload(models.CarePlan.condition_group)
+            )
         )
         care_plan = result.scalars().first()
+        
+        # Add condition group name to the response
+        if care_plan and care_plan.condition_group:
+            care_plan.condition_group_name = care_plan.condition_group.name
         
         print(f"✅ Care plan generation complete for encounter {encounter_id}")
         return care_plan
@@ -737,11 +744,20 @@ async def get_care_plan(
             )
     
     result = await db.execute(
-    select(models.CarePlan)
-    .where(models.CarePlan.careplan_id == careplan_id)
-    .options(selectinload(models.CarePlan.tasks))
-)
-    return result.scalars().first()
+        select(models.CarePlan)
+        .where(models.CarePlan.careplan_id == careplan_id)
+        .options(
+            selectinload(models.CarePlan.tasks),
+            selectinload(models.CarePlan.condition_group)
+        )
+    )
+    care_plan = result.scalars().first()
+    
+    # Add condition group name to the response
+    if care_plan and care_plan.condition_group:
+        care_plan.condition_group_name = care_plan.condition_group.name
+    
+    return care_plan
 
 @router.get("/patient/current", response_model=List[schemas.CarePlanOut])
 async def get_current_patient_care_plans(
@@ -781,10 +797,18 @@ async def get_current_patient_care_plans(
     result = await db.execute(
         select(models.CarePlan)
         .where(models.CarePlan.patient_id == patient.id)
-        .options(selectinload(models.CarePlan.tasks))
+        .options(
+            selectinload(models.CarePlan.tasks),
+            selectinload(models.CarePlan.condition_group)
+        )
     )
     care_plans = result.scalars().all()
     print(f"✅ Found {len(care_plans)} care plans for patient {patient.id}")
+    
+    # Add condition group name to each care plan
+    for care_plan in care_plans:
+        if care_plan.condition_group:
+            care_plan.condition_group_name = care_plan.condition_group.name
     
     return care_plans
 
@@ -868,9 +892,17 @@ async def get_patient_care_plans(
     result = await db.execute(
         select(models.CarePlan)
         .where(models.CarePlan.patient_id == patient_id)
-        .options(selectinload(models.CarePlan.tasks))
+        .options(
+            selectinload(models.CarePlan.tasks),
+            selectinload(models.CarePlan.condition_group)
+        )
     )
     care_plans = result.scalars().all()
+    
+    # Add condition group name to each care plan
+    for care_plan in care_plans:
+        if care_plan.condition_group:
+            care_plan.condition_group_name = care_plan.condition_group.name
     
     print(f"✅ Found {len(care_plans)} care plans for patient {patient_id}")
     return care_plans
@@ -932,7 +964,10 @@ async def get_care_plan_by_encounter(
     care_plan_result = await db.execute(
         select(models.CarePlan)
         .where(models.CarePlan.encounter_id == encounter_id)
-        .options(selectinload(models.CarePlan.tasks))
+        .options(
+            selectinload(models.CarePlan.tasks),
+            selectinload(models.CarePlan.condition_group)
+        )
         .order_by(models.CarePlan.created_at.desc())
     )
     care_plan = care_plan_result.scalars().first()
@@ -943,6 +978,10 @@ async def get_care_plan_by_encounter(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"No care plan found for encounter {encounter_id}"
         )
+    
+    # Add condition group name to the response
+    if care_plan and care_plan.condition_group:
+        care_plan.condition_group_name = care_plan.condition_group.name
     
     print(f"✅ Found care plan {care_plan.careplan_id} for encounter {encounter_id}")
     return care_plan
@@ -1063,14 +1102,21 @@ async def update_care_plan(
         # Refresh with eager loading to avoid lazy loading issues during serialization
         await db.refresh(care_plan)
         print(f"✅ Successfully committed care plan {careplan_id} updates to database")
-        
         # Explicitly reload the care plan with all relationships to avoid lazy loading issues
         result = await db.execute(
             select(models.CarePlan)
-            .options(selectinload(models.CarePlan.tasks))
+            .options(
+                selectinload(models.CarePlan.tasks),
+                selectinload(models.CarePlan.condition_group)
+            )
             .where(models.CarePlan.careplan_id == careplan_id)
         )
         care_plan = result.scalars().first()
+        
+        # Add condition group name to the response
+        if care_plan and care_plan.condition_group:
+            care_plan.condition_group_name = care_plan.condition_group.name
+        
         
     except Exception as e:
         print(f"❌ Error committing care plan updates: {str(e)}")

@@ -1394,6 +1394,7 @@ class CarePlanOut(CarePlanBase):
     created_at: datetime
     updated_at: datetime
     tasks: List[CarePlanTaskOut] = []
+    condition_group_name: Optional[str] = None  # Add condition group name field
 
     class Config:
         orm_mode = True

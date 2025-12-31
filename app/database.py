@@ -7,6 +7,7 @@ from sqlalchemy import inspect, text
 from sqlalchemy.exc import SQLAlchemyError
 
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.WARNING)
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 if not DATABASE_URL:

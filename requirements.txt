@@ -17,5 +17,18 @@ websockets>=11.0.2
 apscheduler
 pytz
 boto3==1.42.0
-httpx==0.24.1
-openai==0.27.8
+httpx==0.24.1  # Used for wearable service API client
+dateparser==1.1.8  # Used for parsing dates in user queries
+pytz==2023.3  # Used for timezone handling
+openai
+chromadb
+sentence-transformers==2.2.2
+langchain
+langchain-openai
+langchain-text-splitters
+pydantic>=1.10.8,<2.0.0
+tiktoken
+pypdf
+
+#pip uninstall fastapi pydantic -y
+#pip install fastapi==0.110.0 pydantic==2.6.4
