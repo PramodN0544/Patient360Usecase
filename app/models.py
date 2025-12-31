@@ -775,3 +775,18 @@ class CarePlanAudit(Base):
    actor = relationship("User")
 # IcdCodeMaster and EncounterIcdCode tables have been removed
 # Their functionality is now handled by the ICDConditionMap table with the added description column
+
+class ChatAuditLog(Base):
+   __tablename__ = "chat_audit_log"
+   
+   id = Column(Integer, primary_key=True, autoincrement=True)
+   user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+   timestamp = Column(DateTime, default=datetime.utcnow)
+   message = Column(Text, nullable=False)
+   response = Column(Text, nullable=False)
+   query_type = Column(String(50), nullable=False)  # data, explanation, analytics
+   data_accessed = Column(Text, nullable=True)  # JSON string of data types accessed
+   context = Column(Text, nullable=True)  # JSON string of LLM context
+   
+   # Relationship
+   user = relationship("User")
