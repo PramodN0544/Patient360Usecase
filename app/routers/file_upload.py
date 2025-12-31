@@ -7,6 +7,7 @@ from sqlalchemy.future import select
 from app.database import get_db
 from app.models import Patient, Doctor, Hospital
 from app.auth import get_current_user  
+from app.S3connection import s3_client, AWS_BUCKET_NAME
 
 router = APIRouter(prefix="/upload", tags=["File Upload"])
 
@@ -15,7 +16,7 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 # File type configuration
 FILE_TYPE_CONFIG = {
-    "photo": {  # Changed from "patient_photo"
+    "photo": {  
         "model": Hospital,
         "field": "photo_url",
         "allowed_ext": ["jpg", "jpeg", "png"],
@@ -23,7 +24,7 @@ FILE_TYPE_CONFIG = {
        
        
     },
-    "id_proof": {  # Changed from "patient_document"
+    "id_proof": {  
         "model": Hospital,
         "field": "id_proof_document",
         "allowed_ext": ["pdf", "jpg", "jpeg"],
@@ -53,17 +54,8 @@ async def upload_file(
     public_id: str,
     file: UploadFile = File(...),
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(get_current_user),  # Add authentication
+    current_user=Depends(get_current_user), 
 ):
-    """
-    Upload a file (photo, license, or document) for patient/doctor/hospital.
-    - Allowed Photo formats: jpg, jpeg, png
-    - Allowed Document formats: pdf, jpeg
-
-    Example:
-    - POST /upload/photo/{public_id}
-    - POST /upload/id_proof/{public_id}
-    """
     print(f"Upload request - file_type: {file_type}, public_id: {public_id}")
 
     if file_type not in FILE_TYPE_CONFIG:
@@ -99,22 +91,45 @@ async def upload_file(
             )
 
         # Create subfolder if not exists
-        folder_path = os.path.join(UPLOAD_DIR, file_type)
-        os.makedirs(folder_path, exist_ok=True)
+        # folder_path = os.path.join(UPLOAD_DIR, file_type)
+        # os.makedirs(folder_path, exist_ok=True)
+
+        # Unique filename
+        # timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        # filename = f"{public_id}_{timestamp}.{file_extension}"
+        # file_path = os.path.join(folder_path, filename)
+
+        # print(f"💾 Saving file to: {file_path}")
+
+        # Save file
+        # with open(file_path, "wb") as buffer:
+            # shutil.copyfileobj(file.file, buffer)
+
+        # Convert to URL-safe path (replace backslashes)
+        # file_url = f"/{file_path}".replace("\\", "/")
 
         # Unique filename
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = f"{public_id}_{timestamp}.{file_extension}"
-        file_path = os.path.join(folder_path, filename)
 
-        print(f"💾 Saving file to: {file_path}")
+        # S3 object path
+        s3_key = f"{file_type}/{public_id}/{filename}"
 
-        # Save file
-        with open(file_path, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
+        print(f"☁️ Uploading to S3: {s3_key}")
 
-        # Convert to URL-safe path (replace backslashes)
-        file_url = f"/{file_path}".replace("\\", "/")
+        try:
+            s3_client.upload_fileobj(
+            file.file,
+            AWS_BUCKET_NAME,
+            s3_key,
+            ExtraArgs={"ContentType": file.content_type}
+        )
+        except Exception as e:
+            print("❌ S3 Upload failed:", e)
+            raise HTTPException(status_code=500, detail="Failed to upload file to S3")
+
+        # Store S3 key in DB
+        file_url = s3_key
 
         # Handle temporary patient IDs (like 'new-patient-temp')
         if public_id == 'new-patient-temp':
