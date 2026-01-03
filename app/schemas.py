@@ -1,4 +1,4 @@
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field,ConfigDict
 from typing import List, Optional, Dict, Any
 from datetime import date, time, datetime
 from typing import Literal
@@ -16,8 +16,7 @@ class LabOrderResponse(BaseModel):
     created_at: datetime  
     updated_at: datetime 
 
-    class Config:
-        orm_mode = True
+    model_config = ConfigDict(from_attributes=True)
 
 class HospitalBase(BaseModel):
     name: str
@@ -650,15 +649,8 @@ class EncounterOut(BaseModel):
     lab_orders: List[LabOrderResponse] = []
     doctor_name: Optional[str] = None
     hospital_name: Optional[str] = None
-    # primary_icd_code relationship removed as it's now a direct string field
-    # icd_codes list removed as it's no longer needed
 
-    class Config:
-        orm_mode = True
-
-    class Config:
-        orm_mode = True
-
+    model_config = ConfigDict(from_attributes=True)
 
 class EncounterSummary(BaseModel):
     id: int

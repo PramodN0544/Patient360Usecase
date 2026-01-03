@@ -90,25 +90,6 @@ async def upload_file(
                 detail=f"File too large: {file_size} bytes. Maximum size: {max_size} bytes"
             )
 
-        # Create subfolder if not exists
-        # folder_path = os.path.join(UPLOAD_DIR, file_type)
-        # os.makedirs(folder_path, exist_ok=True)
-
-        # Unique filename
-        # timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        # filename = f"{public_id}_{timestamp}.{file_extension}"
-        # file_path = os.path.join(folder_path, filename)
-
-        # print(f"💾 Saving file to: {file_path}")
-
-        # Save file
-        # with open(file_path, "wb") as buffer:
-            # shutil.copyfileobj(file.file, buffer)
-
-        # Convert to URL-safe path (replace backslashes)
-        # file_url = f"/{file_path}".replace("\\", "/")
-
-        # Unique filename
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = f"{public_id}_{timestamp}.{file_extension}"
 

@@ -1,4 +1,3 @@
-# medication_reminder.py
 from datetime import datetime, timedelta, time as dt_time
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession

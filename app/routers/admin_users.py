@@ -57,10 +57,6 @@ async def create_user(
 
     phone = user_in.phone or "9999999999"
 
-    # ---------------------------------------------------
-    # CREATE ROLE-SPECIFIC RECORDS
-    # ---------------------------------------------------
-
     # HOSPITAL
     if user_in.role == "hospital":
         hospital = Hospital(

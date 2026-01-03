@@ -84,10 +84,10 @@ async def get_my_notifications(
             "id": str(n.id),
             "title": n.title,
             "desc": n.desc,
-            "type": n.type,            # appointment | medication | alert
-            "status": n.status,        # read | unread
+            "type": n.type,           
+            "status": n.status,      
             "created_at": n.created_at.isoformat() + "Z",
-            "data_id": n.data_id       # appointment_id | medication_id
+            "data_id": n.data_id       
         }
         for n in sorted(notifications, key=lambda x: x.created_at, reverse=True)
     ]

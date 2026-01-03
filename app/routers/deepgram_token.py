@@ -1,4 +1,3 @@
-# deepgram_token.py
 from fastapi import FastAPI
 import requests
 import os
@@ -6,8 +5,8 @@ from pydantic import BaseModel
 
 app = FastAPI()
 
-DEEPGRAM_API_KEY = os.getenv("DEEPGRAM_API_KEY")  # Store securely in env
-PROJECT_ID = os.getenv("DEEPGRAM_PROJECT_ID")     # Also required
+DEEPGRAM_API_KEY = os.getenv("DEEPGRAM_API_KEY") 
+PROJECT_ID = os.getenv("DEEPGRAM_PROJECT_ID")     
 
 class TokenResponse(BaseModel):
     token: str

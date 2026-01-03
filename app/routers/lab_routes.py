@@ -427,7 +427,6 @@ async def search_hospital_lab_results(
 
     return out
 
-
 @router.get("/doctor-results/filter", response_model=List[LabResultResponse])
 async def get_doctor_lab_results_filtered(
     patient_public_id: Optional[str] = Query(None),
