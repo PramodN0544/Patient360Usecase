@@ -1,6 +1,6 @@
 import ast
 import aiohttp
-from fastapi import APIRouter, Depends, HTTPException, File, UploadFile, Form, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, File, UploadFile, Form, BackgroundTasks,Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
@@ -517,41 +517,44 @@ async def get_patient_encounters(
 @router.get("/doctor/patient/{public_id}")
 async def get_doctor_patient_encounters(
     public_id: str,
+    page: int = Query(1, ge=1),
+    limit: int = Query(3, ge=1, le=10),
     current_user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-
     if current_user.role != "doctor":
         raise HTTPException(403, "Only doctors can access this endpoint")
 
-    # Get doctor
-    doctor_result = await db.execute(
-        select(Doctor).where(Doctor.user_id == current_user.id)
-    )
-    doctor = doctor_result.unique().scalar_one_or_none()
-    
+    doctor = (
+        await db.execute(
+            select(Doctor).where(Doctor.user_id == current_user.id)
+        )
+    ).scalar_one_or_none()
+
     if not doctor:
         raise HTTPException(404, "Doctor not found")
-    
-    # Get patient
-    patient_result = await db.execute(
-        select(Patient).where(Patient.public_id == public_id)
-    )
-    patient = patient_result.unique().scalar_one_or_none()
-    
+
+    patient = (
+        await db.execute(
+            select(Patient).where(Patient.public_id == public_id)
+        )
+    ).scalar_one_or_none()
+
     if not patient:
         raise HTTPException(404, "Patient not found")
 
-    # Check assignment
     assign = await db.execute(
         select(Assignment).where(
             Assignment.patient_id == patient.id,
             Assignment.doctor_id == doctor.id
         )
     )
+
     if not assign.scalars().first():
         raise HTTPException(403, "Doctor is not assigned to this patient")
-    
+
+    offset = (page - 1) * limit
+
     stmt = (
         select(Encounter)
         .where(
@@ -559,13 +562,8 @@ async def get_doctor_patient_encounters(
             Encounter.doctor_id == doctor.id
         )
         .order_by(Encounter.encounter_date.desc(), Encounter.created_at.desc())
-        .options(
-            selectinload(Encounter.vitals),
-            selectinload(Encounter.medications),
-            selectinload(Encounter.doctor),
-            selectinload(Encounter.hospital),
-            selectinload(Encounter.lab_orders)
-        )
+        .offset(offset)
+        .limit(limit)
     )
 
     result = await db.execute(stmt)
@@ -581,6 +579,7 @@ async def get_doctor_patient_encounters(
         }
         for e in encounters
     ]
+
 
 
 @router.get("/my-encounters")
