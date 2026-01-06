@@ -152,7 +152,11 @@ class RAGPipeline:
                 self._api_key = api_key
                 self._model_name = model_name
                 
-            def __call__(self, texts):
+            def __call__(self, input):
+                """
+                ChromaDB expects the parameter to be named 'input' not 'texts'
+                This is a requirement from ChromaDB's API
+                """
                 try:
                     import openai
                     client = openai.OpenAI(api_key=self._api_key)
@@ -161,8 +165,8 @@ class RAGPipeline:
                     batch_size = 100
                     all_embeddings = []
                     
-                    for i in range(0, len(texts), batch_size):
-                        batch = texts[i:i+batch_size]
+                    for i in range(0, len(input), batch_size):
+                        batch = input[i:i+batch_size]
                         response = client.embeddings.create(
                             model=self._model_name,
                             input=batch
@@ -188,28 +192,77 @@ class RAGPipeline:
             logger.error(f"Failed to initialize embedding function: {e}")
             # Continue with initialization, but embedding functionality will be limited
         
+        # First check if the collection exists without trying to get it
+        # This avoids the embedding function validation error
+        collection_exists = False
         try:
-            self.collection = self.client.get_collection(
-                name=collection_name,
-                embedding_function=self.embedding_function
-            )
-            logger.info(f"Retrieved existing collection: {collection_name}")
-            
-            # Check if collection is empty
-            collection_count = self.collection.count()
-            if collection_count == 0:
-                logger.info("Collection is empty. Please upload knowledge through the admin interface.")
-            else:
-                logger.info(f"Collection contains {collection_count} items.")
+            # List all collections and check if our collection is in the list
+            all_collections = self.client.list_collections()
+            collection_exists = any(c.name == collection_name for c in all_collections)
+            logger.info(f"Checking if collection '{collection_name}' exists: {collection_exists}")
+        except Exception as e:
+            logger.warning(f"Error checking if collection exists: {e}")
+            # Continue with the normal flow if we can't check
+        
+        if collection_exists:
+            try:
+                # Collection exists, try to get it
+                self.collection = self.client.get_collection(
+                    name=collection_name,
+                    embedding_function=self.embedding_function
+                )
+                logger.info(f"Retrieved existing collection: {collection_name}")
                 
-        except ValueError:
-            # Collection doesn't exist, create it
-            self.collection = self.client.create_collection(
-                name=collection_name,
-                embedding_function=self.embedding_function
-            )
-            logger.info(f"Created new collection: {collection_name}")
-            logger.info("Collection is empty. Please upload knowledge through the admin interface.")
+                # Check if collection is empty
+                collection_count = self.collection.count()
+                if collection_count == 0:
+                    logger.info("Collection is empty. Please upload knowledge through the admin interface.")
+                else:
+                    logger.info(f"Collection contains {collection_count} items.")
+            except Exception as e:
+                # If we still can't get the collection even though it exists,
+                # there might be an issue with the embedding function
+                logger.error(f"Error getting existing collection: {e}")
+                # Set collection to None to indicate it's not available
+                self.collection = None
+                logger.warning("Collection not available. RAG functionality will be limited.")
+        else:
+            try:
+                # Collection doesn't exist, create it
+                logger.info(f"Collection '{collection_name}' not found. Creating new collection.")
+                self.collection = self.client.create_collection(
+                    name=collection_name,
+                    embedding_function=self.embedding_function
+                )
+                logger.info(f"Created new collection: {collection_name}")
+                logger.info("Collection is empty. Please upload knowledge through the admin interface.")
+            except chromadb.errors.InternalError as e:
+                if "already exists" in str(e):
+                    # Race condition: collection was created between our check and create
+                    logger.warning(f"Collection already exists (race condition): {e}")
+                    try:
+                        self.collection = self.client.get_collection(
+                            name=collection_name,
+                            embedding_function=self.embedding_function
+                        )
+                        logger.info(f"Retrieved existing collection after race condition: {collection_name}")
+                    except Exception as get_error:
+                        logger.error(f"Error getting collection after race condition: {get_error}")
+                        # Set collection to None to indicate it's not available
+                        self.collection = None
+                        logger.warning("Collection not available after race condition. RAG functionality will be limited.")
+                else:
+                    # Some other internal error
+                    logger.error(f"Error creating collection: {e}")
+                    # Set collection to None to indicate it's not available
+                    self.collection = None
+                    logger.warning("Collection not available due to internal error. RAG functionality will be limited.")
+            except Exception as e:
+                # Handle any other exceptions
+                logger.error(f"Unexpected error creating collection: {e}")
+                # Set collection to None to indicate it's not available
+                self.collection = None
+                logger.warning("Collection not available due to unexpected error. RAG functionality will be limited.")
     
     async def process_pdf(
         self,
@@ -319,6 +372,15 @@ class RAGPipeline:
         Returns:
             A list of relevant knowledge items.
         """
+        # Check if collection is available
+        if self.collection is None:
+            logger.warning("Collection is not available. Returning fallback response.")
+            return [{
+                "text": "I'm having trouble accessing my knowledge base at the moment. Please try again later.",
+                "metadata": {"source": "system", "topic": "error", "audience": audience},
+                "distance": 1.0
+            }]
+            
         try:
             # Prepare where clause to include general audience content
             where_clause = None
@@ -383,6 +445,21 @@ class RAGPipeline:
         Returns:
             True if successful, False otherwise.
         """
+        # Check if collection is available
+        if self.collection is None:
+            logger.error("Cannot add knowledge items: Collection is not available")
+            
+            # Update task status if provided
+            if task_id and task_id in background_tasks:
+                background_tasks[task_id].update({
+                    "status": "failed",
+                    "message": "Failed: Collection is not available",
+                    "last_updated": time.time()
+                })
+                save_background_tasks()
+                
+            return False
+            
         try:
             # Process in batches to avoid token limits
             batch_size = 25  # Reduced batch size for better error handling
@@ -500,6 +577,11 @@ class RAGPipeline:
         Returns:
             True if successful, False otherwise.
         """
+        # Check if collection is available
+        if self.collection is None:
+            logger.error("Cannot delete knowledge items: Collection is not available")
+            return False
+            
         try:
             # Delete from collection
             self.collection.delete(ids=ids)
@@ -521,6 +603,11 @@ class RAGPipeline:
         Returns:
             True if successful, False otherwise.
         """
+        # Check if collection is available
+        if self.collection is None:
+            logger.error("Cannot update knowledge item: Collection is not available")
+            return False
+            
         try:
             # Update in collection
             self.collection.update(
@@ -546,6 +633,11 @@ class RAGPipeline:
         Returns:
             The knowledge item, or None if not found.
         """
+        # Check if collection is available
+        if self.collection is None:
+            logger.error("Cannot get knowledge item: Collection is not available")
+            return None
+            
         try:
             # Get from collection
             result = self.collection.get(ids=[id])
@@ -570,6 +662,17 @@ class RAGPipeline:
         Returns:
             Statistics about the knowledge base.
         """
+        # Check if collection is available
+        if self.collection is None:
+            logger.error("Cannot get knowledge stats: Collection is not available")
+            return {
+                "total_items": 0,
+                "sources": {},
+                "topics": {},
+                "audiences": {},
+                "error": "Collection not available"
+            }
+            
         try:
             # Get all items
             all_items = self.collection.get()
