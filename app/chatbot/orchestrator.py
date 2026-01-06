@@ -109,7 +109,7 @@ class ChatOrchestrator:
         )
         
         # Build context with PHI protection
-        context = self._build_context(
+        context = await self._build_context(
             user=user,
             message=message,
             previous_messages=previous_messages,
@@ -136,21 +136,38 @@ class ChatOrchestrator:
             data_scope=data_scope
         )
         
+        # Ensure data_accessed is always a list before logging
+        if not isinstance(data_accessed, list):
+            if data_accessed is None:
+                data_accessed_for_log = []
+            else:
+                data_accessed_for_log = [str(data_accessed)]
+        else:
+            data_accessed_for_log = data_accessed
+            
         # CRITICAL: Audit log the interaction for HIPAA compliance
         await log_chat_interaction(
             user_id=user.id,
             message=message,
             response=validated_response,
             query_type=query_type,
-            data_accessed=data_accessed,
+            data_accessed=data_accessed_for_log,
             context=context,
             db=db
         )
-        
+        # Ensure data_accessed is always a list before creating ChatResponse
+        if not isinstance(data_accessed, list):
+            if data_accessed is None:
+                data_accessed_list = []
+            else:
+                data_accessed_list = [str(data_accessed)]
+        else:
+            data_accessed_list = data_accessed
+            
         return ChatResponse(
             response=validated_response,
             query_type=query_type,
-            data_accessed=data_accessed
+            data_accessed=data_accessed_list
         )
     
     async def _classify_query(self, message: str) -> str:
@@ -231,6 +248,7 @@ class ChatOrchestrator:
     ) -> Tuple[Dict[str, Any], List[str]]:
         """
         Retrieve relevant data based on the query type and data scope.
+        Now uses LLM-enhanced data retrieval.
         
         Args:
             user: The user making the request.
@@ -243,7 +261,7 @@ class ChatOrchestrator:
             A tuple of (data, data_accessed).
         """
         data = {}
-        data_accessed = []
+        data_accessed = []  # Initialize as an empty list
         
         if db is None:
             logger.warning("No database session provided, cannot retrieve real data")
@@ -253,17 +271,32 @@ class ChatOrchestrator:
         query_types = query_type.split("+")
         logger.info(f"Processing query types: {query_types}")
         
+        # Import the enhanced minimum necessary filter
+        from app.chatbot.minimum_necessary import MinimumNecessaryFilter
+        min_necessary_filter = MinimumNecessaryFilter()
+        
         # Process each query type component
         if "data" in query_types:
             # For data queries, retrieve specific patient data
             if user.role == "patient":
                 # Patient can only access their own data
-                data["patient_data"] = await self._get_patient_data(
+                patient_data = await self._get_patient_data(
                     patient_id=data_scope.patient_ids[0] if data_scope.patient_ids else None,
                     message=message,
                     data_scope=data_scope,
                     db=db
                 )
+                
+                # Get all available data first
+                all_patient_data = patient_data.get("data", {})
+                
+                # Apply the LLM-enhanced filter
+                filtered_data = await min_necessary_filter.extract(message, all_patient_data)
+                
+                # Update the patient_data with filtered data
+                patient_data["data"] = filtered_data
+                
+                data["patient_data"] = patient_data
                 data_accessed.append("patient_data")
             
             elif user.role == "doctor":
@@ -272,22 +305,38 @@ class ChatOrchestrator:
                 patient_id = await self._extract_patient_id(message, data_scope.patient_ids, db)
                 
                 if patient_id and patient_id in data_scope.patient_ids:
-                    data["patient_data"] = await self._get_patient_data(
+                    patient_data = await self._get_patient_data(
                         patient_id=patient_id,
                         message=message,
                         data_scope=data_scope,
                         db=db
                     )
+                    
+                    # Get all available data first
+                    all_patient_data = patient_data.get("data", {})
+                    
+                    # Apply the LLM-enhanced filter
+                    filtered_data = await min_necessary_filter.extract(message, all_patient_data)
+                    
+                    # Update the patient_data with filtered data
+                    patient_data["data"] = filtered_data
+                    
+                    data["patient_data"] = patient_data
                     data_accessed.append(f"patient_data:{patient_id}")
             
             elif user.role == "hospital":
                 # Hospital admin can access aggregated data
-                data["hospital_data"] = await self._get_hospital_data(
+                hospital_data = await self._get_hospital_data(
                     hospital_id=data_scope.hospital_ids[0] if data_scope.hospital_ids else None,
                     message=message,
                     data_scope=data_scope,
                     db=db
                 )
+                
+                # Apply the LLM-enhanced filter to hospital data
+                filtered_hospital_data = await min_necessary_filter.extract(message, hospital_data)
+                
+                data["hospital_data"] = filtered_hospital_data
                 data_accessed.append("hospital_data")
         
         if "explanation" in query_types:
@@ -299,12 +348,17 @@ class ChatOrchestrator:
         if "analytics" in query_types:
             # For analytics queries, retrieve aggregated data
             if user.role == "hospital" and data_scope.can_access_analytics:
-                data["analytics"] = await self._get_analytics(
+                analytics_data = await self._get_analytics(
                     hospital_id=data_scope.hospital_ids[0] if data_scope.hospital_ids else None,
                     message=message,
                     data_scope=data_scope,
                     db=db
                 )
+                
+                # Apply the LLM-enhanced filter to analytics data
+                filtered_analytics = await min_necessary_filter.extract(message, analytics_data)
+                
+                data["analytics"] = filtered_analytics
                 data_accessed.append("analytics")
         
         if "recommendation" in query_types:
@@ -332,6 +386,14 @@ class ChatOrchestrator:
             data_accessed.append("action_context")
         
         logger.info(f"Retrieved data for query types {query_types}: {list(data.keys())}")
+        
+        # Ensure data_accessed is always a list before returning
+        if not isinstance(data_accessed, list):
+            if data_accessed is None:
+                data_accessed = []
+            else:
+                data_accessed = [str(data_accessed)]
+                
         return data, data_accessed
     
     async def _get_wearable_data(
@@ -1446,7 +1508,7 @@ class ChatOrchestrator:
         logger.info(f"Resolved ambiguity using confidence: {highest_confidence[0].first_name} {highest_confidence[0].last_name}")
         return highest_confidence[0].id
     
-    def _build_context(
+    async def _build_context(
         self,
         user: User,
         message: str,
@@ -1484,7 +1546,7 @@ class ChatOrchestrator:
         # Add data context with PHI protection
         if data:
             # Apply minimum necessary filtering and PHI masking
-            protected_data = self._apply_phi_protection(data, message, query_type)
+            protected_data = await self._apply_phi_protection(data, message, query_type)
             
             data_context = self._format_data_for_context(protected_data, query_type)
             if data_context:
@@ -1508,7 +1570,7 @@ class ChatOrchestrator:
         
         return context
     
-    def _apply_phi_protection(
+    async def _apply_phi_protection(
         self,
         data: Dict[str, Any],
         message: str,
@@ -1539,14 +1601,22 @@ class ChatOrchestrator:
                 # Log the raw data types for debugging
                 logger.info(f"Raw data keys before PHI protection: {list(raw_data.keys())}")
                 
-                # Apply minimum necessary filtering
-                filtered_data = MinimumNecessaryFilter.extract(message, raw_data)
+                # Apply minimum necessary filtering with LLM enhancement
+                min_necessary_filter = MinimumNecessaryFilter()
+                filtered_data = await min_necessary_filter.extract(message, raw_data)
                 
                 # Apply de-identification
                 safe_data = self.phi_masker.deidentify_patient_data(filtered_data)
                 
                 # Log the safe data types for debugging
                 logger.info(f"Safe data keys after PHI protection: {list(safe_data.keys())}")
+                
+                # Ensure data_types is always a list
+                if "data_types" in value and not isinstance(value["data_types"], list):
+                    if value["data_types"] is None:
+                        value["data_types"] = []
+                    else:
+                        value["data_types"] = [str(value["data_types"])]
                 
                 # Ensure specific vital signs are preserved if they exist in the raw data
                 # These are important for answering specific queries about vital signs

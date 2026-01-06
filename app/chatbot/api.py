@@ -7,6 +7,7 @@ This module provides FastAPI endpoints for interacting with the chatbot.
 import logging
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import BaseModel
 
@@ -17,6 +18,7 @@ from app.chatbot.orchestrator import ChatOrchestrator, Message, ChatResponse
 from app.chatbot.rag import rag_pipeline
 from app.chatbot.rbac import get_data_scope
 from app.chatbot.audit import log_chat_interaction
+from app.chatbot.streaming import StreamingChatProcessor
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -43,8 +45,9 @@ class ChatResponseModel(BaseModel):
     data_accessed: Optional[List[str]] = None
 
 
-# Create chat orchestrator
+# Create chat orchestrator and streaming processor
 chat_orchestrator = ChatOrchestrator(rag_pipeline)
+streaming_processor = StreamingChatProcessor(chat_orchestrator)
 
 
 @router.post("/chat", response_model=ChatResponseModel)
@@ -81,7 +84,7 @@ async def chat(
         )
         
         # Get the context from the orchestrator
-        context = chat_orchestrator._build_context(
+        context = await chat_orchestrator._build_context(
             user=current_user,
             message=request.message,
             previous_messages=request.previous_messages,
@@ -110,6 +113,54 @@ async def chat(
             detail="Error processing chat request"
         )
 
+
+@router.post("/chat-stream")
+async def chat_stream(
+    request: ChatRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Chat with the chatbot with streaming response.
+    
+    Args:
+        request: The chat request.
+        current_user: The current user.
+        db: The database session.
+        
+    Returns:
+        A streaming response with progress updates and the final response.
+    """
+    try:
+        # Get data scope for the user
+        data_scope = await get_data_scope(current_user, db)
+        
+        # Log the request
+        logger.info(f"Streaming chat request from user {current_user.id} ({current_user.role})")
+        
+        # Create async generator for streaming response
+        async def response_generator():
+            async for chunk in streaming_processor.process_chat_request_stream(
+                user=current_user,
+                message=request.message,
+                previous_messages=request.previous_messages,
+                data_scope=data_scope,
+                db=db
+            ):
+                yield chunk + "\n"
+        
+        # Return streaming response
+        return StreamingResponse(
+            response_generator(),
+            media_type="application/x-ndjson"
+        )
+    
+    except Exception as e:
+        logger.error(f"Error processing streaming chat request: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Error processing streaming chat request"
+        )
 
 @router.get("/suggested-prompts")
 async def get_suggested_prompts(
