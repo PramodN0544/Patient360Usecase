@@ -1,0 +1,757 @@
+DATABASE SCHEMA DOCUMENTATION
+================================================================================
+
+Export Date: 2025-11-27T13:48:45.948466
+Database: neondb
+
+
+TABLE: allergies
+--------------------------------------------------------------------------------
+
+Columns:
+  - created_at: timestamp without time zone
+  - updated_at: timestamp without time zone
+  - id: integer NOT NULL DEFAULT nextval('allergies_id_seq'::regclass)
+  - name: character varying(150) NOT NULL
+  - patient_id: integer NOT NULL
+
+Primary Keys: id
+
+Foreign Keys:
+  - patient_id -> patients.id
+
+Indexes:
+  - allergies_pkey on id (UNIQUE)
+
+
+TABLE: appointments
+--------------------------------------------------------------------------------
+
+Columns:
+  - created_at: timestamp without time zone
+  - updated_at: timestamp without time zone
+  - id: integer NOT NULL DEFAULT nextval('appointments_id_seq'::regclass)
+  - patient_id: integer NOT NULL
+  - hospital_id: integer NOT NULL
+  - doctor_id: integer NOT NULL
+  - appointment_date: date NOT NULL
+  - appointment_time: time without time zone NOT NULL
+  - reason: character varying(300)
+  - mode: character varying(50)
+  - status: character varying(50)
+  - appointment_id: character varying(100) NOT NULL DEFAULT gen_random_uuid()
+  - reminders_sent: ARRAY DEFAULT '{}'::text[]
+
+Primary Keys: id
+
+Foreign Keys:
+  - patient_id -> patients.id
+  - hospital_id -> hospitals.id
+  - doctor_id -> doctors.id
+
+Indexes:
+  - appointments_appointment_id_key on appointment_id (UNIQUE)
+  - appointments_pkey on id (UNIQUE)
+
+
+TABLE: assignments
+--------------------------------------------------------------------------------
+
+Columns:
+  - id: integer NOT NULL DEFAULT nextval('assignments_id_seq'::regclass)
+  - patient_id: integer NOT NULL
+  - doctor_id: integer NOT NULL
+  - treatment_plan_id: integer
+  - specialty: character varying
+  - doctor_category: character varying
+  - medical_history: character varying
+  - reason: character varying
+  - old_medications: json
+  - hospital_id: integer NOT NULL
+  - created_by: integer NOT NULL
+
+Primary Keys: id
+
+Foreign Keys:
+  - patient_id -> patients.id
+  - doctor_id -> doctors.id
+  - treatment_plan_id -> treatment_plan_master.id
+  - hospital_id -> hospitals.id
+  - created_by -> users.id
+
+Indexes:
+  - assignments_pkey on id (UNIQUE)
+  - ix_assignments_id on id
+
+
+TABLE: chat_messages
+--------------------------------------------------------------------------------
+
+Columns:
+  - id: integer NOT NULL DEFAULT nextval('chat_messages_id_seq'::regclass)
+  - chat_id: integer NOT NULL
+  - sender_id: integer NOT NULL
+  - doctor_id: integer NOT NULL
+  - patient_id: integer NOT NULL
+  - message: text NOT NULL
+  - timestamp: timestamp without time zone
+  - is_read: boolean
+  - sender_type: character varying(20)
+
+Primary Keys: id
+
+Foreign Keys:
+  - chat_id -> chats.id
+  - sender_id -> users.id
+  - doctor_id -> doctors.id
+  - patient_id -> patients.id
+
+Indexes:
+  - chat_messages_pkey on id (UNIQUE)
+
+
+TABLE: chat_user_status
+--------------------------------------------------------------------------------
+
+Columns:
+  - id: integer NOT NULL DEFAULT nextval('chat_user_status_id_seq'::regclass)
+  - chat_id: integer NOT NULL
+  - user_id: integer NOT NULL
+  - is_typing: boolean
+  - last_seen: timestamp without time zone
+  - online: boolean
+  - updated_at: timestamp without time zone
+
+Primary Keys: id
+
+Foreign Keys:
+  - chat_id -> chats.id
+  - user_id -> users.id
+
+Indexes:
+  - chat_user_status_pkey on id (UNIQUE)
+
+
+TABLE: chats
+--------------------------------------------------------------------------------
+
+Columns:
+  - created_at: timestamp without time zone
+  - updated_at: timestamp without time zone
+  - id: integer NOT NULL DEFAULT nextval('chats_id_seq'::regclass)
+  - patient_id: integer NOT NULL
+  - doctor_id: integer NOT NULL
+  - encounter_id: integer
+
+Primary Keys: id
+
+Foreign Keys:
+  - patient_id -> patients.id
+  - doctor_id -> doctors.id
+  - encounter_id -> encounters.id
+
+Indexes:
+  - chats_pkey on id (UNIQUE)
+
+
+TABLE: doctors
+--------------------------------------------------------------------------------
+
+Columns:
+  - created_at: timestamp without time zone
+  - updated_at: timestamp without time zone
+  - id: integer NOT NULL DEFAULT nextval('doctors_id_seq'::regclass)
+  - user_id: integer NOT NULL
+  - hospital_id: integer
+  - npi_number: character varying(100)
+  - first_name: character varying(100)
+  - last_name: character varying(100)
+  - email: character varying(100) NOT NULL
+  - phone: character varying(20) NOT NULL
+  - specialty: character varying(100)
+  - license_number: character varying(100) NOT NULL
+  - qualification: character varying(200)
+  - experience_years: integer
+  - gender: character varying(20)
+  - availability_days: character varying(200)
+  - start_time: time without time zone
+  - end_time: time without time zone
+  - mode_of_consultation: character varying(50)
+  - status: character varying(20)
+  - license_url: character varying(300)
+  - license_document: character varying(300)
+  - public_id: character varying(100)
+  - deactivated_at: timestamp with time zone
+  - is_active: boolean DEFAULT true
+
+Primary Keys: id
+
+Foreign Keys:
+  - user_id -> users.id
+  - hospital_id -> hospitals.id
+
+Indexes:
+  - doctors_email_key on email (UNIQUE)
+  - doctors_license_number_key on license_number (UNIQUE)
+  - doctors_npi_number_key on npi_number (UNIQUE)
+  - doctors_phone_key on phone (UNIQUE)
+  - doctors_pkey on id (UNIQUE)
+
+
+TABLE: encounters
+--------------------------------------------------------------------------------
+
+Columns:
+  - created_at: timestamp without time zone
+  - updated_at: timestamp without time zone
+  - id: integer NOT NULL DEFAULT nextval('encounters_id_seq'::regclass)
+  - patient_id: integer NOT NULL
+  - doctor_id: integer
+  - hospital_id: integer
+  - encounter_date: date NOT NULL
+  - encounter_type: character varying(50) NOT NULL
+  - reason_for_visit: character varying(255)
+  - diagnosis: text
+  - notes: text
+  - follow_up_date: date
+  - status: character varying(20)
+  - is_lab_test_required: boolean NOT NULL DEFAULT false
+  - patient_public_id: character varying NOT NULL DEFAULT ''::character varying
+  - documents: ARRAY
+
+Primary Keys: id
+
+Foreign Keys:
+  - patient_id -> patients.id
+  - doctor_id -> doctors.id
+  - hospital_id -> hospitals.id
+
+Indexes:
+  - encounters_pkey on id (UNIQUE)
+
+
+TABLE: hospitals
+--------------------------------------------------------------------------------
+
+Columns:
+  - created_at: timestamp without time zone
+  - updated_at: timestamp without time zone
+  - id: integer NOT NULL DEFAULT nextval('hospitals_id_seq'::regclass)
+  - name: character varying(200) NOT NULL
+  - registration_no: character varying(100)
+  - email: character varying(100) NOT NULL
+  - phone: character varying(20) NOT NULL
+  - address: text
+  - city: character varying(100)
+  - state: character varying(100)
+  - zip_code: character varying(20)
+  - country: character varying(50)
+  - specialty: character varying(100)
+  - license_number: character varying(100) NOT NULL
+  - experience_years: integer
+  - availability_days: character varying(200)
+  - start_time: time without time zone
+  - end_time: time without time zone
+  - consultation_fee: numeric
+  - website: character varying(200)
+  - status: character varying(20)
+  - logo_url: character varying(300)
+  - registration_certificate: character varying(300)
+  - deactivated_at: timestamp with time zone
+
+Primary Keys: id
+
+Indexes:
+  - hospitals_email_key on email (UNIQUE)
+  - hospitals_license_number_key on license_number (UNIQUE)
+  - hospitals_phone_key on phone (UNIQUE)
+  - hospitals_pkey on id (UNIQUE)
+
+
+TABLE: insurance_master
+--------------------------------------------------------------------------------
+
+Columns:
+  - id: integer NOT NULL DEFAULT nextval('insurance_master_id_seq'::regclass)
+  - provider_name: character varying(100) NOT NULL
+  - plan_name: character varying(100) NOT NULL
+  - plan_type: character varying(50)
+  - coverage_percent: double precision
+  - copay_amount: double precision
+  - deductible_amount: double precision
+  - out_of_pocket_max: double precision
+  - effective_date: date
+  - expiry_date: date
+  - description: text
+  - status: character varying(20)
+  - created_at: timestamp with time zone DEFAULT now()
+
+Primary Keys: id
+
+Indexes:
+  - insurance_master_pkey on id (UNIQUE)
+  - ix_insurance_master_id on id
+
+
+TABLE: lab_master
+--------------------------------------------------------------------------------
+
+Columns:
+  - id: integer NOT NULL DEFAULT nextval('lab_master_id_seq'::regclass)
+  - test_code: character varying(50) NOT NULL
+  - test_name: character varying(150) NOT NULL
+  - description: text
+  - sample_type: character varying(100)
+  - method: character varying(100)
+  - reference_range: character varying(100)
+  - unit: character varying(50)
+  - normal_min: double precision
+  - normal_max: double precision
+  - price: double precision NOT NULL
+  - is_active: boolean
+  - created_at: timestamp with time zone DEFAULT now()
+  - updated_at: timestamp with time zone
+
+Primary Keys: id
+
+Indexes:
+  - ix_lab_master_id on id
+  - lab_master_pkey on id (UNIQUE)
+  - lab_master_test_code_key on test_code (UNIQUE)
+
+
+TABLE: lab_orders
+--------------------------------------------------------------------------------
+
+Columns:
+  - id: integer NOT NULL DEFAULT nextval('lab_orders_id_seq'::regclass)
+  - encounter_id: integer
+  - patient_id: integer
+  - doctor_id: integer
+  - test_code: character varying(50)
+  - test_name: character varying(100)
+  - sample_type: character varying(50)
+  - status: character varying(20)
+  - created_at: timestamp without time zone
+
+Primary Keys: id
+
+Foreign Keys:
+  - encounter_id -> encounters.id
+  - patient_id -> patients.id
+  - doctor_id -> doctors.id
+
+Indexes:
+  - lab_orders_pkey on id (UNIQUE)
+
+
+TABLE: lab_results
+--------------------------------------------------------------------------------
+
+Columns:
+  - id: integer NOT NULL DEFAULT nextval('lab_results_id_seq'::regclass)
+  - lab_order_id: integer
+  - result_value: character varying(100)
+  - notes: text
+  - pdf_url: character varying(255)
+  - created_at: timestamp without time zone
+  - file_key: character varying(512)
+
+Primary Keys: id
+
+Foreign Keys:
+  - lab_order_id -> lab_orders.id
+
+Indexes:
+  - lab_results_pkey on id (UNIQUE)
+
+
+TABLE: medications
+--------------------------------------------------------------------------------
+
+Columns:
+  - created_at: timestamp without time zone
+  - updated_at: timestamp without time zone
+  - id: integer NOT NULL DEFAULT nextval('medications_id_seq'::regclass)
+  - patient_id: integer NOT NULL
+  - doctor_id: integer
+  - appointment_id: integer
+  - encounter_id: integer
+  - medication_name: character varying(200) NOT NULL
+  - dosage: character varying(100) NOT NULL
+  - frequency: character varying(100) NOT NULL
+  - route: character varying(100)
+  - start_date: date NOT NULL
+  - end_date: date
+  - status: character varying(50)
+  - notes: text
+  - icd_code: character varying(50)
+  - ndc_code: character varying(50)
+  - assignment_id: integer
+  - reminder_times: ARRAY
+
+Primary Keys: id
+
+Foreign Keys:
+  - patient_id -> patients.id
+  - doctor_id -> doctors.id
+  - appointment_id -> appointments.id
+  - encounter_id -> encounters.id
+
+Indexes:
+  - medications_pkey on id (UNIQUE)
+
+
+TABLE: notifications
+--------------------------------------------------------------------------------
+
+Columns:
+  - created_at: timestamp without time zone
+  - updated_at: timestamp without time zone
+  - id: integer NOT NULL DEFAULT nextval('notifications_id_seq'::regclass)
+  - user_id: integer NOT NULL
+  - title: character varying(200) NOT NULL
+  - desc: text
+  - type: character varying(50) NOT NULL
+  - status: character varying(50)
+  - data_id: character varying(200)
+  - reminder_type: character varying(50)
+  - patient_id: integer
+  - scheduled_for: timestamp without time zone
+
+Primary Keys: id
+
+Foreign Keys:
+  - user_id -> users.id
+  - patient_id -> patients.id
+
+Indexes:
+  - notifications_pkey on id (UNIQUE)
+
+
+TABLE: password_reset_otps
+--------------------------------------------------------------------------------
+
+Columns:
+  - id: integer NOT NULL DEFAULT nextval('password_reset_otps_id_seq'::regclass)
+  - user_id: integer NOT NULL
+  - otp: character varying(6) NOT NULL
+  - expires_at: timestamp without time zone NOT NULL
+  - used: boolean
+  - created_at: timestamp without time zone
+
+Primary Keys: id
+
+Foreign Keys:
+  - user_id -> users.id
+
+Indexes:
+  - password_reset_otps_pkey on id (UNIQUE)
+
+
+TABLE: password_reset_tokens
+--------------------------------------------------------------------------------
+
+Columns:
+  - id: integer NOT NULL DEFAULT nextval('password_reset_tokens_id_seq'::regclass)
+  - email: character varying NOT NULL
+  - otp: character varying NOT NULL
+  - expires_at: timestamp without time zone NOT NULL
+  - user_id: integer
+
+Primary Keys: id
+
+Foreign Keys:
+  - user_id -> users.id
+
+Indexes:
+  - ix_password_reset_tokens_email on email
+  - ix_password_reset_tokens_id on id
+  - password_reset_tokens_pkey on id (UNIQUE)
+
+
+TABLE: patient_consents
+--------------------------------------------------------------------------------
+
+Columns:
+  - created_at: timestamp without time zone
+  - updated_at: timestamp without time zone
+  - id: integer NOT NULL DEFAULT nextval('patient_consents_id_seq'::regclass)
+  - patient_id: integer NOT NULL
+  - hipaa: boolean
+  - text_messaging: boolean
+  - marketing: boolean
+  - copay: boolean
+  - treatment: boolean
+  - financial: boolean
+  - research: boolean
+
+Primary Keys: id
+
+Foreign Keys:
+  - patient_id -> patients.id
+
+Indexes:
+  - patient_consents_pkey on id (UNIQUE)
+
+
+TABLE: patient_doctor_assignment
+--------------------------------------------------------------------------------
+
+Columns:
+  - id: integer NOT NULL DEFAULT nextval('patient_doctor_assignment_id_seq'::regclass)
+  - patient_id: integer NOT NULL
+  - doctor_id: integer NOT NULL
+  - hospital_id: integer NOT NULL
+  - assigned_at: timestamp without time zone
+
+Primary Keys: id
+
+Foreign Keys:
+  - patient_id -> patients.id
+  - doctor_id -> doctors.id
+  - hospital_id -> hospitals.id
+
+Indexes:
+  - ix_patient_doctor_assignment_id on id
+  - patient_doctor_assignment_pkey on id (UNIQUE)
+
+
+TABLE: patient_insurance
+--------------------------------------------------------------------------------
+
+Columns:
+  - id: integer NOT NULL DEFAULT nextval('patient_insurance_id_seq'::regclass)
+  - patient_id: integer NOT NULL
+  - insurance_id: integer NOT NULL
+  - provider_name: character varying(100) NOT NULL
+  - plan_name: character varying(100) NOT NULL
+  - plan_type: character varying(50)
+  - coverage_percent: double precision
+  - policy_number: character varying(50) NOT NULL
+  - copay_amount: double precision
+  - deductible_amount: double precision
+  - out_of_pocket_max: double precision
+  - effective_date: date NOT NULL
+  - expiry_date: date NOT NULL
+  - status: character varying(20)
+  - priority: character varying(20)
+  - created_at: timestamp with time zone DEFAULT now()
+
+Primary Keys: id
+
+Foreign Keys:
+  - patient_id -> patients.id
+  - insurance_id -> insurance_master.id
+
+Indexes:
+  - ix_patient_insurance_id on id
+  - patient_insurance_pkey on id (UNIQUE)
+
+
+TABLE: patient_pharmacy_insurance
+--------------------------------------------------------------------------------
+
+Columns:
+  - id: integer NOT NULL DEFAULT nextval('patient_pharmacy_insurance_id_seq'::regclass)
+  - patient_id: integer NOT NULL
+  - pharmacy_insurance_id: integer NOT NULL
+  - provider_name: character varying(100) NOT NULL
+  - plan_name: character varying(100) NOT NULL
+  - policy_number: character varying(50) NOT NULL
+  - group_number: character varying(50)
+  - formulary_type: character varying(50)
+  - prior_auth_required: boolean
+  - standard_copay: double precision
+  - deductible_amount: double precision
+  - effective_date: date NOT NULL
+  - expiry_date: date NOT NULL
+  - status: character varying(20)
+  - priority: character varying(20)
+  - created_at: timestamp with time zone DEFAULT now()
+
+Primary Keys: id
+
+Foreign Keys:
+  - patient_id -> patients.id
+  - pharmacy_insurance_id -> pharmacy_insurance_master.id
+
+Indexes:
+  - ix_patient_pharmacy_insurance_id on id
+  - patient_pharmacy_insurance_pkey on id (UNIQUE)
+
+
+TABLE: patient_tasks
+--------------------------------------------------------------------------------
+
+Columns:
+  - created_at: timestamp without time zone
+  - updated_at: timestamp without time zone
+  - id: integer NOT NULL DEFAULT nextval('patient_tasks_id_seq'::regclass)
+  - patient_id: integer NOT NULL
+  - title: character varying(200) NOT NULL
+  - description: text
+  - due_date: date
+  - priority: character varying(20)
+  - status: character varying(20)
+
+Primary Keys: id
+
+Foreign Keys:
+  - patient_id -> patients.id
+
+Indexes:
+  - patient_tasks_pkey on id (UNIQUE)
+
+
+TABLE: patients
+--------------------------------------------------------------------------------
+
+Columns:
+  - created_at: timestamp without time zone
+  - updated_at: timestamp without time zone
+  - id: integer NOT NULL DEFAULT nextval('patients_id_seq'::regclass)
+  - public_id: character varying(100) NOT NULL
+  - user_id: integer NOT NULL
+  - first_name: character varying(100)
+  - last_name: character varying(100)
+  - dob: date
+  - weight: numeric NOT NULL
+  - height: numeric NOT NULL
+  - gender: character varying(20)
+  - ssn: character varying(100)
+  - phone: character varying(20)
+  - email: character varying(100)
+  - address: text
+  - city: character varying(100)
+  - state: character varying(100)
+  - zip_code: character varying(20)
+  - country: character varying(50) NOT NULL
+  - citizenship_status: character varying(50)
+  - visa_type: character varying(50)
+  - photo_url: character varying(300)
+  - id_proof_document: character varying(300)
+  - smoking_status: character varying(100)
+  - alcohol_use: character varying(100)
+  - diet: character varying(200)
+  - exercise_frequency: character varying(100)
+  - marital_status: character varying(50)
+  - preferred_contact: character varying(20) DEFAULT 'phone'::character varying
+  - has_caregiver: boolean DEFAULT false
+  - caregiver_name: character varying(100)
+  - caregiver_relationship: character varying(50)
+  - caregiver_phone: character varying(20)
+  - caregiver_email: character varying(100)
+  - insurance_status: character varying(20)
+  - is_insured: boolean
+  - deactivated_at: timestamp with time zone
+  - is_active: boolean DEFAULT true
+
+Primary Keys: id
+
+Foreign Keys:
+  - user_id -> users.id
+
+Indexes:
+  - ix_patients_email on email (UNIQUE)
+  - ix_patients_gender on gender
+  - ix_patients_phone on phone (UNIQUE)
+  - ix_patients_public_id on public_id (UNIQUE)
+  - ix_patients_ssn on ssn (UNIQUE)
+  - patients_pkey on id (UNIQUE)
+
+
+TABLE: pharmacy_insurance_master
+--------------------------------------------------------------------------------
+
+Columns:
+  - id: integer NOT NULL DEFAULT nextval('pharmacy_insurance_master_id_seq'::regclass)
+  - provider_name: character varying(100) NOT NULL
+  - plan_name: character varying(100) NOT NULL
+  - group_number: character varying(50)
+  - formulary_type: character varying(50)
+  - prior_auth_required: boolean
+  - standard_copay: double precision
+  - deductible_amount: double precision
+  - status: character varying(20)
+  - created_at: timestamp with time zone DEFAULT now()
+
+Primary Keys: id
+
+Indexes:
+  - ix_pharmacy_insurance_master_id on id
+  - pharmacy_insurance_master_pkey on id (UNIQUE)
+
+
+TABLE: treatment_plan_master
+--------------------------------------------------------------------------------
+
+Columns:
+  - id: integer NOT NULL DEFAULT nextval('treatment_plan_master_id_seq'::regclass)
+  - name: character varying(150) NOT NULL
+  - description: text
+  - status: character varying(20)
+  - created_at: timestamp with time zone DEFAULT now()
+
+Primary Keys: id
+
+Indexes:
+  - ix_treatment_plan_master_id on id
+  - treatment_plan_master_pkey on id (UNIQUE)
+
+
+TABLE: users
+--------------------------------------------------------------------------------
+
+Columns:
+  - created_at: timestamp without time zone
+  - updated_at: timestamp without time zone
+  - id: integer NOT NULL DEFAULT nextval('users_id_seq'::regclass)
+  - email: character varying(200) NOT NULL
+  - hashed_password: character varying(200) NOT NULL
+  - full_name: character varying(200)
+  - role: character varying(50) NOT NULL
+  - hospital_id: integer
+  - is_active: boolean
+  - deactivated_at: timestamp with time zone
+
+Primary Keys: id
+
+Foreign Keys:
+  - hospital_id -> hospitals.id
+
+Indexes:
+  - users_email_key on email (UNIQUE)
+  - users_pkey on id (UNIQUE)
+
+
+TABLE: vitals
+--------------------------------------------------------------------------------
+
+Columns:
+  - created_at: timestamp without time zone
+  - updated_at: timestamp without time zone
+  - id: integer NOT NULL DEFAULT nextval('vitals_id_seq'::regclass)
+  - patient_id: integer NOT NULL
+  - appointment_id: integer
+  - encounter_id: integer
+  - height: numeric
+  - weight: numeric
+  - bmi: numeric
+  - blood_pressure: character varying(20)
+  - heart_rate: integer
+  - temperature: numeric
+  - respiration_rate: integer
+  - oxygen_saturation: integer
+  - recorded_at: timestamp without time zone
+
+Primary Keys: id
+
+Foreign Keys:
+  - patient_id -> patients.id
+  - appointment_id -> appointments.id
+  - encounter_id -> encounters.id
+
+Indexes:
+  - vitals_pkey on id (UNIQUE)
+
