@@ -275,7 +275,20 @@ async def get_task_status(
                 detail=f"Task {task_id} not found"
             )
         
-        return task_status
+        # Create a response with cache control headers to prevent browser caching
+        from fastapi.responses import JSONResponse
+        
+        response = JSONResponse(content=task_status)
+        
+        # Add cache control headers to prevent caching
+        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+        
+        # Log the task status for debugging
+        logger.debug(f"Returning task status for {task_id}: progress={task_status.get('progress', 'N/A')}%")
+        
+        return response
     
     except HTTPException:
         raise

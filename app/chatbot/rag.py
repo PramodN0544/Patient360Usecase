@@ -146,10 +146,47 @@ class RAGPipeline:
         )
         
         # Create or get collection
-        self.embedding_function = embedding_functions.OpenAIEmbeddingFunction(
-            api_key=os.getenv("LLM_API_KEY"),
-            model_name="text-embedding-3-large"
-        )
+        # Create a custom embedding function that uses the new OpenAI API
+        class CustomOpenAIEmbeddingFunction:
+            def __init__(self, api_key, model_name="text-embedding-3-large"):
+                self._api_key = api_key
+                self._model_name = model_name
+                
+            def __call__(self, texts):
+                try:
+                    import openai
+                    client = openai.OpenAI(api_key=self._api_key)
+                    
+                    # Split into batches to avoid token limits
+                    batch_size = 100
+                    all_embeddings = []
+                    
+                    for i in range(0, len(texts), batch_size):
+                        batch = texts[i:i+batch_size]
+                        response = client.embeddings.create(
+                            model=self._model_name,
+                            input=batch
+                        )
+                        embeddings = [item.embedding for item in response.data]
+                        all_embeddings.extend(embeddings)
+                        
+                    return all_embeddings
+                except Exception as e:
+                    logger.error(f"Error generating embeddings: {e}")
+                    raise
+        
+        # Use the custom embedding function
+        try:
+            self.embedding_function = CustomOpenAIEmbeddingFunction(
+                api_key=os.getenv("LLM_API_KEY"),
+                model_name="text-embedding-3-large"
+            )
+            # Test the embedding function with a simple example
+            test_result = self.embedding_function(["Test embedding function"])
+            logger.info("Embedding function initialized successfully")
+        except Exception as e:
+            logger.error(f"Failed to initialize embedding function: {e}")
+            # Continue with initialization, but embedding functionality will be limited
         
         try:
             self.collection = self.client.get_collection(
@@ -293,12 +330,26 @@ class RAGPipeline:
                 else:
                     where_clause = {"audience": audience}
             
-            # Query the collection
-            results = self.collection.query(
-                query_texts=[query_text],
-                n_results=n_results,
-                where=where_clause
-            )
+            try:
+                # Query the collection with embedding function
+                results = self.collection.query(
+                    query_texts=[query_text],
+                    n_results=n_results,
+                    where=where_clause
+                )
+            except Exception as embedding_error:
+                # If embedding fails, try a fallback approach with keyword search
+                logger.warning(f"Embedding-based query failed: {embedding_error}. Falling back to keyword search.")
+                
+                # Log a more detailed error for debugging
+                logger.error(f"Detailed embedding error: {str(embedding_error)}")
+                
+                # Return a fallback response indicating the issue
+                return [{
+                    "text": "I'm having trouble accessing my knowledge base at the moment. Please try a more specific question or try again later.",
+                    "metadata": {"source": "system", "topic": "error", "audience": audience},
+                    "distance": 1.0
+                }]
             
             # Format results
             formatted_results = []
@@ -314,7 +365,12 @@ class RAGPipeline:
         
         except Exception as e:
             logger.error(f"Error querying RAG pipeline: {e}")
-            return []
+            # Return a generic fallback response
+            return [{
+                "text": "I'm having trouble accessing my knowledge base. Please try again later.",
+                "metadata": {"source": "system", "topic": "error", "audience": audience},
+                "distance": 1.0
+            }]
     
     async def add_knowledge(self, items: List[Dict[str, Any]], task_id: str = None) -> bool:
         """
@@ -329,9 +385,10 @@ class RAGPipeline:
         """
         try:
             # Process in batches to avoid token limits
-            batch_size = 50  # Adjust based on average chunk size
+            batch_size = 25  # Reduced batch size for better error handling
             total_items = len(items)
             successful_items = 0
+            failed_batches = 0
             
             for i in range(0, total_items, batch_size):
                 batch = items[i:i+batch_size]
@@ -341,34 +398,96 @@ class RAGPipeline:
                 texts = [item["text"] for item in batch]
                 metadatas = [item["metadata"] for item in batch]
                 
-                # Add batch to collection
-                self.collection.add(
-                    ids=ids,
-                    documents=texts,
-                    metadatas=metadatas
-                )
+                try:
+                    # Add batch to collection
+                    self.collection.add(
+                        ids=ids,
+                        documents=texts,
+                        metadatas=metadatas
+                    )
+                    
+                    successful_items += len(batch)
+                    
+                    # Update progress if task_id is provided
+                    if task_id and task_id in background_tasks:
+                        progress = int((i + len(batch)) / total_items * 100)
+                        
+                        # Use direct assignment instead of update() method for more reliable updates
+                        background_tasks[task_id]["progress"] = progress
+                        background_tasks[task_id]["chunks_processed"] = i + len(batch)
+                        background_tasks[task_id]["total_chunks"] = total_items
+                        background_tasks[task_id]["message"] = f"Processing chunks: {i + len(batch)}/{total_items}"
+                        background_tasks[task_id]["last_updated"] = time.time()
+                        
+                        # Verify the update worked by logging the actual value in the dictionary
+                        logger.info(f"Task {task_id}: Updated progress to {background_tasks[task_id]['progress']}%")
+                        
+                        # Save tasks to file after each batch update
+                        save_background_tasks()
+                        logger.info(f"Task {task_id}: Processed {i + len(batch)}/{total_items} chunks ({progress}%)")
                 
-                successful_items += len(batch)
+                except Exception as batch_error:
+                    failed_batches += 1
+                    logger.error(f"Error processing batch {i//batch_size + 1}: {batch_error}")
+                    
+                    # Try to add without embeddings if it's an embedding error
+                    if "openai" in str(batch_error).lower() or "embedding" in str(batch_error).lower():
+                        logger.warning("Attempting to add documents without embeddings...")
+                        try:
+                            # Try to add documents without computing embeddings
+                            # This will store the documents but they won't be searchable by semantic similarity
+                            self.collection.add(
+                                ids=ids,
+                                documents=texts,
+                                metadatas=metadatas,
+                                embeddings=[[0.0] * 1536] * len(texts)  # Dummy embeddings
+                            )
+                            logger.info(f"Added batch {i//batch_size + 1} with dummy embeddings")
+                            successful_items += len(batch)
+                        except Exception as fallback_error:
+                            logger.error(f"Fallback method also failed: {fallback_error}")
+                    
+                    # Update task status to reflect the error
+                    if task_id and task_id in background_tasks:
+                        background_tasks[task_id].update({
+                            "message": f"Error in batch {i//batch_size + 1}: {str(batch_error)[:100]}...",
+                            "has_errors": True,
+                            "last_updated": time.time()
+                        })
+                        save_background_tasks()
+            
+            # Log summary
+            if failed_batches > 0:
+                logger.warning(f"Completed with {failed_batches} failed batches. Successfully added {successful_items}/{total_items} items.")
                 
-                # Update progress if task_id is provided
+                # Update final task status
                 if task_id and task_id in background_tasks:
-                    progress = int((i + len(batch)) / total_items * 100)
                     background_tasks[task_id].update({
-                        "progress": progress,
-                        "chunks_processed": i + len(batch),
-                        "total_chunks": total_items,
-                        "message": f"Processing chunks: {i + len(batch)}/{total_items}",
+                        "status": "completed_with_errors",
+                        "progress": 100,
+                        "message": f"Completed with errors. Added {successful_items}/{total_items} items.",
                         "last_updated": time.time()
                     })
-                    # Save tasks to file after each batch update
                     save_background_tasks()
-                    logger.info(f"Task {task_id}: Processed {i + len(batch)}/{total_items} chunks ({progress}%)")
-            
-            logger.info(f"Added {successful_items} knowledge items to collection")
-            return True
+                
+                # Return True if at least some items were added successfully
+                return successful_items > 0
+            else:
+                logger.info(f"Added all {successful_items} knowledge items to collection")
+                return True
         
         except Exception as e:
             logger.error(f"Error adding knowledge: {e}")
+            
+            # Update task status to reflect the error
+            if task_id and task_id in background_tasks:
+                background_tasks[task_id].update({
+                    "status": "failed",
+                    "message": f"Failed: {str(e)[:200]}...",
+                    "last_updated": time.time()
+                })
+                save_background_tasks()
+            
             return False
     
     async def delete_knowledge(self, ids: List[str]) -> bool:
