@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 # PDF processing imports
 try:
     from pypdf import PdfReader
-    from langchain.text_splitter import RecursiveCharacterTextSplitter
+    from langchain_text_splitters import RecursiveCharacterTextSplitter
     PDF_SUPPORT = True
 except ImportError:
     logger.warning("PDF support libraries not installed. PDF processing will be disabled.")
